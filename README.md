@@ -30,13 +30,16 @@ The development app is **http://127.0.0.1:5173**. `./start.ps1 -Development` sta
 
 - Current official players, prices, fixtures, news, defensive contributions and price signals.
 - Player forecasts through GW38, with per-event breakdowns, minutes scenarios, blank/double fixtures and provenance.
+- Per-gameweek conditional minutes and availability assumptions, including user-defined recovery schedules. Scheduled weeks take priority over provider/CSV points.
 - Public FPL Form player forecasts for the next three GWs, blended at a configurable weight. Longer-range player adjustments follow future fixtures and fade toward the component baseline; direct and extrapolated weeks are labelled. Team inputs use near-term FPL Joe markets and the full-season Elevenify sheet.
 - Public FPL team-ID import, bank / FT adjustments, legal squad and formation checks, captain and vice-captain selection, bench swaps and bench priority. Expected totals include formation-aware autosubs and vice fallback under an explicit independent-appearance approximation.
 - Transfers across future GWs, profit-aware selling prices, hits, 5-FT carryover, and Wildcard / Free Hit / Bench Boost / Triple Captain planning. Free Hit restores the permanent squad and bank. Current prices are held fixed.
 - Named independent planning branches saved in browser storage; export/import of validated plan files.
 - A 1–14-week SciPy / HiGHS MILP solver with player locks/exclusions, budget, position and club limits, transfer costs, FT retention value, time decay and ownership preference. Solver results are reviewed before becoming a new branch.
+- Background strategy stress tests with seeded assumptions, progress/cancellation, transfer/captain frequencies, JSON reports and separate validated branches. The variation is user-defined, not calibrated uncertainty.
 - Searchable/sortable/filterable player projections, watchlists, fixture heatmaps, captain comparisons, player history, and explicitly uncalibrated event simulations.
 - CSV model import/blending, CSV export, official transfer/price view, historical benchmark charts, immutable forecast snapshots and a prospective scoring command.
+- Elevenify selected-player attacking baselines and importance/captain shortlists under Market → Provider shortlists, with units, mapping coverage, extraction time and source hashes. These references remain separate from points forecasts.
 - Responsive mobile planning, including branch switching.
 
 Plans do not submit transfers to FPL. Local data caches and vendor payloads are ignored by Git. The original World Cup research and StatsBomb folders are preserved.
@@ -47,7 +50,7 @@ Point forecasts use `player_id,gameweek,expected_points`. FPL Review-style wide 
 
 A weight blends matched forecasts. With extrapolation enabled, later weeks carry a player-level adjustment through the future fixture schedule. The adjustment's default half-life is six GWs; both weight and half-life are configurable. Blank weeks remain zero. This is a declared heuristic, not a verified reconstruction of the provider's hidden model. CSV xMins columns are not silently treated as conditional minutes.
 
-Minutes scenarios use `player_id,conditional_minutes` in the range 0–90. Conditional duration is distinct from the model's unconditional `expected_minutes` export column. Uploaded points do not change underlying xG/xA components or simulation distributions. The app labels the imported adjustment.
+Weekly scenarios use `player_id,gameweek,conditional_minutes,availability`. Supply at least one of duration (0–90) or availability (0–1); `0` remains a valid value. Availability requires a gameweek, and duplicate player/GW scenarios are rejected. `player_id,conditional_minutes` remains the legacy all-horizon format. Conditional duration is distinct from the model's unconditional `expected_minutes` export column. Scheduled weeks bypass provider/CSV blends; other weeks retain normal calibration. Uploaded points do not change underlying xG/xA components or simulation distributions. The app labels the imported adjustment.
 
 ## Evaluation
 
@@ -77,7 +80,7 @@ npm run build
 
 The checks cover squad legality, scoring, sale rounding, transfer hits, FT caps, Free Hit restoration, exclusions, bank rejection, server recomputation, autosub formation/priority, captain fallback, provider extrapolation, CSV compatibility and strictly pre-deadline evaluation.
 
-Research and build plan: [docs/PLAN.md](docs/PLAN.md). Model derivation and limits: [docs/MODEL.md](docs/MODEL.md). Current handover and verification: [docs/STATUS.md](docs/STATUS.md).
+Research and build plan: [docs/PLAN.md](docs/PLAN.md). Model derivation and limits: [docs/MODEL.md](docs/MODEL.md). Provider access findings: [docs/PROVIDER_ACCESS.md](docs/PROVIDER_ACCESS.md). Current handover and verification: [docs/STATUS.md](docs/STATUS.md).
 
 ## Attribution and scope
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import itertools
 from collections import Counter
+from threading import Lock
 
 import numpy as np
 from scipy.optimize import Bounds, LinearConstraint, milp
@@ -12,6 +13,7 @@ from .scoring import FORMATIONS, appearance, team_points
 
 SQUAD_COUNTS = {1: 2, 2: 5, 3: 5, 4: 3}
 CHIPS = {"none", "wildcard", "freehit", "benchboost", "triplecaptain"}
+_MILP_LOCK = Lock()
 
 
 def points(player, gw):
@@ -138,13 +140,15 @@ class Builder:
             (self.values, (self.rows, self.cols)),
             shape=(len(self.clow), len(self.cost)),
         ).tocsc()
-        return milp(
-            c=np.array(self.cost),
-            integrality=np.array(self.integral),
-            bounds=Bounds(self.low, self.high),
-            constraints=LinearConstraint(matrix, self.clow, self.chigh),
-            options={"time_limit": seconds, "mip_rel_gap": 0.01},
-        )
+        # HTTP requests and background stress jobs share the native solver.
+        with _MILP_LOCK:
+            return milp(
+                c=np.array(self.cost),
+                integrality=np.array(self.integral),
+                bounds=Bounds(self.low, self.high),
+                constraints=LinearConstraint(matrix, self.clow, self.chigh),
+                options={"time_limit": seconds, "mip_rel_gap": 0.01},
+            )
 
 
 def optimise(
@@ -167,6 +171,7 @@ def optimise(
     purchase_prices=None,
     seconds=20,
     used_chips=None,
+    extra_candidates=None,
 ):
     squad = squad or []
     locked, excluded = set(locked or []), set(excluded or [])
@@ -181,6 +186,9 @@ def optimise(
         raise ValueError("A player cannot be both locked and excluded.")
     if not (locked | excluded).issubset(lookup):
         raise ValueError("A constraint refers to an unknown player.")
+    extra_candidates = set(extra_candidates or [])
+    if not extra_candidates.issubset(lookup):
+        raise ValueError("An extra candidate refers to an unknown player.")
     if len(locked) > 15:
         raise ValueError("At most 15 players can be locked.")
     if any(v not in CHIPS for v in chips.values()):
@@ -193,14 +201,14 @@ def optimise(
     weeks = list(range(start_gw, start_gw + horizon))
     # Candidate screening is disclosed: top 24 and cheapest 8 per position,
     # plus all existing and locked players. No claim of global pool optimality.
-    candidates = set(squad) | locked
+    candidates = set(squad) | locked | extra_candidates
     for pos in SQUAD_COUNTS:
         pool = [
             p
             for p in players
             if p["position_id"] == pos
             and p["id"] not in excluded
-            and (p["pplay"] > 0.05 or p["id"] in locked)
+            and (any(appearance(p, gw) > 0.05 for gw in weeks) or p["id"] in locked)
         ]
         ranked = sorted(
             pool,

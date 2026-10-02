@@ -19,7 +19,16 @@ def blend_forecasts(
     half_life=6,
     probabilities=None,
     source_at=None,
+    minutes_schedule=None,
+    calibration_payload=None,
 ):
+    """Blend unscheduled outputs using a pre-layer, unscheduled reference.
+
+    Pass the reference through the same sequence of blend layers in parallel.
+    This keeps a local minutes scenario from changing other gameweeks' anchor
+    scales or appearance deltas. Without a reference, scheduled anchors are
+    excluded, preserving the historical direct-call behavior.
+    """
     if not anchors or weight <= 0:
         return payload
     output = {
@@ -29,6 +38,12 @@ def blend_forecasts(
         "forecast_layers": list(payload.get("forecast_layers", [])),
     }
     probabilities = probabilities or {}
+    minutes_schedule = minutes_schedule or {}
+    reference_players = (
+        {str(p["id"]): p for p in calibration_payload["players"]}
+        if calibration_payload is not None
+        else {}
+    )
     direct = extended = 0
     for original in payload["players"]:
         # Fixture/component inputs are immutable. Copy only changed forecast
@@ -36,26 +51,37 @@ def blend_forecasts(
         player = {**original, "gw": dict(original["gw"])}
         output["players"].append(player)
         pid = str(player["id"])
+        manual_weeks = {str(gw) for gw in minutes_schedule.get(pid, {})}
         supplied = anchors.get(pid, {})
         if not supplied:
             continue
+        if (
+            calibration_payload is not None
+            and manual_weeks
+            and pid not in reference_players
+        ):
+            raise ValueError("Calibration reference is missing a scheduled player")
+        reference = reference_players.get(pid, original)
         valid = {
             gw: point
             for gw, point in supplied.items()
-            if gw in player["gw"] and player["gw"][gw]["fixtures"]
+            if (calibration_payload is not None or gw not in manual_weeks)
+            and gw in player["gw"]
+            and gw in reference["gw"]
+            and reference["gw"][gw]["fixtures"]
         }
         # Low/base-zero rows cannot identify a stable scale. Avoid division by
         # a tiny forecast or assuming that a blank week supplies a player rate.
         calibrating = [
             (gw, point)
             for gw, point in valid.items()
-            if original["gw"][gw]["points"] >= 0.5 and original["gw"][gw]["fixtures"]
+            if reference["gw"][gw]["points"] >= 0.5 and reference["gw"][gw]["fixtures"]
         ]
         anchor_weights = {
             gw: 1 / (int(gw) - payload["next_gw"] + 1) for gw, _ in calibrating
         }
         denominator = sum(
-            anchor_weights[gw] * original["gw"][gw]["points"] for gw, _ in calibrating
+            anchor_weights[gw] * reference["gw"][gw]["points"] for gw, _ in calibrating
         )
         ratio = (
             min(
@@ -73,17 +99,21 @@ def blend_forecasts(
         probability_rows = [
             (gw, p)
             for gw, p in probabilities.get(pid, {}).items()
-            if gw in valid and len(original["gw"][gw]["fixtures"]) == 1
+            if gw in valid and len(reference["gw"][gw]["fixtures"]) == 1
         ]
         # Source probability may be for the first fixture only; skip double-GW
         # probability anchoring while still using the source's summed points.
         delta = (
-            sum(p - appearance(original, int(gw)) for gw, p in probability_rows)
+            sum(p - appearance(reference, int(gw)) for gw, p in probability_rows)
             / len(probability_rows)
             if probability_rows
             else None
         )
         for gw, item in player["gw"].items():
+            # A user-scheduled duration/availability controls the whole GW.
+            # The parallel unscheduled reference may still calibrate anchors.
+            if gw in manual_weeks:
+                continue
             old = item["points"]
             if gw in valid:
                 influence = weight

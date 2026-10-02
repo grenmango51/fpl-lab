@@ -85,7 +85,8 @@ def positional_priors(history, before_season):
     return result
 
 
-def player_profile(rows, pos, prior, availability=1.0, minutes_override=None):
+def appearance_profile(rows, availability=1.0, minutes_override=None):
+    """Appearance states only, allowing scenario profiles to reuse event rates."""
     recent = rows[-10:]
     wr = weighted(recent, PARAMETERS["minutes_half_life_matches"])
     total = sum(w for _, w in wr)
@@ -111,6 +112,18 @@ def player_profile(rows, pos, prior, availability=1.0, minutes_override=None):
         long_mean = override if override >= 60 else long_mean
         short_mean = override if override < 60 else short_mean
     xmins = p60 * long_mean + pshort * short_mean
+    return {
+        "p60": p60,
+        "pshort": pshort,
+        "pplay": p60 + pshort,
+        "xmins": xmins,
+        "long_mean": long_mean,
+        "short_mean": short_mean,
+    }
+
+
+def player_profile(rows, pos, prior, availability=1.0, minutes_override=None):
+    appearance = appearance_profile(rows, availability, minutes_override)
     rate_rows = weighted(rows[-45:], PARAMETERS["rate_half_life_matches"])
     minutes = sum(r["minutes"] * w for r, w in rate_rows)
     rates = {}
@@ -154,12 +167,7 @@ def player_profile(rows, pos, prior, availability=1.0, minutes_override=None):
     played = [r for r in rows if r["minutes"] > 0]
     ppg = sum(r["total_points"] for r in played) / max(len(played), 1)
     return {
-        "p60": p60,
-        "pshort": pshort,
-        "pplay": p60 + pshort,
-        "xmins": xmins,
-        "long_mean": long_mean,
-        "short_mean": short_mean,
+        **appearance,
         "rates": rates,
         "dc_prob": dc_prob,
         "team_xg": max(team_xg, 0.25),
@@ -388,16 +396,87 @@ def fixture_projection(
     }
 
 
-def projections(overrides=None, use_market=True):
+def canonical_minutes_schedule(minutes_schedule, player_ids, gameweeks):
+    """Validate direct callers too; the HTTP layer supplies additional messages."""
+    if minutes_schedule is None:
+        return {}
+    if not isinstance(minutes_schedule, dict):
+        raise ValueError("Minutes schedule must map player IDs to gameweek scenarios")
+    result = {}
+    for raw_pid, weeks in minutes_schedule.items():
+        try:
+            pid = str(int(raw_pid))
+        except (TypeError, ValueError, OverflowError):
+            raise ValueError("Invalid minutes-schedule player ID") from None
+        if (
+            isinstance(raw_pid, bool)
+            or str(raw_pid) != pid
+            or int(pid) not in player_ids
+        ):
+            raise ValueError("Unknown or invalid minutes-schedule player ID")
+        if pid in result or not isinstance(weeks, dict) or not weeks:
+            raise ValueError("Each scheduled player must have gameweek scenarios")
+        result[pid] = {}
+        for raw_gw, values in weeks.items():
+            try:
+                gw = str(int(raw_gw))
+            except (TypeError, ValueError, OverflowError):
+                raise ValueError("Invalid minutes-schedule gameweek") from None
+            if (
+                isinstance(raw_gw, bool)
+                or str(raw_gw) != gw
+                or int(gw) not in gameweeks
+            ):
+                raise ValueError(
+                    "Minutes-schedule gameweek must be in the forecast horizon"
+                )
+            if gw in result[pid] or not isinstance(values, dict):
+                raise ValueError("Invalid minutes-schedule scenario")
+            if set(values) - {"conditional_minutes", "availability"}:
+                raise ValueError("Unknown minutes-schedule scenario field")
+            scenario = {}
+            for field, limit in (("conditional_minutes", 90), ("availability", 1)):
+                value = values.get(field)
+                if value is None:
+                    continue
+                if isinstance(value, bool) or not isinstance(value, (int, float)):
+                    raise ValueError(f"{field} must be a finite number")
+                if not math.isfinite(value) or not 0 <= value <= limit:
+                    raise ValueError(f"{field} must be between 0 and {limit}")
+                scenario[field] = float(value)
+            if not scenario:
+                raise ValueError(
+                    "A minutes scenario needs conditional_minutes or availability"
+                )
+            result[pid][gw] = scenario
+    return result
+
+
+def projections(overrides=None, use_market=True, minutes_schedule=None):
     with _projection_lock:
-        return _build_projections(overrides, use_market)
+        return _build_projections(overrides, use_market, minutes_schedule)
 
 
-def _build_projections(overrides=None, use_market=True):
+def _build_projections(overrides=None, use_market=True, minutes_schedule=None):
     global _projections, _projection_key
     data = get_data()
     overrides = overrides or {}
-    key = (data["loaded_at"], str(sorted(overrides.items())), use_market)
+    start = data["next_gw"]
+    horizon = list(range(start, 39))
+    minutes_schedule = canonical_minutes_schedule(
+        minutes_schedule, data["players"], horizon
+    )
+    schedule_key = tuple(
+        (
+            pid,
+            tuple(
+                (gw, tuple(sorted(values.items())))
+                for gw, values in sorted(weeks.items())
+            ),
+        )
+        for pid, weeks in sorted(minutes_schedule.items())
+    )
+    key = (data["loaded_at"], str(sorted(overrides.items())), use_market, schedule_key)
     if _projections is not None and _projection_key == key:
         return _projections
     history = attach_team_xg(data["history"])
@@ -406,8 +485,6 @@ def _build_projections(overrides=None, use_market=True):
         by_player[r["code"]].append(r)
     priors = positional_priors(history, data["season"])
     ratings, average = team_ratings(history)
-    start = data["next_gw"]
-    horizon = list(range(start, 39))
     scoring = data["bootstrap"].get("game_config", {}).get("scoring", DEFAULT_SCORING)
     fixtures_by_team = defaultdict(list)
     for f in data["fixtures"]:
@@ -428,25 +505,67 @@ def _build_projections(overrides=None, use_market=True):
         # Restrict minutes profile to current season if at least 3 games are observed.
         rows = by_player[p["code"]]
         current_rows = [r for r in rows if r["season"] == data["season"]]
-        profile = player_profile(
-            rows, pos, priors[pos], availability, overrides.get(str(p["id"]))
-        )
-        if len(current_rows) >= 3 and str(p["id"]) not in overrides:
-            current_profile = player_profile(
-                current_rows, pos, priors[pos], availability
-            )
-            for k in ["p60", "pshort", "pplay", "xmins", "long_mean", "short_mean"]:
-                profile[k] = current_profile[k]
+        pid = str(p["id"])
+        duration = overrides.get(pid)
+        rate_profile = player_profile(rows, pos, priors[pos], availability, duration)
+        appearance_rows = current_rows if len(current_rows) >= 3 else rows
+        profiles = {}
+
+        def resolved_profile(assumed_availability, conditional_minutes):
+            profile_key = (assumed_availability, conditional_minutes)
+            if profile_key not in profiles:
+                profiles[profile_key] = {
+                    **rate_profile,
+                    **appearance_profile(
+                        appearance_rows, assumed_availability, conditional_minutes
+                    ),
+                }
+            return profiles[profile_key]
+
+        profile = resolved_profile(availability, duration)
+        week_scenarios = minutes_schedule.get(pid, {})
+        week_profiles = {}
         per_gw = {
-            str(gw): {"points": 0, "xmins": 0, "fixtures": [], "components": {}}
+            str(gw): {
+                "points": 0,
+                "xmins": 0,
+                "pplay": 0,
+                "p60": 0,
+                "fixtures": [],
+                "components": {},
+            }
             for gw in horizon
         }
+        for gw, item in per_gw.items():
+            scenario = week_scenarios.get(gw, {})
+            assumed_availability = scenario.get("availability", availability)
+            conditional_minutes = scenario.get("conditional_minutes", duration)
+            week_profiles[gw] = resolved_profile(
+                assumed_availability, conditional_minutes
+            )
+            if scenario or duration is not None:
+                item["minutes_scenario"] = {
+                    "conditional_minutes": conditional_minutes,
+                    "availability": assumed_availability,
+                    "label": "User-assumed minutes/availability scenario",
+                    "conditional_minutes_source": "user-assumed"
+                    if conditional_minutes is not None
+                    else "automatic historical appearance profile",
+                    "availability_source": "user-assumed"
+                    if "availability" in scenario
+                    else "official current availability",
+                }
         for f in fixtures_by_team[p["team"]]:
             context = fixture_projection(
                 data, f, p["team"], ratings, average, use_market
             )
             forecast = components(
-                profile, pos, context["gf"], context["ga"], context["cs"], scoring
+                week_profiles[str(f["event"])],
+                pos,
+                context["gf"],
+                context["ga"],
+                context["cs"],
+                scoring,
             )
             home = f["team_h"] == p["team"]
             opponent = data["teams"][f["team_a"] if home else f["team_h"]]
@@ -466,6 +585,8 @@ def _build_projections(overrides=None, use_market=True):
             item = per_gw[str(f["event"])]
             item["points"] += forecast["points"]
             item["xmins"] += forecast["xmins"]
+            item["pplay"] = 1 - (1 - item["pplay"]) * (1 - forecast["pplay"])
+            item["p60"] = 1 - (1 - item["p60"]) * (1 - forecast["p60"])
             item["fixtures"].append(fixture_row)
             for k, v in forecast["components"].items():
                 item["components"][k] = item["components"].get(k, 0) + v
@@ -499,13 +620,13 @@ def _build_projections(overrides=None, use_market=True):
                 "minutes": p["minutes"],
                 "xg90": profile["rates"]["expected_goals"],
                 "xa90": profile["rates"]["expected_assists"],
-                "xmins": profile["xmins"],
-                "pplay": profile["pplay"],
-                "p60": profile["p60"],
+                "xmins": per_gw[str(start)]["xmins"],
+                "pplay": per_gw[str(start)]["pplay"],
+                "p60": per_gw[str(start)]["p60"],
                 "dc_probability": profile["dc_prob"],
                 "sample_matches": profile["samples"],
                 "has_prior": len(rows) > len(current_rows),
-                "overridden": str(p["id"]) in overrides,
+                "overridden": pid in overrides or pid in minutes_schedule,
                 "price_change": p.get("cost_change_event", 0) / 10,
                 "transfers_in": p.get("transfers_in_event", 0),
                 "transfers_out": p.get("transfers_out_event", 0),
@@ -532,7 +653,7 @@ def _build_projections(overrides=None, use_market=True):
             "Minutes and availability probabilities are estimates and have not yet been calibrated prospectively.",
             "Bonus is a historical-rate approximation; 2026/27 BPS changes are not reconstructed.",
             "No automatic press-conference or confirmed-lineup feed is connected.",
-            "Far-horizon injuries use current availability until manually overridden.",
+            "Future gameweeks retain official current availability unless a user explicitly supplies a gameweek availability assumption; no recovery date is inferred. Conditional minutes alone never restores an unavailable player.",
             "No head-to-head paid-provider accuracy claim is established.",
         ],
     }

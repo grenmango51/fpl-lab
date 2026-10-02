@@ -48,6 +48,8 @@ import type {
   PlayerDetail,
   SolveResult,
   Prospective,
+  SensitivityJob,
+  MinutesSchedule,
 } from "./types";
 import {
   api,
@@ -82,6 +84,9 @@ import {
   ProjectionsView,
 } from "./Views";
 import type { SolverSettings } from "./Views";
+import { SensitivityView } from "./SensitivityView";
+import { MinutesScenarioEditor } from "./MinutesScenarioEditor";
+import { ReferenceView } from "./ReferenceView";
 
 type Tab =
   "lineup" | "projections" | "optimise" | "fixtures" | "analysis" | "market";
@@ -107,6 +112,7 @@ export default function App() {
     [loadError, setLoadError] = useState(""),
     [loading, setLoading] = useState(true),
     [tab, setTab] = useState<Tab>("lineup");
+  const [marketMode, setMarketMode] = useState("prices");
   const [plans, setPlans] = useState<Plan[]>(() =>
       stored<Plan[]>(storageKey, []),
     ),
@@ -138,13 +144,15 @@ export default function App() {
     [customName, setCustomName] = useState(() =>
       stored("open-fpl-custom-name", ""),
     );
+  const [minutesSchedule, setMinutesSchedule] = useState<MinutesSchedule>(() =>
+    stored("open-fpl-minutes-schedule", {}),
+  );
   const [modal, setModal] = useState<
       "team" | "settings" | "csv" | "help" | null
     >(null),
     [detailId, setDetailId] = useState<number | null>(null),
     [detail, setDetail] = useState<PlayerDetail | null>(null),
-    [detailLoading, setDetailLoading] = useState(false),
-    [minutesEdit, setMinutesEdit] = useState(90);
+    [detailLoading, setDetailLoading] = useState(false);
   const [selected, setSelected] = useState<number | null>(null),
     [playerQuery, setPlayerQuery] = useState(""),
     [listMode, setListMode] = useState<"targets" | "captains" | "watch">(
@@ -180,6 +188,7 @@ export default function App() {
   const notify = (text: string, error = false) => setToast({ text, error });
   const forecastArgs = {
     overrides,
+    minutes_schedule: minutesSchedule,
     use_market: useMarket,
     custom_points: customPoints,
     blend_weight: blendWeight,
@@ -250,6 +259,10 @@ export default function App() {
   }, [watch]);
   useEffect(() => {
     localStorage.setItem("open-fpl-minutes", JSON.stringify(overrides));
+    localStorage.setItem(
+      "open-fpl-minutes-schedule",
+      JSON.stringify(minutesSchedule),
+    );
     localStorage.setItem("open-fpl-custom", JSON.stringify(customPoints));
     localStorage.setItem("open-fpl-blend", JSON.stringify(blendWeight));
     localStorage.setItem("open-fpl-custom-name", JSON.stringify(customName));
@@ -265,6 +278,7 @@ export default function App() {
     );
   }, [
     overrides,
+    minutesSchedule,
     customPoints,
     blendWeight,
     customName,
@@ -337,6 +351,7 @@ export default function App() {
       .catch((e) => notify(e.message, true));
   }, [
     overrides,
+    minutesSchedule,
     useMarket,
     customPoints,
     blendWeight,
@@ -382,7 +397,6 @@ export default function App() {
       .finally(() => {
         if (alive) setDetailLoading(false);
       });
-    setMinutesEdit(Math.round(overrides[String(detailId)] ?? 90));
     return () => {
       alive = false;
     };
@@ -679,6 +693,37 @@ export default function App() {
       setBusy("");
     }
   }
+  async function applyStress(
+    job: SensitivityJob,
+    weeks: Week[],
+    label: string,
+  ) {
+    const start = job.settings.solve;
+    const p: Plan = {
+      id: uid(),
+      name: `${job.settings.name} · stress ${label}`,
+      base_squad: start.squad,
+      base_bank: start.bank,
+      free_transfers: start.free_transfers,
+      purchase_prices: start.purchase_prices,
+      used_chips: start.used_chips,
+      weeks: structuredClone(weeks),
+      created_at: new Date().toISOString(),
+    };
+    setBusy("Checking the stress-test branch…");
+    try {
+      const valid = await validatedPlan(p);
+      setPlans((ps) => [...ps, valid]);
+      setActiveId(valid.id);
+      setGw(valid.weeks[0].gw);
+      setTab("lineup");
+      notify("New branch saved and rescored using your current forecasts.");
+    } catch (e) {
+      notify((e as Error).message, true);
+    } finally {
+      setBusy("");
+    }
+  }
   async function refresh() {
     setBusy("Refreshing public feeds…");
     try {
@@ -709,7 +754,7 @@ export default function App() {
     try {
       if (file.size > 5_000_000)
         throw new Error("Choose a CSV smaller than 5 MB.");
-      const { points, minutes, count } = projectionCSV(
+      const { points, minutes, schedules, count } = projectionCSV(
         await file.text(),
         new Set(lookup.keys()),
         data.gameweeks,
@@ -721,9 +766,17 @@ export default function App() {
       }
       if (Object.keys(minutes).length)
         setOverrides((v) => ({ ...v, ...minutes }));
+      if (Object.keys(schedules).length)
+        setMinutesSchedule((current) => {
+          const next = { ...current };
+          Object.entries(schedules).forEach(([id, weeks]) => {
+            next[id] = { ...next[id], ...weeks };
+          });
+          return next;
+        });
       setModal(null);
       notify(
-        `Imported ${count} point forecasts and ${Object.keys(minutes).length} minutes scenarios from ${file.name}.`,
+        `Imported ${count} point forecasts and ${Object.keys(minutes).length + Object.values(schedules).reduce((n, weeks) => n + Object.keys(weeks).length, 0)} minutes assumptions from ${file.name}.`,
       );
     } catch (e) {
       setCsvError((e as Error).message);
@@ -1674,18 +1727,31 @@ export default function App() {
           ) : tab === "fixtures" ? (
             <FixturesView data={data} gw={gw} />
           ) : tab === "optimise" ? (
-            <OptimiseView
-              data={data}
-              plan={active}
-              gw={data.next_gw}
-              settings={settings}
-              onSettings={setSettings}
-              onSolve={runSolve}
-              result={solveResult}
-              busy={busy.startsWith("Optimising")}
-              onApply={() => void applySolve()}
-              onDetail={setDetailId}
-            />
+            <>
+              <OptimiseView
+                data={data}
+                plan={active}
+                gw={data.next_gw}
+                settings={settings}
+                onSettings={setSettings}
+                onSolve={runSolve}
+                result={solveResult}
+                busy={busy.startsWith("Optimising")}
+                onApply={() => void applySolve()}
+                onDetail={setDetailId}
+              />
+              <SensitivityView
+                data={data}
+                plan={active}
+                strategy={settings}
+                forecast={forecastArgs}
+                busy={Boolean(busy)}
+                onApply={(job, weeks, label) =>
+                  void applyStress(job, weeks, label)
+                }
+                onDetail={setDetailId}
+              />
+            </>
           ) : tab === "analysis" ? (
             <AnalysisView
               data={data}
@@ -1697,13 +1763,39 @@ export default function App() {
               onScore={scoreProspective}
             />
           ) : (
-            <MarketView
-              data={data}
-              gw={gw}
-              onDetail={setDetailId}
-              watch={watch}
-              onWatch={onWatch}
-            />
+            <>
+              <div className="market-mode segmented" aria-label="Market view">
+                <button
+                  className={marketMode === "prices" ? "active" : ""}
+                  onClick={() => setMarketMode("prices")}
+                >
+                  Price movement
+                </button>
+                <button
+                  className={marketMode === "references" ? "active" : ""}
+                  onClick={() => setMarketMode("references")}
+                >
+                  Provider shortlists
+                </button>
+              </div>
+              {marketMode === "prices" ? (
+                <MarketView
+                  data={data}
+                  gw={gw}
+                  onDetail={setDetailId}
+                  watch={watch}
+                  onWatch={onWatch}
+                />
+              ) : (
+                <ReferenceView
+                  data={data}
+                  gw={gw}
+                  onDetail={setDetailId}
+                  watch={watch}
+                  onWatch={onWatch}
+                />
+              )}
+            </>
           )}
         </main>
       </div>
@@ -1818,7 +1910,13 @@ export default function App() {
               Use a CSV with <code>player_id, gameweek, expected_points</code>,
               or a provider export with <code>ID, 6_Pts, 7_Pts, …</code>. For
               conditional minutes scenarios, use{" "}
-              <code>player_id, conditional_minutes</code>.
+              <code>player_id, conditional_minutes</code> for a global duration,
+              or{" "}
+              <code>
+                player_id, gameweek, conditional_minutes, availability
+              </code>
+              for weekly assumptions. Availability uses 0–1. Scheduled weeks
+              take priority over point blends.
             </p>
             <label className="range-label">
               Imported model weight<b>{csvWeight}%</b>
@@ -1868,7 +1966,7 @@ export default function App() {
               onClick={() =>
                 download(
                   "open-fpl-import-template.csv",
-                  `player_id,gameweek,expected_points,conditional_minutes\r\n${data.players[0].id},${data.next_gw},${fmt(xp(data.players[0], data.next_gw), 2)},90\r\n`,
+                  `player_id,gameweek,expected_points\r\n${data.players[0].id},${data.next_gw},${fmt(xp(data.players[0], data.next_gw), 2)}\r\n`,
                   "text/csv",
                 )
               }
@@ -1969,13 +2067,20 @@ export default function App() {
                 <span>
                   <b>Manual minutes scenarios</b>
                   <small>
-                    {Object.keys(overrides).length} players customised
+                    {
+                      new Set([
+                        ...Object.keys(overrides),
+                        ...Object.keys(minutesSchedule),
+                      ]).size
+                    }{" "}
+                    players customised
                   </small>
                 </span>
                 <button
                   className="button small"
                   onClick={() => {
                     setOverrides({});
+                    setMinutesSchedule({});
                     notify("Minutes scenarios cleared.");
                   }}
                 >
@@ -2284,53 +2389,39 @@ export default function App() {
                 </p>
               </section>
               <section>
-                <h3>Your minutes scenario</h3>
-                <p className="help-text">
-                  Set a conditional match duration. Availability still applies.
-                  Use 0 to model a benching or absence.
-                </p>
-                <label className="range-label">
-                  <span>Conditional minutes</span>
-                  <b>{minutesEdit} min</b>
-                  <input
-                    type="range"
-                    aria-label="Conditional player minutes"
-                    min="0"
-                    max="90"
-                    step="1"
-                    value={minutesEdit}
-                    onChange={(e) => setMinutesEdit(+e.target.value)}
-                  />
-                </label>
-                <div className="button-row">
-                  <button
-                    className="button primary small"
-                    onClick={() => {
-                      setOverrides((v) => ({
-                        ...v,
-                        [String(detailId)]: minutesEdit,
-                      }));
-                      notify(
-                        `${detailPlayer.name}: ${minutesEdit}-minute scenario applied.`,
-                      );
-                    }}
-                  >
-                    Apply scenario
-                  </button>
-                  <button
-                    className="button small"
-                    onClick={() => {
-                      setOverrides((v) => {
-                        const n = { ...v };
-                        delete n[String(detailId)];
-                        return n;
-                      });
-                      notify("Automatic minutes restored.");
-                    }}
-                  >
-                    Use model
-                  </button>
-                </div>
+                <MinutesScenarioEditor
+                  key={detailId}
+                  player={detailPlayer}
+                  weeks={data.gameweeks}
+                  gw={gw}
+                  globalMinutes={overrides[String(detailId)]}
+                  schedule={minutesSchedule[String(detailId)] ?? {}}
+                  onSchedule={(schedule) =>
+                    setMinutesSchedule((current) => {
+                      const next = { ...current };
+                      if (Object.keys(schedule).length)
+                        next[String(detailId)] = schedule;
+                      else delete next[String(detailId)];
+                      return next;
+                    })
+                  }
+                  onReset={() => {
+                    setOverrides((current) => {
+                      const next = { ...current };
+                      delete next[String(detailId)];
+                      return next;
+                    });
+                    setMinutesSchedule((current) => {
+                      const next = { ...current };
+                      delete next[String(detailId)];
+                      return next;
+                    });
+                    notify(
+                      "Automatic minutes and availability restored for this player.",
+                    );
+                  }}
+                  onNotify={notify}
+                />
                 <div className="player-underlying">
                   <span>
                     xG / 90 <b>{fmt(detailPlayer.xg90, 2)}</b>

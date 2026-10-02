@@ -18,18 +18,23 @@ Root `AGENTS.md` and `.cursor/rules/open-fpl.mdc` explain the new scope. The leg
 - Forecasts, manual planning and fixture grids through GW38. The current pool is 667 players across 20 clubs. The optimiser supports 1–14 GWs, locks/exclusions, decay, saved-FT value, bench weight and ownership preference. Results become separate branches after review.
 - Real FPL Joe near-term fixture expectations and the direct public Elevenify season sheet. Public FPL Form player forecasts match all 667 current IDs; the next three weeks supply an optional 50% default blend.
 - Short-range provider and uploaded CSV anchors extrapolate through future fixture forecasts with fading influence. Direct and extrapolated weeks have distinct labels. FPL Review-style wide CSV exports are accepted.
+- The authorised free Elevenify/Substack account is created and confirmed in Ilmari Chrome. Its normal published tables provide 49 attacking baselines and 99 importance/captain shortlist rows, matching 125 unique current players. Market → Provider shortlists exposes them with units, source times, hashes, mapping coverage, filters and CSV export. They do not provide per-GW points and do not change projections.
+- Per-GW duration and availability schedules, including explicit human recovery assumptions, take priority over provider/CSV layers in scheduled weeks. Parallel normal forecasts preserve other weeks' extrapolation calibration. CSV accepts weekly schedules and rejects duplicates or availability without a GW. Legacy global duration inputs remain compatible.
+- Background seeded strategy stress tests: frozen inputs, progress, cancellation between solves, successful-scenario frequencies, representative branches and JSON reports. Native solves are serialised. Temporary polling failures retain the job and retry; confirmed missing jobs are cleared. User-chosen variation is not calibrated uncertainty.
 - Player search/filter/sort, watchlists, price/transfer view, scoring breakdowns, player history, minutes scenarios, uncalibrated simulations, CSV export and validated plan-file import/export.
 - Historical charts, source timestamps/hashes, compressed raw archives, pre-deadline snapshots, and prospective comparison of the component model, FPL Form and live ensemble on identical player rows.
 
 ## Verification
 
-- **32 backend tests passed:** FPL rules, FT/hit accounting, prices, Free Hit restoration, chip reuse, owned-player exclusion, autosub priority/formation, goalkeeper cover, captain fallback, provider extrapolation and pre-deadline/cohort selection.
-- **9 frontend tests passed:** CSV edge cases, provider export formats, duplicate GW rows, legal lineups and expected squad scoring.
+- **80 backend tests passed:** prior FPL rules/evaluation checks plus weekly minutes/availability, blank/double fixtures, unchanged cached baseline, multi-layer schedule calibration, seeded frozen sensitivity, legal real-MILP scenarios, cancellation/failure/orphan jobs, API bounds, provider mapping/aliases, feed validation and cached/unavailable references.
+- **14 frontend tests passed:** CSV edge cases and weekly schedules, provider export formats, duplicate GW rows, legal lineups, expected squad scoring, transient stress polling recovery and confirmed-404 handling.
 - Production TypeScript/Vite build and Python undefined/unused-name checks passed.
-- Real API checks: health, forecasts, zero-minute scenario, fresh legal squad, solver/server total agreement, plan validation, production assets, public team import, forecast capture and pending-only prospective scoring.
+- Real API checks: prior checks plus both reference feeds and a scheduled zero-minute GW passing through provider plus sourced CSV layers. Every other 32 GW forecast record remains exactly equal to normal output, including minutes, components and provenance. An unknown scheduled player is rejected with HTTP 422.
 - Browser checks: imports, transfers/rejections, captain/vice changes, chips, watchlists, minutes scenarios, optimiser review/application, fixtures, analysis, 33-week timeline, provider/extrapolation labels and wide CSV import using real FPL Form values. Test-only branches and CSV settings were removed.
+- New browser checks: reference pagination/units/provenance, selected-GW minutes save/reset, completed 8/8 stress scenarios, independent server-validated branch adoption, restart/404 recovery and simulated one-request connection failure followed by successful polling recovery. Original plans remain preserved; test branches and minutes assumptions were removed.
+- A 20-scenario, six-GW cancellation check stopped after 4 completed scenarios and displayed partial results with the correct denominator.
 - Mobile DOM layout checked at 390×844: no document overflow, all five midfield tiles fit, timelines scroll internally and branch switching is available. Desktop layout also inspected.
-- The shared browser intermittently disconnected. Screenshot capture repeatedly failed while navigation/evaluation worked. **Pixel-level screenshot QA is incomplete.** No successful application screenshot is claimed.
+- Reference tables also pass mobile DOM checks at 390×844: no document overflow; wide data tables scroll internally. The shared browser intermittently fails screenshots. Desktop captures succeeded, but the bitmap is visibly blurred, so detailed pixel/readability QA remains incomplete.
 - Warm full-season forecasts were measured at approximately **0.9 seconds** after response/copy improvements; initial data acquisition is slower and depends on upstream feeds.
 
 ## Historical evidence
@@ -50,8 +55,8 @@ GW6 was captured before its official 2026-10-10 10:00 UTC deadline. The latest f
 ## Next research priorities
 
 1. Capture updates near deadlines and score completed weeks. Compare the live blend with its component and FPL Form inputs before changing weights or decay.
-2. Connect legitimate free/account-accessible FPL Review or Elevenify player forecasts where available; user exports already work. The user explicitly authorises provider data as inputs. No premium access is claimed.
-3. Improve minutes, injury recovery and team-selection news. Scalar point anchoring cannot identify future minutes or attacking rates by itself.
+2. Inspect FPL Review's authorised free Patreon login and export availability, and Elevenify's linked fixture-specific goal/assist views. Free Elevenify signup and baseline/shortlist integration are complete; no premium point export is claimed.
+3. Improve automatic minutes, injury recovery and team-selection news. Human weekly scenarios now work, but scalar point anchoring cannot identify future minutes or attacking rates by itself.
 4. Check uncertainty calibration, bonus/BPS reconstruction and correlated appearance/clean-sheet outcomes on a fresh holdout.
 5. For public hosting, add accounts/sync and appropriate provider redistribution rights. This deliverable is a local personal tool.
 

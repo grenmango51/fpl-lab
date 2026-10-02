@@ -41,6 +41,47 @@ describe("provider exports", () => {
     ).toThrow("Duplicate forecast");
   });
 });
+describe("weekly minutes imports", () => {
+  it("keeps different GW assumptions distinct and preserves availability zero", () => {
+    const result = projectionCSV(
+      "player_id,gameweek,conditional_minutes,availability\n12,6,0,0\n12,8,90,1",
+      new Set([12]),
+      [6, 7, 8],
+    );
+    expect(result.minutes).toEqual({});
+    expect(result.schedules).toEqual({
+      "12": {
+        "6": { conditional_minutes: 0, availability: 0 },
+        "8": { conditional_minutes: 90, availability: 1 },
+      },
+    });
+  });
+  it("retains legacy global duration imports", () => {
+    expect(
+      projectionCSV("player_id,conditional_minutes\n12,75", new Set([12]), [6])
+        .minutes,
+    ).toEqual({ "12": 75 });
+  });
+  it("rejects repeated GW assumptions, missing GW for availability and percentage units", () => {
+    expect(() =>
+      projectionCSV(
+        "player_id,gameweek,conditional_minutes\n12,6,70\n12,6,80",
+        new Set([12]),
+        [6],
+      ),
+    ).toThrow("Duplicate minutes");
+    expect(() =>
+      projectionCSV("player_id,availability\n12,1", new Set([12]), [6]),
+    ).toThrow("require a gameweek");
+    expect(() =>
+      projectionCSV(
+        "player_id,gameweek,availability\n12,6,50",
+        new Set([12]),
+        [6],
+      ),
+    ).toThrow("between 0 and 1");
+  });
+});
 describe("lineup selection", () => {
   it("keeps a legal formation even when all midfielders dominate", () => {
     let id = 1;

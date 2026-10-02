@@ -17,6 +17,8 @@ from pathlib import Path
 
 import httpx
 
+from .references import FEEDS as REFERENCE_FEEDS, build_reference
+
 ROOT = Path(__file__).resolve().parents[1]
 CACHE = ROOT / "data" / "cache"
 FPL = "https://fantasy.premierleague.com/api"
@@ -86,6 +88,8 @@ def fetch(url: str, key: str, ttl=3600, *, optional=False, form=None):
             "sha256": hashlib.sha256(raw).hexdigest(),
             "bytes": len(raw),
             "status": "live",
+            "last_modified": response.headers.get("last-modified"),
+            "content_type": response.headers.get("content-type"),
         }
         if form is not None:
             meta.update({"request_method": "POST", "request_form": form})
@@ -397,6 +401,23 @@ def load_fplform(season, start, players, teams):
     }
 
 
+def load_elevenify_reference(season, start, players, teams):
+    """Read only the normal published assets; unavailable references are optional."""
+    raw_by_feed = {
+        feed: fetch(config["url"], config["source_key"], 3600, optional=True)
+        for feed, config in REFERENCE_FEEDS.items()
+    }
+    reference = build_reference(
+        raw_by_feed, _statuses, players, teams, season=season, next_gw=start
+    )
+    for feed in reference["feeds"].values():
+        if feed["validation"]:
+            _statuses.setdefault(feed["source_key"], {})["validation"] = feed[
+                "validation"
+            ]
+    return reference
+
+
 def get_data(force=False):
     global _dataset, _loaded
     with _lock:
@@ -441,6 +462,9 @@ def get_data(force=False):
             )
         elevenify = load_elevenify(joe, teams)
         fplform = load_fplform(season, next_event["id"], players, teams)
+        elevenify_reference = load_elevenify_reference(
+            season, next_event["id"], players, teams
+        )
         history = []
         for start in range(year - 3, year):
             history.extend(load_archive(f"{start}-{str(start + 1)[-2:]}"))
@@ -515,6 +539,7 @@ def get_data(force=False):
             "joe": joe,
             "elevenify": elevenify,
             "fplform": fplform,
+            "elevenify_reference": elevenify_reference,
             "history": history,
             "season": season,
             "next_gw": next_event["id"],

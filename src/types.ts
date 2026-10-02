@@ -24,6 +24,11 @@ export type Forecast = {
   fixtures: Fixture[];
   components: Record<string, number>;
   pplay?: number;
+  minutes_scenario?: {
+    conditional_minutes: number | null;
+    availability: number;
+    label: string;
+  };
   prediction_source?: {
     kind: "provider" | "extrapolated";
     name: string;
@@ -35,6 +40,11 @@ export type Forecast = {
     source_at: string | null;
   };
 };
+export type MinutesScenario = {
+  conditional_minutes?: number;
+  availability?: number;
+};
+export type MinutesSchedule = Record<string, Record<string, MinutesScenario>>;
 export type Player = {
   id: number;
   code: number;
@@ -83,6 +93,60 @@ export type Source = {
   sha256?: string;
   error?: string;
 };
+export type PlayerReference = {
+  player_id: number;
+  attacking_baseline?: {
+    goal: number;
+    assist: number;
+    goal_involvement: number;
+    conditioning: string;
+    duration_minutes: null;
+    gameweek: null;
+    source_key: string;
+  };
+  future_importance?: number;
+  captain?: boolean;
+  captain_gameweek?: number;
+  matches: {
+    source_key: string;
+    row: number;
+    provider_name: string;
+    official_name: string;
+    team: string;
+    method: string;
+  }[];
+};
+export type ReferenceData = {
+  provider: string;
+  season: string;
+  season_inferred: boolean;
+  available: boolean;
+  status: string;
+  players: Record<string, PlayerReference>;
+  feeds: Record<
+    string,
+    {
+      url: string;
+      status: string;
+      source_at: string | null;
+      sha256: string | null;
+      last_modified: string | null;
+      available: boolean;
+      row_count: number;
+      matched_players: number;
+      captain_gameweek?: number;
+      validation: string | null;
+      diagnostics: Record<string, unknown[]>;
+    }
+  >;
+  coverage: {
+    official_players: number;
+    matched_players: number;
+    baseline_players: number;
+    importance_players: number;
+  };
+  limitations: string[];
+};
 export type Bootstrap = {
   players: Player[];
   gameweeks: number[];
@@ -102,6 +166,7 @@ export type Bootstrap = {
   sources: Record<string, Source>;
   limitations: string[];
   parameters: Record<string, number>;
+  reference_data?: ReferenceData;
   forecast_layers?: {
     name: string;
     weight: number;
@@ -153,6 +218,73 @@ export type SolveResult = {
   candidate_count: number;
   pool_count: number;
   assumptions: string[];
+};
+export type SensitivitySettings = {
+  horizon: number;
+  seconds: number;
+  scenarios: number;
+  variation: number;
+  seed: number;
+};
+export type SensitivityVariant = {
+  count: number;
+  scenario: number;
+  weeks: Week[];
+  base_value: number;
+  gap: number;
+};
+export type SensitivityJob = {
+  id: string;
+  status: "queued" | "running" | "complete" | "cancelled" | "failed";
+  phase: string;
+  created_at: string;
+  finished_at: string | null;
+  attempted: number;
+  completed: number;
+  total: number;
+  cancel_requested: boolean;
+  error: string | null;
+  failures: { scenario: number; message: string }[];
+  settings: {
+    variation: number;
+    seed: number;
+    name: string;
+    solve: {
+      squad: number[];
+      bank: number;
+      free_transfers: number;
+      purchase_prices: Record<string, number>;
+      used_chips: { chip: Chip; gw: number }[];
+      start_gw: number;
+      horizon: number;
+      seconds: number;
+      decay: number;
+    };
+  };
+  forecast: {
+    model_version: string;
+    loaded_at: string;
+    sha256: string;
+    layers: { name: string; weight: number }[];
+  };
+  baseline: SolveResult | null;
+  baseline_value: number | null;
+  summary: {
+    denominator: number;
+    frequencies: Record<
+      "purchases" | "sales" | "captains",
+      {
+        id: number;
+        count: number;
+        fraction: number;
+      }[]
+    >;
+    roll_count: number;
+    differences: { mean: number; p10: number; p90: number } | null;
+    variants: SensitivityVariant[];
+  };
+  method: string;
+  limitations: string[];
 };
 export type Metric = { mae: number; rmse: number; bias: number; count: number };
 export type Prospective = {

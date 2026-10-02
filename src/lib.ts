@@ -1,4 +1,4 @@
-import type { Player, Week, Chip, Plan } from "./types";
+import type { Player, Week, Chip, Plan, MinutesSchedule } from "./types";
 import { teamPoints } from "./scoring";
 
 export const fmt = (n: number, d = 1) =>
@@ -35,6 +35,14 @@ export const clubColors: Record<string, [string, string]> = {
   TOT: ["#f1f2ef", "#f1f2ef"],
   SUN: ["#e35b60", "#f3f3ef"],
 };
+export class ApiError extends Error {
+  readonly status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
 export async function api<T>(path: string, body?: unknown): Promise<T> {
   const r = await fetch(
     `/api${path}`,
@@ -51,7 +59,7 @@ export async function api<T>(path: string, body?: unknown): Promise<T> {
       .json()
       .catch(() => ({ detail: `Request failed (${r.status})` }));
     const detail = d.detail;
-    throw new Error(
+    throw new ApiError(
       typeof detail === "string"
         ? detail
         : detail?.errors
@@ -61,6 +69,7 @@ export async function api<T>(path: string, body?: unknown): Promise<T> {
                 .map((e: { msg?: string }) => e.msg ?? "Invalid input.")
                 .join(" ")
             : "The request could not be completed. Check your inputs.",
+      r.status,
     );
   }
   return r.json() as Promise<T>;
@@ -207,6 +216,7 @@ export function parseCSV(text: string): Record<string, string>[] {
 export function projectionCSV(text: string, ids: Set<number>, weeks: number[]) {
   const points: Record<string, Record<string, number>> = {};
   const minutes: Record<string, number> = {};
+  const schedules: MinutesSchedule = {};
   let count = 0;
   const assign = (id: string, gw: string, raw: string) => {
     const value = Number(raw);
@@ -232,14 +242,50 @@ export function projectionCSV(text: string, ids: Set<number>, weeks: number[]) {
       throw new Error(
         `Unknown player_id: ${rawId || "(missing)"}. Use current official FPL player IDs.`,
       );
-    if (
-      row.conditional_minutes !== undefined &&
-      row.conditional_minutes !== ""
-    ) {
-      const value = Number(row.conditional_minutes);
-      if (!Number.isFinite(value) || value < 0 || value > 90)
+    const hasMinutes =
+      row.conditional_minutes !== undefined && row.conditional_minutes !== "";
+    const hasAvailability =
+      row.availability !== undefined && row.availability !== "";
+    if (hasMinutes || hasAvailability) {
+      const duration = Number(row.conditional_minutes);
+      const availability = Number(row.availability);
+      if (
+        hasMinutes &&
+        (!Number.isFinite(duration) || duration < 0 || duration > 90)
+      )
         throw new Error(`Invalid conditional_minutes for player ${id}.`);
-      minutes[id] = value;
+      if (
+        hasAvailability &&
+        (!Number.isFinite(availability) || availability < 0 || availability > 1)
+      )
+        throw new Error(
+          `Availability must be between 0 and 1 for player ${id}.`,
+        );
+      const rawGW = row.gameweek || row.gw;
+      if (rawGW) {
+        const gw = String(Number(rawGW));
+        if (!Number.isInteger(Number(rawGW)) || !weeks.includes(Number(gw)))
+          throw new Error(
+            `Invalid gameweek for minutes assumption, player ${id}.`,
+          );
+        if (schedules[id]?.[gw])
+          throw new Error(
+            `Duplicate minutes assumption for player ${id}, GW${gw}.`,
+          );
+        schedules[id] = {
+          ...schedules[id],
+          [gw]: {
+            ...(hasMinutes ? { conditional_minutes: duration } : {}),
+            ...(hasAvailability ? { availability } : {}),
+          },
+        };
+      } else {
+        if (hasAvailability)
+          throw new Error("Availability assumptions require a gameweek.");
+        if (minutes[id] !== undefined)
+          throw new Error(`Duplicate global minutes for player ${id}.`);
+        minutes[id] = duration;
+      }
     }
     if (row.expected_points !== undefined && row.expected_points !== "")
       assign(id, row.gameweek || row.gw, row.expected_points);
@@ -252,9 +298,9 @@ export function projectionCSV(text: string, ids: Set<number>, weeks: number[]) {
           assign(id, match[1], value);
       }
   }
-  if (!count && !Object.keys(minutes).length)
+  if (!count && !Object.keys(minutes).length && !Object.keys(schedules).length)
     throw new Error(
       "CSV needs player_id/gameweek/expected_points, ID with numeric GW_Pts columns, or player_id/conditional_minutes.",
     );
-  return { points, minutes, count };
+  return { points, minutes, schedules, count };
 }

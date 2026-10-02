@@ -14,7 +14,7 @@ Minutes have three states: no appearance, short appearance (1–59 minutes), lon
 
 Conditional durations are the corresponding weighted observed means, shrunk by one pseudo-match toward 80 minutes (long) and 20 minutes (short). `xMins = P60 * E[M|long] + Pshort * E[M|short]`. The official next-round availability percentage multiplies the state probabilities. Once three current-season games exist, that season determines the live appearance profile; rate estimates retain longer history.
 
-Manual minutes set a conditional scenario duration and select the corresponding short/long state. Official availability still applies. This is explicitly an assumption, rather than a calibrated mean forecast. A 0-minute scenario gives 0 points.
+Manual minutes set a conditional scenario duration and select the corresponding short/long state. Per-GW schedules accept duration (0–90) and/or an availability assumption (0–1), with each field taking precedence independently. Unspecified duration retains a legacy global duration or the model profile; unspecified availability retains official current availability. Duration alone cannot restore an unavailable player. An explicit availability assumption can describe a return, but it is a human scenario, not medical news or a calibrated recovery forecast. A 0-minute scenario gives 0 points. The same assumption applies to each fixture in a double; blanks stay zero. Components, expected minutes and appearance probabilities are recomputed together.
 
 ## Player rates and team adjustment
 
@@ -39,7 +39,7 @@ Summing each fixture's components gives a GW forecast. Blank gameweeks are zero.
 
 ## Provider anchors and extrapolation
 
-The default live forecast blends the normal public **FPL Form** export for the next three GWs at 50%. IDs, clubs, positions and prices are checked against the current official pool; at least 80% of rows must match. Source values and hashes stay local. Explicit manual minutes scenarios bypass this automatic provider blend for the affected player. User CSV projections can form a further weighted layer.
+The default live forecast blends the normal public **FPL Form** export for the next three GWs at 50%. IDs, clubs, positions and prices are checked against the current official pool; at least 80% of rows must match. Source values and hashes stay local. Legacy global minutes overrides bypass this automatic provider blend for that player. Per-GW minutes/availability schedules bypass every point and probability blend only in the scheduled weeks, including imported CSVs. A parallel unscheduled forecast passes through the same provider/CSV layers for extrapolation calibration, so a one-week assumption does not change other weeks' provider scales. User CSV projections can form a further weighted layer.
 
 For each player's nonblank anchor weeks with base points at least 0.5, use `w_g = 1/(g - next_gw + 1)` and `r = clip(sum(w_g * provider_points_g)/sum(w_g * base_points_g), 0, 3)`. Beyond that player's last supplied week, `a_g = blend_weight * 2 ** (-(g-last_anchor)/half_life)` and `forecast_g = base_g * (1 + a_g * (r-1))`. The default half-life is six GWs. Direct weeks use an ordinary weighted blend. Blanks stay zero, and tiny/zero base forecasts do not identify an extrapolation scale.
 
@@ -58,6 +58,18 @@ Wildcard changes become permanent without using saved FTs. Free Hit creates a te
 Displayed team totals include expected autosubs and vice-captain fallback. Under independent player appearances, compute the distribution of missing starters by position, enumerate the eight bench appearance states, and select the first-priority feasible bench subset preserving a legal nominal formation. Conditional bench points are `unconditional_points / P(appearance)`. Reserve goalkeeper contribution is `P(starting keeper absent) * reserve keeper points`. Vice contribution is `P(captain absent) * vice points`, multiplied by two for TC. Any cameo blocks an autosub; double-GW appearance is `1 - product(P(absent in each fixture))`. BB counts all 15 without an extra autosub term.
 
 These are exact expectations **within the independent-appearance approximation**, not calibrated probabilities or a reconstruction of correlated team selection. The MILP objective still uses a linear bench weight and omits nonlinear fallback interactions; its output totals are recomputed with the fuller squad-scoring calculation. The “Best XI” shortcut compares legal formation candidates and bench orders; it is not a full enumeration of every possible XI.
+
+## Provider reference tables
+
+Elevenify's free subscription was created and confirmed in the assigned Chrome profile. Its page's normal Datawrapper CSV assets supply attacking baselines for 49 selected players and Fast Fantasy importance scores for 99, covering 125 unique current players at extraction on 2026-10-02. The Market → Provider shortlists view matches exact normalised names within a validated current club/position cohort, with two documented aliases, and shows missing references as missing. A feed with malformed values, duplicate IDs or less than 80% matched coverage is disabled; stale caches and rejected mappings are disclosed. Season is inferred from current-player matches, not explicitly supplied by the CSV.
+
+Attacking baselines condition on a start against an average Premier League team; duration is unspecified. They are not per-90 rates or current-fixture point forecasts. Importance is a ranking score with an unspecified horizon, not points or an appearance probability. A numbered captaincy flag applies only to its source GW. Fast Fantasy incorporates FPL Review Massive Data and is not an independent second forecast. These tables remain reference data and do not change numerical projections. Source extraction times, hashes and provider Last-Modified headers accompany the local cached records.
+
+## Strategy sensitivity
+
+The optimiser can run 3–20 seeded scenarios across 1–6 GWs. Each player's points receive a mean-one lognormal multiplier, constant across that horizon, with a user-chosen coefficient of variation. Fixtures, appearance probabilities and prices remain fixed. Forecasts and solver settings are frozen before the background job; reference squad candidates are included in scenario pools. Native solver calls are serialised. Cancellation applies between solves, and partial failures reduce the successful-scenario denominator.
+
+First-GW purchase, sale and captain counts describe these sampled assumptions. They are not confidence levels or a fitted uncertainty distribution. Differences use discounted full squad expected points minus hits, without saved-FT utility, relative to the fixed reference strategy under each scenario; a difference can be negative because search/time limits and the linear objective approximate that display metric. Representative strategies can become independently server-validated branches using current normal forecasts. Jobs remain in memory, expose progress and permit JSON export; restarting the server loses them. Browser polling retains the job through temporary connection failures and clears it only after a confirmed missing-job response or terminal state.
 
 ## Honest evaluation
 

@@ -12,13 +12,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from .data import ROOT, FPL, fetch, get_data
 from .model import projections, player_history, simulate_player
 from .solver import optimise, best_lineup, validate_squad, sale_price
 from .scoring import team_points
 from .ensemble import blend_forecasts
+from .sensitivity import jobs as sensitivity_jobs
 
 app = FastAPI(title="Open FPL", version="0.1.0")
 app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=3)
@@ -31,8 +32,22 @@ app.add_middleware(
 log = logging.getLogger(__name__)
 
 
+class MinutesScenario(BaseModel):
+    conditional_minutes: float | None = Field(default=None, ge=0, le=90)
+    availability: float | None = Field(default=None, ge=0, le=1)
+
+    @model_validator(mode="after")
+    def nonempty(self):
+        if self.conditional_minutes is None and self.availability is None:
+            raise ValueError("A minutes scenario needs duration or availability.")
+        return self
+
+
 class ForecastRequest(BaseModel):
     overrides: dict[str, float] = Field(default_factory=dict)
+    minutes_schedule: dict[str, dict[str, MinutesScenario]] = Field(
+        default_factory=dict
+    )
     use_market: bool = True
     custom_points: dict[str, dict[str, float]] = Field(default_factory=dict)
     blend_weight: float = Field(default=0, ge=0, le=1)
@@ -51,9 +66,59 @@ class ForecastRequest(BaseModel):
             )
         return self.overrides
 
+    def validated_schedule(self):
+        if not self.minutes_schedule:
+            return {}
+        data = get_data()
+        if len(self.minutes_schedule) > 700 or any(
+            not pid.isdigit()
+            or pid != str(int(pid))
+            or int(pid) not in data["players"]
+            or len(weeks) > 38
+            or not weeks
+            or any(
+                not gw.isdigit()
+                or gw != str(int(gw))
+                or not data["next_gw"] <= int(gw) <= 38
+                for gw in weeks
+            )
+            for pid, weeks in self.minutes_schedule.items()
+        ):
+            raise HTTPException(
+                422,
+                "Minutes schedules must use current player IDs and remaining gameweeks.",
+            )
+        return self.model_dump(exclude_none=True)["minutes_schedule"]
+
 
 def forecast_for(request: ForecastRequest):
-    payload = projections(request.validated_overrides(), request.use_market)
+    schedule = request.validated_schedule()
+    overrides = request.validated_overrides()
+    payload = projections(overrides, request.use_market, schedule)
+    calibration = projections(overrides, request.use_market) if schedule else None
+    payload["reference_data"] = get_data().get("elevenify_reference", {})
+
+    def apply_layer(points, weight, name, probabilities=None, source_at=None):
+        nonlocal payload, calibration
+        previous = calibration
+        args = (
+            points,
+            weight,
+            name,
+            request.extrapolate,
+            request.anchor_half_life,
+            probabilities,
+            source_at,
+        )
+        if calibration is not None:
+            calibration = blend_forecasts(calibration, *args)
+        payload = blend_forecasts(
+            payload,
+            *args,
+            minutes_schedule=schedule,
+            calibration_payload=previous,
+        )
+
     if request.use_provider and request.provider_weight > 0:
         source = get_data().get("fplform", {})
         supplied = {
@@ -64,13 +129,10 @@ def forecast_for(request: ForecastRequest):
         probabilities = {
             pid: v["probabilities"] for pid, v in source.get("players", {}).items()
         }
-        payload = blend_forecasts(
-            payload,
+        apply_layer(
             supplied,
             request.provider_weight,
             "FPL Form",
-            request.extrapolate,
-            request.anchor_half_life,
             probabilities,
             source.get("source_at"),
         )
@@ -94,14 +156,12 @@ def forecast_for(request: ForecastRequest):
                 422,
                 "Custom forecasts must use current player IDs, available gameweeks and finite points between -5 and 60.",
             )
-    return blend_forecasts(
-        payload,
+    apply_layer(
         request.custom_points,
         request.blend_weight,
         request.custom_name or "Imported CSV",
-        request.extrapolate,
-        request.anchor_half_life,
     )
+    return payload
 
 
 class ChipUsage(BaseModel):
@@ -137,6 +197,16 @@ class Week(BaseModel):
     captain: int
     vice: int
     chip: Literal["none", "wildcard", "freehit", "benchboost", "triplecaptain"] = "none"
+
+
+class SensitivityRequest(SolveRequest):
+    squad: list[int] = Field(min_length=15, max_length=15)
+    horizon: int = Field(default=3, ge=1, le=6)
+    seconds: int = Field(default=4, ge=2, le=8)
+    scenarios: int = Field(default=8, ge=3, le=20)
+    variation: float = Field(default=0.25, ge=0, le=0.75)
+    seed: int = Field(default=2026, ge=0, le=2147483647)
+    name: str = Field(default="Forecast stress test", max_length=120)
 
 
 class PlanRequest(ForecastRequest):
@@ -223,6 +293,57 @@ def lineup(request: SolveRequest):
         request.start_gw,
         request.chips.get(str(request.start_gw), "none"),
     )
+
+
+@app.post("/api/sensitivity")
+def start_sensitivity(request: SensitivityRequest):
+    payload = forecast_for(request)
+    if (
+        request.start_gw not in payload["gameweeks"]
+        or request.start_gw + request.horizon - 1 > payload["gameweeks"][-1]
+    ):
+        raise HTTPException(
+            422, "The requested horizon exceeds the available forecast window."
+        )
+    extra_fields = set(ForecastRequest.model_fields) | {
+        "scenarios",
+        "variation",
+        "seed",
+        "name",
+    }
+    args = request.model_dump(exclude=extra_fields)
+    try:
+        return sensitivity_jobs.start(
+            payload,
+            args,
+            request.scenarios,
+            request.variation,
+            request.seed,
+            request.name,
+        )
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@app.get("/api/sensitivity/{job_id}")
+def get_sensitivity(job_id: str):
+    try:
+        return sensitivity_jobs.get(job_id)
+    except KeyError as exc:
+        raise HTTPException(
+            404,
+            "This stress test is no longer on the server. It may have restarted; start a new test.",
+        ) from exc
+
+
+@app.post("/api/sensitivity/{job_id}/cancel")
+def cancel_sensitivity(job_id: str):
+    try:
+        return sensitivity_jobs.cancel(job_id)
+    except KeyError as exc:
+        raise HTTPException(
+            404, "This stress test is no longer on the server."
+        ) from exc
 
 
 @app.post("/api/plan/validate")
@@ -581,7 +702,9 @@ def save_snapshot(request: ForecastRequest):
     path.parent.mkdir(parents=True, exist_ok=True)
     base = {
         p["id"]: p
-        for p in projections(request.overrides, request.use_market)["players"]
+        for p in projections(
+            request.overrides, request.use_market, request.validated_schedule()
+        )["players"]
     }
     vendor = get_data().get("fplform", {}).get("players", {})
     snapshot = {

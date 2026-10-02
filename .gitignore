@@ -8,6 +8,7 @@ data/raw/
 data/snapshots/
 data/history/
 data/exports/
+data/prospective.json
 *.log
 *.tsbuildinfo
 .env

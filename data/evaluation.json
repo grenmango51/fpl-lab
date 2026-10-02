@@ -1,0 +1,775 @@
+{
+  "generated_at": "2026-10-02T15:48:23.269918+00:00",
+  "version": "open-fpl-components-0.1",
+  "train_seasons": [
+    "2023-24",
+    "2024-25"
+  ],
+  "test_season": "2025-26",
+  "method": "GW-grouped walk-forward: player and team states update only after all predictions for a GW. ML parameters fitted on 2023/24\u20132024/25 only; 2025/26 held out.",
+  "feature_names": [
+    "position",
+    "price",
+    "home",
+    "xmins",
+    "p60",
+    "pplay",
+    "xg90",
+    "xa90",
+    "bonus90",
+    "dc_probability",
+    "saves90",
+    "team_goals",
+    "conceded",
+    "form",
+    "ppg",
+    "samples",
+    "component_points"
+  ],
+  "parameters": {
+    "rate_prior_minutes": 450,
+    "minutes_half_life_matches": 3,
+    "rate_half_life_matches": 15,
+    "appearance_prior_matches": 0.25,
+    "long_minutes_prior": 80,
+    "short_minutes_prior": 20,
+    "team_prior_matches": 8,
+    "team_home_multiplier": 1.1
+  },
+  "models": {
+    "Component model": {
+      "mae": 2.289121585089525,
+      "rmse": 3.075726389686621,
+      "bias": -0.10986867989902462,
+      "count": 7720
+    },
+    "ML challenger": {
+      "mae": 2.331202173180066,
+      "rmse": 3.083743041884121,
+      "bias": 0.003189416489840829,
+      "count": 7720
+    },
+    "Recent 5-match form": {
+      "mae": 2.57485103626943,
+      "rmse": 3.357648411751482,
+      "bias": 0.3312802245250432,
+      "count": 7720
+    },
+    "Appearance-adjusted PPG": {
+      "mae": 2.310096441945839,
+      "rmse": 3.15568484602505,
+      "bias": -0.2554166150011056,
+      "count": 7720
+    }
+  },
+  "all_players": {
+    "Component model": {
+      "mae": 0.9621800199057693,
+      "rmse": 1.9602934289585106,
+      "bias": -0.10626689368903729,
+      "count": 29757
+    },
+    "ML challenger": {
+      "mae": 1.0092664745173405,
+      "rmse": 1.959913458427187,
+      "bias": -0.013991863004820672,
+      "count": 29757
+    },
+    "Recent 5-match form": {
+      "mae": 1.0528564707463788,
+      "rmse": 2.1119456406699166,
+      "bias": -7.673264553998206e-05,
+      "count": 29757
+    },
+    "Appearance-adjusted PPG": {
+      "mae": 0.9876457867875518,
+      "rmse": 1.99716625237009,
+      "bias": -0.10171847825004042,
+      "count": 29757
+    }
+  },
+  "minutes": {
+    "mae": 24.311927555906426,
+    "rmse": 30.97593542003162,
+    "bias": -0.5809567812050478,
+    "count": 7720
+  },
+  "positions": [
+    {
+      "position": "GKP",
+      "mae": 2.1214706808998596,
+      "rmse": 2.7253138695108783,
+      "bias": -0.025382720778307048,
+      "count": 740
+    },
+    {
+      "position": "DEF",
+      "mae": 2.3949405381310007,
+      "rmse": 3.1202960056630027,
+      "bias": -0.11074317750066326,
+      "count": 2946
+    },
+    {
+      "position": "MID",
+      "mae": 2.157199013016371,
+      "rmse": 3.027328359886934,
+      "bias": -0.13466885900429557,
+      "count": 3274
+    },
+    {
+      "position": "FWD",
+      "mae": 2.61048149878383,
+      "rmse": 3.41194122066606,
+      "bias": -0.0819049344046121,
+      "count": 760
+    }
+  ],
+  "gameweeks": [
+    {
+      "gw": 1,
+      "component": 2.2471400407268933,
+      "ml": 2.3023269611614525,
+      "form": 2.484393063583815,
+      "ppg": 2.252934464699328,
+      "count": 173
+    },
+    {
+      "gw": 2,
+      "component": 2.1970727544520012,
+      "ml": 2.249412092851522,
+      "form": 2.805714285714286,
+      "ppg": 2.4333130471231925,
+      "count": 210
+    },
+    {
+      "gw": 3,
+      "component": 2.2439941287296,
+      "ml": 2.265410463521016,
+      "form": 2.6104999999999996,
+      "ppg": 2.3414464357635496,
+      "count": 200
+    },
+    {
+      "gw": 4,
+      "component": 2.355452157832365,
+      "ml": 2.427225845578487,
+      "form": 2.5274796747967474,
+      "ppg": 2.3985367369134125,
+      "count": 205
+    },
+    {
+      "gw": 5,
+      "component": 2.147764343523103,
+      "ml": 2.2037008050246496,
+      "form": 2.414776632302406,
+      "ppg": 2.2228630228413246,
+      "count": 194
+    },
+    {
+      "gw": 6,
+      "component": 2.231660638541353,
+      "ml": 2.263061548722638,
+      "form": 2.466148531951641,
+      "ppg": 2.209500276558463,
+      "count": 193
+    },
+    {
+      "gw": 7,
+      "component": 2.121044088008099,
+      "ml": 2.18823892811907,
+      "form": 2.435148514851485,
+      "ppg": 2.155008147304005,
+      "count": 202
+    },
+    {
+      "gw": 8,
+      "component": 2.3081220785689323,
+      "ml": 2.374321122977302,
+      "form": 2.6458333333333335,
+      "ppg": 2.272999286535697,
+      "count": 204
+    },
+    {
+      "gw": 9,
+      "component": 2.4055868054020078,
+      "ml": 2.376215033715148,
+      "form": 2.571707317073171,
+      "ppg": 2.35359449679111,
+      "count": 205
+    },
+    {
+      "gw": 10,
+      "component": 2.2251444435472445,
+      "ml": 2.2446013082610676,
+      "form": 2.5783251231527093,
+      "ppg": 2.313195063419397,
+      "count": 203
+    },
+    {
+      "gw": 11,
+      "component": 2.363503236216564,
+      "ml": 2.3694582353716624,
+      "form": 2.621256038647344,
+      "ppg": 2.414646667881579,
+      "count": 207
+    },
+    {
+      "gw": 12,
+      "component": 2.439970346073771,
+      "ml": 2.528080133414735,
+      "form": 2.7323809523809524,
+      "ppg": 2.4975353318830056,
+      "count": 210
+    },
+    {
+      "gw": 13,
+      "component": 2.380504205528415,
+      "ml": 2.4101052501818043,
+      "form": 2.6647342995169083,
+      "ppg": 2.414970629487787,
+      "count": 207
+    },
+    {
+      "gw": 14,
+      "component": 2.366918819398097,
+      "ml": 2.397994898166303,
+      "form": 2.646078431372549,
+      "ppg": 2.3035542541673,
+      "count": 204
+    },
+    {
+      "gw": 15,
+      "component": 2.3130076366202594,
+      "ml": 2.346551860971118,
+      "form": 2.4735849056603776,
+      "ppg": 2.3764398594158087,
+      "count": 212
+    },
+    {
+      "gw": 16,
+      "component": 2.502783628501215,
+      "ml": 2.487515930910598,
+      "form": 2.68955223880597,
+      "ppg": 2.4148570724111784,
+      "count": 201
+    },
+    {
+      "gw": 17,
+      "component": 2.3158175700290475,
+      "ml": 2.3798698589076017,
+      "form": 2.7573459715639808,
+      "ppg": 2.2518664290497,
+      "count": 211
+    },
+    {
+      "gw": 18,
+      "component": 2.3220147619023943,
+      "ml": 2.3284528949064134,
+      "form": 2.6068627450980397,
+      "ppg": 2.31182027018526,
+      "count": 204
+    },
+    {
+      "gw": 19,
+      "component": 2.3586114552015194,
+      "ml": 2.4185444349879797,
+      "form": 2.5980676328502414,
+      "ppg": 2.284199222501616,
+      "count": 207
+    },
+    {
+      "gw": 20,
+      "component": 2.2304501201009193,
+      "ml": 2.3063025852840577,
+      "form": 2.6990196078431374,
+      "ppg": 2.3515560876204717,
+      "count": 204
+    },
+    {
+      "gw": 21,
+      "component": 2.1119606229999546,
+      "ml": 2.171805695450598,
+      "form": 2.4068292682926824,
+      "ppg": 2.2163259428588824,
+      "count": 205
+    },
+    {
+      "gw": 22,
+      "component": 2.313420365800479,
+      "ml": 2.3782473616337554,
+      "form": 2.723444976076555,
+      "ppg": 2.355629014547208,
+      "count": 209
+    },
+    {
+      "gw": 23,
+      "component": 2.3931857885901713,
+      "ml": 2.4665754211978976,
+      "form": 2.7578199052132706,
+      "ppg": 2.3454355952856814,
+      "count": 211
+    },
+    {
+      "gw": 24,
+      "component": 2.2422901159060755,
+      "ml": 2.151350758321066,
+      "form": 2.5330782312925164,
+      "ppg": 2.220651760372454,
+      "count": 196
+    },
+    {
+      "gw": 25,
+      "component": 2.3577865040773727,
+      "ml": 2.3821690456155955,
+      "form": 2.6007500000000006,
+      "ppg": 2.330965730343307,
+      "count": 200
+    },
+    {
+      "gw": 26,
+      "component": 2.191125991191651,
+      "ml": 2.252313158864314,
+      "form": 2.510958904109589,
+      "ppg": 2.13435796545659,
+      "count": 219
+    },
+    {
+      "gw": 27,
+      "component": 2.156135348469763,
+      "ml": 2.172549375084157,
+      "form": 2.3600676818950928,
+      "ppg": 2.2048174454656198,
+      "count": 197
+    },
+    {
+      "gw": 28,
+      "component": 2.239471855811909,
+      "ml": 2.2597705159524097,
+      "form": 2.399840510366826,
+      "ppg": 2.227859836059116,
+      "count": 209
+    },
+    {
+      "gw": 29,
+      "component": 2.506769238793677,
+      "ml": 2.5750957572233557,
+      "form": 2.56390243902439,
+      "ppg": 2.4505576265683673,
+      "count": 205
+    },
+    {
+      "gw": 30,
+      "component": 2.304288980060154,
+      "ml": 2.419147226466894,
+      "form": 2.685148514851485,
+      "ppg": 2.399580927751397,
+      "count": 202
+    },
+    {
+      "gw": 31,
+      "component": 2.3135442728580333,
+      "ml": 2.3995165085721313,
+      "form": 2.620731707317073,
+      "ppg": 2.3280713563916544,
+      "count": 164
+    },
+    {
+      "gw": 32,
+      "component": 2.2582468856055256,
+      "ml": 2.3182533637561225,
+      "form": 2.4526315789473685,
+      "ppg": 2.2598886180495223,
+      "count": 209
+    },
+    {
+      "gw": 33,
+      "component": 2.2730295732317356,
+      "ml": 2.313270934680624,
+      "form": 2.4639097744360905,
+      "ppg": 2.307883857457009,
+      "count": 266
+    },
+    {
+      "gw": 34,
+      "component": 2.3835784731744085,
+      "ml": 2.3965242562126465,
+      "form": 2.684285714285714,
+      "ppg": 2.412322390431498,
+      "count": 140
+    },
+    {
+      "gw": 35,
+      "component": 2.2332498767710067,
+      "ml": 2.239551180640006,
+      "form": 2.6616113744075838,
+      "ppg": 2.2697171747661105,
+      "count": 211
+    },
+    {
+      "gw": 36,
+      "component": 2.1686763623221976,
+      "ml": 2.24007419221771,
+      "form": 2.462222222222222,
+      "ppg": 2.2443958769160384,
+      "count": 225
+    },
+    {
+      "gw": 37,
+      "component": 2.1806777098504386,
+      "ml": 2.2405019403451916,
+      "form": 2.4071065989847718,
+      "ppg": 2.196531093443842,
+      "count": 197
+    },
+    {
+      "gw": 38,
+      "component": 2.3088712962215214,
+      "ml": 2.357507495269204,
+      "form": 2.5537688442211057,
+      "ppg": 2.321591313472607,
+      "count": 199
+    }
+  ],
+  "calibration": [
+    {
+      "bin": "1\u20132",
+      "predicted": 1.7885923032507145,
+      "actual": 1.7832512315270936,
+      "count": 609
+    },
+    {
+      "bin": "2\u20133",
+      "predicted": 2.541311631556095,
+      "actual": 2.68693009118541,
+      "count": 3619
+    },
+    {
+      "bin": "3\u20134",
+      "predicted": 3.417541981324794,
+      "actual": 3.4961602671118532,
+      "count": 2995
+    },
+    {
+      "bin": "4\u20135",
+      "predicted": 4.291894666631633,
+      "actual": 4.415584415584416,
+      "count": 462
+    },
+    {
+      "bin": "5\u20136",
+      "predicted": 5.318877538479066,
+      "actual": 6.228571428571429,
+      "count": 35
+    }
+  ],
+  "limitations": [
+    "Evaluation uses historical team estimates, not current market/Elevenify data. Live forecasts therefore differ.",
+    "Archived rows do not contain historical injury/news snapshots. Minutes estimates use prior appearances only.",
+    "2025/26 introduced defensive contribution scoring; earlier ML training data cannot teach that change completely.",
+    "No paid-provider forecasts at the same deadlines have been supplied. Market competitiveness is unproven.",
+    "The 2025/26 holdout must not become a repeated tuning set. Register future changes against a fresh prospective set."
+  ],
+  "deployed_model": "Component model",
+  "ml_status": "Research challenger; not silently blended into live forecasts.",
+  "captains": {
+    "component": 263.0,
+    "ml": 245.0,
+    "form": 196.0,
+    "ppg": 191.0
+  },
+  "captain_gameweeks": [
+    {
+      "gw": 1,
+      "component": 8.0,
+      "ml": 8.0,
+      "form": 2.0,
+      "ppg": 8.0
+    },
+    {
+      "gw": 2,
+      "component": 5.0,
+      "ml": 8.0,
+      "form": 1.0,
+      "ppg": 1.0
+    },
+    {
+      "gw": 3,
+      "component": 3.0,
+      "ml": 10.0,
+      "form": 2.0,
+      "ppg": 2.0
+    },
+    {
+      "gw": 4,
+      "component": 9.0,
+      "ml": 9.0,
+      "form": 1.0,
+      "ppg": 9.0
+    },
+    {
+      "gw": 5,
+      "component": 5.0,
+      "ml": 5.0,
+      "form": 5.0,
+      "ppg": 5.0
+    },
+    {
+      "gw": 6,
+      "component": 16.0,
+      "ml": 16.0,
+      "form": 16.0,
+      "ppg": 2.0
+    },
+    {
+      "gw": 7,
+      "component": 8.0,
+      "ml": 18.0,
+      "form": 8.0,
+      "ppg": 2.0
+    },
+    {
+      "gw": 8,
+      "component": 13.0,
+      "ml": 2.0,
+      "form": 13.0,
+      "ppg": 2.0
+    },
+    {
+      "gw": 9,
+      "component": 2.0,
+      "ml": 15.0,
+      "form": 12.0,
+      "ppg": 6.0
+    },
+    {
+      "gw": 10,
+      "component": 13.0,
+      "ml": 13.0,
+      "form": 13.0,
+      "ppg": 10.0
+    },
+    {
+      "gw": 11,
+      "component": 4.0,
+      "ml": 4.0,
+      "form": 1.0,
+      "ppg": 2.0
+    },
+    {
+      "gw": 12,
+      "component": 2.0,
+      "ml": 2.0,
+      "form": 0.0,
+      "ppg": 2.0
+    },
+    {
+      "gw": 13,
+      "component": 2.0,
+      "ml": 2.0,
+      "form": 0.0,
+      "ppg": 0.0
+    },
+    {
+      "gw": 14,
+      "component": 4.0,
+      "ml": 2.0,
+      "form": 1.0,
+      "ppg": 14.0
+    },
+    {
+      "gw": 15,
+      "component": 2.0,
+      "ml": 12.0,
+      "form": 12.0,
+      "ppg": 2.0
+    },
+    {
+      "gw": 16,
+      "component": 13.0,
+      "ml": 2.0,
+      "form": 11.0,
+      "ppg": 13.0
+    },
+    {
+      "gw": 17,
+      "component": 16.0,
+      "ml": 3.0,
+      "form": 3.0,
+      "ppg": 16.0
+    },
+    {
+      "gw": 18,
+      "component": 2.0,
+      "ml": 7.0,
+      "form": 2.0,
+      "ppg": 2.0
+    },
+    {
+      "gw": 19,
+      "component": 2.0,
+      "ml": 3.0,
+      "form": 2.0,
+      "ppg": 2.0
+    },
+    {
+      "gw": 20,
+      "component": 2.0,
+      "ml": 4.0,
+      "form": 0.0,
+      "ppg": 2.0
+    },
+    {
+      "gw": 21,
+      "component": 6.0,
+      "ml": 2.0,
+      "form": 3.0,
+      "ppg": 6.0
+    },
+    {
+      "gw": 22,
+      "component": 10.0,
+      "ml": 10.0,
+      "form": 1.0,
+      "ppg": 2.0
+    },
+    {
+      "gw": 23,
+      "component": 1.0,
+      "ml": 8.0,
+      "form": 8.0,
+      "ppg": 1.0
+    },
+    {
+      "gw": 24,
+      "component": 5.0,
+      "ml": 8.0,
+      "form": 8.0,
+      "ppg": 5.0
+    },
+    {
+      "gw": 25,
+      "component": 2.0,
+      "ml": 5.0,
+      "form": 2.0,
+      "ppg": 11.0
+    },
+    {
+      "gw": 26,
+      "component": 14.0,
+      "ml": 6.0,
+      "form": 7.0,
+      "ppg": 7.0
+    },
+    {
+      "gw": 27,
+      "component": 3.0,
+      "ml": 4.0,
+      "form": 7.0,
+      "ppg": 6.0
+    },
+    {
+      "gw": 28,
+      "component": 6.0,
+      "ml": 13.0,
+      "form": 2.0,
+      "ppg": 0.0
+    },
+    {
+      "gw": 29,
+      "component": 15.0,
+      "ml": 7.0,
+      "form": 1.0,
+      "ppg": 9.0
+    },
+    {
+      "gw": 30,
+      "component": 10.0,
+      "ml": 2.0,
+      "form": 2.0,
+      "ppg": 1.0
+    },
+    {
+      "gw": 31,
+      "component": 13.0,
+      "ml": 2.0,
+      "form": 2.0,
+      "ppg": 0.0
+    },
+    {
+      "gw": 32,
+      "component": 4.0,
+      "ml": 4.0,
+      "form": 4.0,
+      "ppg": 4.0
+    },
+    {
+      "gw": 33,
+      "component": 2.0,
+      "ml": 2.0,
+      "form": 13.0,
+      "ppg": 2.0
+    },
+    {
+      "gw": 34,
+      "component": 5.0,
+      "ml": 13.0,
+      "form": 4.0,
+      "ppg": 1.0
+    },
+    {
+      "gw": 35,
+      "component": 5.0,
+      "ml": 2.0,
+      "form": -1.0,
+      "ppg": 0.0
+    },
+    {
+      "gw": 36,
+      "component": 11.0,
+      "ml": 11.0,
+      "form": 12.0,
+      "ppg": 11.0
+    },
+    {
+      "gw": 37,
+      "component": 6.0,
+      "ml": 1.0,
+      "form": 7.0,
+      "ppg": 9.0
+    },
+    {
+      "gw": 38,
+      "component": 14.0,
+      "ml": 0.0,
+      "form": 9.0,
+      "ppg": 14.0
+    }
+  ],
+  "captain_method": "Pick the largest aggregate GW forecast among players with total projected GW minutes >=45. Sum actual fixture points across doubles. Totals are undoubled base player points, not a simulated full squad.",
+  "mae_differences": {
+    "form": {
+      "difference": -0.2857294511799051,
+      "ci95": [
+        -0.3198408700740818,
+        -0.25425267144425545
+      ],
+      "method": "5000 gameweek-cluster bootstrap replicates; seed 42; negative favours the component model."
+    },
+    "ppg": {
+      "difference": -0.020974856856314297,
+      "ci95": [
+        -0.04262095785866049,
+        -0.00016050531704688882
+      ],
+      "method": "5000 gameweek-cluster bootstrap replicates; seed 42; negative favours the component model."
+    },
+    "ml": {
+      "difference": -0.04208058809054132,
+      "ci95": [
+        -0.0530689714865863,
+        -0.030550319827548127
+      ],
+      "method": "5000 gameweek-cluster bootstrap replicates; seed 42; negative favours the component model."
+    }
+  }
+}

@@ -1,0 +1,220 @@
+export type Fixture = {
+  id: number;
+  opponent: string;
+  opponent_id: number;
+  home: boolean;
+  difficulty: number;
+  kickoff: string;
+  source: string;
+  source_at: string;
+  points: number;
+  xmins: number;
+  xg: number;
+  xa: number;
+  cs: number;
+  pplay: number;
+  p60: number;
+  team_goals: number;
+  conceded: number;
+  components: Record<string, number>;
+};
+export type Forecast = {
+  points: number;
+  xmins: number;
+  fixtures: Fixture[];
+  components: Record<string, number>;
+  pplay?: number;
+  prediction_source?: {
+    kind: "provider" | "extrapolated";
+    name: string;
+    weight: number;
+    base_points: number;
+    source_points: number;
+    anchor_gameweeks: number[];
+    ratio: number | null;
+    source_at: string | null;
+  };
+};
+export type Player = {
+  id: number;
+  code: number;
+  name: string;
+  full_name: string;
+  position: "GKP" | "DEF" | "MID" | "FWD";
+  position_id: number;
+  team: number;
+  team_name: string;
+  team_short: string;
+  team_code: number;
+  price: number;
+  ownership: number;
+  status: string;
+  news: string;
+  chance: number | null;
+  form: number;
+  total_points: number;
+  minutes: number;
+  xg90: number;
+  xa90: number;
+  xmins: number;
+  pplay: number;
+  p60: number;
+  dc_probability: number;
+  sample_matches: number;
+  has_prior: boolean;
+  overridden: boolean;
+  price_change: number;
+  transfers_in: number;
+  transfers_out: number;
+  price_change_percent: string | null;
+  price_change_projections: {
+    offset: number;
+    projected_percent: string;
+    likelihood: number;
+  }[];
+  penalties_order: number | null;
+  gw: Record<string, Forecast>;
+};
+export type Source = {
+  url: string;
+  fetched_at: string | null;
+  status: string;
+  bytes?: number;
+  sha256?: string;
+  error?: string;
+};
+export type Bootstrap = {
+  players: Player[];
+  gameweeks: number[];
+  events: {
+    id: number;
+    deadline_time: string;
+    finished: boolean;
+    is_current: boolean;
+    is_next: boolean;
+  }[];
+  teams: { id: number; name: string; short_name: string; code: number }[];
+  next_gw: number;
+  season: string;
+  loaded_at: string;
+  model_version: string;
+  history_rows: number;
+  sources: Record<string, Source>;
+  limitations: string[];
+  parameters: Record<string, number>;
+  forecast_layers?: {
+    name: string;
+    weight: number;
+    direct_forecasts: number;
+    extrapolated_forecasts: number;
+    half_life: number;
+    source_at: string | null;
+  }[];
+};
+export type Chip =
+  "none" | "wildcard" | "freehit" | "benchboost" | "triplecaptain";
+export type Week = {
+  gw: number;
+  squad: number[];
+  starters: number[];
+  bench: number[];
+  captain: number;
+  vice: number;
+  chip: Chip;
+  bank: number;
+  free_transfers: number;
+  next_free_transfers: number;
+  hits: number;
+  points: number;
+  net_points: number;
+  autosub_points?: number;
+  vice_points?: number;
+  transfers_in: number[];
+  transfers_out: number[];
+};
+export type Plan = {
+  id: string;
+  name: string;
+  weeks: Week[];
+  base_squad: number[];
+  base_bank: number;
+  free_transfers: number;
+  purchase_prices: Record<string, number>;
+  team_name?: string;
+  entry_id?: number;
+  created_at: string;
+  used_chips?: { chip: Chip; gw: number }[];
+};
+export type SolveResult = {
+  weeks: Week[];
+  objective: number;
+  status: string;
+  gap: number;
+  candidate_count: number;
+  pool_count: number;
+  assumptions: string[];
+};
+export type Metric = { mae: number; rmse: number; bias: number; count: number };
+export type Prospective = {
+  generated_at?: string;
+  method: string;
+  vendor_comparison?: string;
+  gameweeks: ({
+    gw: number;
+    snapshot: string;
+    models: Record<string, Metric>;
+  } & Metric)[];
+};
+export type Evaluation = {
+  available: boolean;
+  generated_at?: string;
+  message?: string;
+  version?: string;
+  train_seasons?: string[];
+  test_season?: string;
+  method?: string;
+  models?: Record<string, Metric>;
+  all_players?: Record<string, Metric>;
+  minutes?: Metric;
+  positions?: ({ position: string } & Metric)[];
+  gameweeks?: {
+    gw: number;
+    component: number;
+    ml: number;
+    form: number;
+    ppg: number;
+    count: number;
+  }[];
+  calibration?: {
+    bin: string;
+    predicted: number;
+    actual: number;
+    count: number;
+  }[];
+  limitations?: string[];
+  captains?: Record<string, number>;
+  deployed_model?: string;
+};
+export type PlayerDetail = {
+  player: Player;
+  history: {
+    season: string;
+    gw: number;
+    minutes: number;
+    total_points: number;
+    expected_goals: number;
+    expected_assists: number;
+    opponent: string;
+    date: string;
+  }[];
+  simulation: {
+    histogram: { points: number; probability: number }[];
+    mean: number;
+    p10: number;
+    p90: number;
+    blank_probability: number;
+    haul_probability: number;
+    trials: number;
+    label: string;
+  };
+};

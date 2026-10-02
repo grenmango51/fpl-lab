@@ -1,0 +1,37 @@
+# Open FPL build plan
+
+Created 2026-10-02. This project supersedes the abandoned World Cup betting objective for new work. Historical files remain intact.
+
+## Product
+
+A free, local-first web application, using Solio FPL's dark navy interface, orange highlights, gameweek timeline, pitch lineup, and analytical tabs as visual references. The product has its own name and assets. No payment or account is required for local planning.
+
+Core workflow: import a public FPL team ID or build a squad, inspect player forecasts, plan transfers across future weeks, compare saved branches, select captains and chips, and optimise under FPL rules. Projections, fixture heatmaps, watchlists, CSV import/export, minutes overrides, and an analysis view make the inputs inspectable.
+
+## Sources investigated
+
+- **Solio**: https://fpl.solioanalytics.com/ — inspected its live public planner and DOM. Dark background `#030712`, Manrope font, orange `#ff6a3d`, branches/gameweek nodes, lineup/analysis/projections/optimise/fixtures tabs, bank and FT displays, pitch and bench. Google sign-in gates saved planning; paid projection access has not been obtained. Reference for interaction and visual design, not a source of copied proprietary code or forecasts.
+- **FPL Review**: https://app.fplreview.com/ — live app requests Patreon connection. Public documentation describes 14-week projections, minutes distributions, model customisation, ensemble uploads, transfer-value/time-decay/risk settings, and MILP versus heuristic optimisation. Useful methodology and benchmark target. https://docs.fplreview.com/the-model/projections/massive-data-model/ and https://docs.fplreview.com/the-model/solvers/settings/
+- **FPL Joe**: https://www.fpljoe.com/ — public app loads `/api/odds/projections?competition=premier-league&season=2026-27&scope=season%3A2026-27`. Verified schema v3: team IDs/codes, fixture means, CS probabilities, source timestamps, past/current period data, and supplemental season team projections. Vendor team IDs differ from FPL: map by club code, never numeric ID. Upcoming market data is stronger than reusing old international ratings. Cache locally and attribute the provider. Do not assume public access grants a redistribution licence.
+- **Elevenify**: https://www.elevenify.com/p/premier-league-data — free subscriber resource with team/player forecasts, ratings, and a simplified fantasy model. Public match/team/rating embeds are available, but direct Datawrapper CSV request returned 403. Its team projections are also available as explicitly labelled supplemental data in FPL Joe's public response. Fast Fantasy Model incorporates FPL Review Massive Data predictions and Elevenify strengths; free-to-read is not an unrestricted data licence.
+  - Further exploration found the primary live Google Sheet URL in FPL Joe's attribution metadata. Its normal public CSV export returned HTTP 200. Verified two 20-team, 38-GW tables for projected goals and clean sheets, with the club set matching the official current season. The app now reads this sheet directly and validates its schema, club names, and value ranges. FPL Joe remains the fixture-level near-term market source. No signup or paywall bypass was required.
+- **FPL Schaden**: https://x.com/FPLSchaden — direct X request returned 403. Creator's primary public Patreon page https://www.patreon.com/cw/uclfantasy describes proprietary xPoints for UCL/Euros/World Cup. Public content is useful for cross-game ideas; no complete current FPL dataset was verified. Do not invent access or numbers.
+- **Official FPL**: https://fantasy.premierleague.com/api/bootstrap-static/, `/fixtures/`, `/event/{gw}/live/`, `/entry/{id}/`, `/entry/{id}/event/{gw}/picks/`. Verified live 2026/27 data: 667 players, 20 teams, 380 fixtures, GW6 next. Bootstrap exposes current-season scoring configuration, including defensive contributions, and prices/news. Only public team data is imported; no FPL credentials are requested or transfers submitted.
+- **Historical FPL**: https://github.com/vaastav/Fantasy-Premier-League — verified archived `players_raw.csv` and `gws/merged_gw.csv` for 2025/26. Join stable player `code` through season-specific `element` IDs. Use archived per-fixture rows for causal training and evaluation, not end-season totals as same-season features. MIT-licensed repository; underlying FPL data belongs to its provider.
+
+## Implementation order
+
+The user clarified that provider forecasts are valid inputs: the aim is to extend limited near-term access into a complete planning tool, rather than require an entirely independent prediction model. Implemented accordingly: public FPL Form player exports anchor three GWs, alongside FPL Joe markets and the full-season Elevenify team sheet; longer-range player adjustments fade through the future fixture schedule. User CSV exports support additional provider layers. Forecast and manual-planning horizons now reach GW38; optimisation reaches 14 GWs. Extrapolation is labelled and evaluated separately from the historical component model.
+
+1. Data service: cached official feeds, current and historical player records, fixture matching, provider status, raw snapshot provenance and hashes.
+2. Explainable baseline: a separate appearance/60-minute model; recency-weighted and prior-shrunk xG/xA rates; team-adjusted goal expectations; market/Elevenify CS inputs; save, card, bonus and defensive-contribution components. Sum fixtures for double gameweeks; zeros for blanks. Explicitly mark inferred and missing inputs.
+3. App: React/TypeScript with a Python FastAPI service. Responsive planner, full player explorer, fixture heatmap, captain comparison, multiweek branches, minutes controls, CSV inputs/outputs, and local persistence.
+4. Optimisation: integer programming with SciPy/HiGHS. Enforce 15-player composition, legal starting formations, club limit, budget, captaincy, transfer costs/rollovers, and chip behaviour. Expose objective assumptions, solve time, status, and gap. Keep user plans separate from FPL submissions.
+5. Evaluation: rolling forecasts for archived fixtures from strictly preceding records; compare points-per-game and form baselines; report sample counts, MAE/RMSE, minutes error, calibration, captain outcomes, and positional slices. Archive future forecasts before the FPL deadline for genuinely prospective comparisons.
+6. Strengthen the model using only proven out-of-sample gains. Obtain legitimate vendor projection snapshots for a fair head-to-head test. Do not claim equivalence to paid models from UI parity, historical backtests, or borrowed inputs.
+
+## Completion and honesty
+
+The initial app should be operational end-to-end with real data and actionable planning, not a static mockup. Competitive accuracy remains a measured research objective: paid models have human minutes updates and rich datasets we have not acquired. Private account creation or premium access is not necessary to make the first functioning product.
+
+Future production work includes hosted authentication/sync, automated deadline capture, licensed data agreements for public redistribution, and a season of prospective evaluation. These are distinct from having a locally usable app.

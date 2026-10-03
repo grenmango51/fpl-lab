@@ -31,7 +31,7 @@ The development app is **http://127.0.0.1:5173**. `./start.ps1 -Development` sta
 - Current official players, prices, fixtures, news, defensive contributions and price signals.
 - Player forecasts through GW38, with per-event breakdowns, minutes scenarios, blank/double fixtures and provenance.
 - Per-gameweek conditional minutes and availability assumptions, including user-defined recovery schedules. Scheduled weeks take priority over provider/CSV points.
-- Public FPL Form player forecasts for the next three GWs, blended at a configurable weight. Longer-range player adjustments follow future fixtures and fade toward the component baseline; direct and extrapolated weeks are labelled. Team inputs use near-term FPL Joe markets and the full-season Elevenify sheet.
+- Public FPL Form player forecasts for the next five GWs, blended at a configurable weight. Longer-range player adjustments follow future fixtures and fade toward the component baseline; direct and extrapolated weeks are labelled. Team inputs use near-term FPL Joe markets and the full-season Elevenify sheet.
 - Public FPL team-ID import, bank / FT adjustments, legal squad and formation checks, captain and vice-captain selection, bench swaps and bench priority. Expected totals include formation-aware autosubs and vice fallback under an explicit independent-appearance approximation.
 - Transfers across future GWs, profit-aware selling prices, hits, 5-FT carryover, and Wildcard / Free Hit / Bench Boost / Triple Captain planning. Free Hit restores the permanent squad and bank. Current prices are held fixed.
 - Named independent planning branches saved in browser storage; export/import of validated plan files.
@@ -60,7 +60,7 @@ python -m backend.evaluate
 
 The fixed 2025/26 holdout uses 2023/24–2024/25 for ML fitting; player and team feature states update only after an entire gameweek. No held-out final-season aggregates, same-GW outcomes or current market data enter those forecasts. The resulting report is `data/evaluation.json`, shown in Analysis. Assistant manager rows are excluded from the player game. Sample selection uses projected minutes, not observed minutes.
 
-The component model supplies the base forecasts; the ML challenger was weaker on this holdout. The **default live forecast also blends FPL Form at 50%**, then extrapolates its adjustment beyond the three imported weeks. The historical benchmark does not test this live ensemble. A small component-model improvement over an appearance-adjusted points-per-game baseline is encouraging, not evidence of paid-provider superiority.
+The component model supplies the base forecasts; the ML challenger was weaker on this holdout. The **default live forecast also blends FPL Form at 50%**, then extrapolates its adjustment beyond the supplied weeks. The historical benchmark does not test this live ensemble. A small component-model improvement over an appearance-adjusted points-per-game baseline is encouraging, not evidence of paid-provider superiority.
 
 ```powershell
 python -m backend.prospective

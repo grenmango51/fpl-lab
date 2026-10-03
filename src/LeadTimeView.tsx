@@ -74,9 +74,9 @@ export function LeadTimeView({
     <section className="panel lead-time-panel">
       <div className="panel-heading">
         <Clock3 size={16} />
-        <h3>Forecasts by time before deadline</h3>
+        <h3>Forecast horizon</h3>
         <button className="button small" onClick={score} disabled={busy}>
-          {busy ? "Scoring…" : "Score lead times"}
+          {busy ? "Scoring…" : "Score"}
         </button>
         <button
           className="icon-button"
@@ -94,57 +94,12 @@ export function LeadTimeView({
           <Download size={15} />
         </button>
       </div>
-      <p className="help-text">
-        Every new capture freezes the remaining season. Each time window selects
-        its latest valid capture for each target gameweek. This tests the live
-        blend and its extrapolation as official outcomes become available.
-      </p>
       {error && (
         <p className="orange help-text">
           {error}{" "}
           <button className="text-button" onClick={score} disabled={busy}>
-            Retry scoring
+            Retry
           </button>
-        </p>
-      )}
-      <div className="lead-time-bins">
-        {bins.map((bin) => {
-          const aggregate = report?.bins?.find((saved) => saved.id === bin.id)
-            ?.pairwise_comparisons[model]?.[scope];
-          return (
-            <div className="lead-time-bin" key={bin.id}>
-              <span className="eyebrow">{bin.label}</span>
-              <strong>
-                {aggregate?.ensemble ? fmt(aggregate.ensemble.mae, 3) : "—"}
-                <small> live MAE</small>
-              </strong>
-              <p>
-                {aggregate?.count ?? 0} matched player-GWs ·{" "}
-                {aggregate?.gameweek_count ?? 0} scored GWs
-              </p>
-              <span className="muted">
-                {bin.capture_count} captured targets · {bin.pending_count}{" "}
-                pending
-              </span>
-            </div>
-          );
-        })}
-      </div>
-      {!targets.length && (
-        <p className="help-text">
-          Freeze a pre-deadline forecast to start collecting lead-time evidence.
-        </p>
-      )}
-      {!!targets.length && !scored.length && (
-        <p className="source-caption">
-          <Info size={14} /> Captures are saved; no selected gameweek has a
-          scored result yet. Dashes mean unavailable results.
-        </p>
-      )}
-      {unscored && (
-        <p className="orange help-text">
-          New selected captures are ready for scoring. Saved metrics may use
-          earlier captures until you score again.
         </p>
       )}
       <div className="table-toolbar">
@@ -164,60 +119,110 @@ export function LeadTimeView({
             setScope(e.target.value as "primary" | "all" | "exploratory")
           }
         >
-          <option value="primary">Primary eligible</option>
-          <option value="all">All scored captures</option>
-          <option value="exploratory">Exploratory captures</option>
+          <option value="primary">Primary</option>
+          <option value="all">All results</option>
+          <option value="exploratory">Exploratory</option>
         </select>
-        <span className="muted">
-          Live ensemble compared with {model} on identical player-GW rows
+        <span
+          className="muted"
+          title={`Live ensemble and ${model} use identical player-GW rows`}
+        >
+          Matched rows
         </span>
       </div>
-      <div className="table-container">
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>TIME BEFORE DEADLINE</th>
-              <th>MATCHED ROWS</th>
-              <th>LIVE MAE</th>
-              <th>{model.toUpperCase()} MAE</th>
-              <th>LIVE RMSE</th>
-              <th>LIVE BIAS</th>
-            </tr>
-          </thead>
-          <tbody>
-            {bins.map((bin) => {
-              const value = report?.bins?.find((saved) => saved.id === bin.id)
-                ?.pairwise_comparisons[model]?.[scope];
-              return (
-                <tr key={bin.id}>
-                  <td>{bin.label}</td>
-                  <td>{value?.count ?? 0}</td>
-                  <td className="orange">
-                    {value?.ensemble ? fmt(value.ensemble.mae, 3) : "—"}
-                  </td>
-                  <td>{value?.model ? fmt(value.model.mae, 3) : "—"}</td>
-                  <td>{value?.ensemble ? fmt(value.ensemble.rmse, 3) : "—"}</td>
-                  <td>{value?.ensemble ? fmt(value.ensemble.bias, 3) : "—"}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+      <div className="lead-time-bins">
+        {bins.map((bin) => {
+          const aggregate = report?.bins?.find((saved) => saved.id === bin.id)
+            ?.pairwise_comparisons[model]?.[scope];
+          return (
+            <div className="lead-time-bin" key={bin.id}>
+              <span>{bin.label}</span>
+              <strong>
+                {aggregate?.ensemble
+                  ? fmt(aggregate.ensemble.mae, 3)
+                  : bin.capture_count}
+                <small>{aggregate?.ensemble ? " live MAE" : " captured"}</small>
+              </strong>
+              {aggregate?.model && (
+                <p>
+                  {fmt(aggregate.model.mae, 3)} {model} MAE · {aggregate.count}{" "}
+                  rows
+                </p>
+              )}
+              <span className="muted">
+                {aggregate?.ensemble ? `${bin.capture_count} captured · ` : ""}
+                {bin.pending_count} pending
+              </span>
+            </div>
+          );
+        })}
       </div>
+      {!targets.length && (
+        <p className="help-text">Capture forecasts to start.</p>
+      )}
+      {!!targets.length && !scored.length && (
+        <p className="source-caption">
+          Captures saved · awaiting scored results.
+        </p>
+      )}
+      {unscored && (
+        <p className="orange help-text">
+          New captures ready · score to update.
+        </p>
+      )}
       <details className="reference-limitations">
-        <summary>Selected captures, coverage and individual results</summary>
+        <summary>Detailed metrics</summary>
         <div className="table-container">
           <table className="data-table">
             <thead>
               <tr>
-                <th>TIME WINDOW</th>
+                <th>LEAD TIME</th>
+                <th>ROWS</th>
+                <th>LIVE MAE</th>
+                <th>{model.toUpperCase()} MAE</th>
+                <th>LIVE RMSE</th>
+                <th>LIVE BIAS</th>
+              </tr>
+            </thead>
+            <tbody>
+              {bins.map((bin) => {
+                const value = report?.bins?.find((saved) => saved.id === bin.id)
+                  ?.pairwise_comparisons[model]?.[scope];
+                return (
+                  <tr key={bin.id}>
+                    <td>{bin.label}</td>
+                    <td>{value?.count ?? 0}</td>
+                    <td className="orange">
+                      {value?.ensemble ? fmt(value.ensemble.mae, 3) : "—"}
+                    </td>
+                    <td>{value?.model ? fmt(value.model.mae, 3) : "—"}</td>
+                    <td>
+                      {value?.ensemble ? fmt(value.ensemble.rmse, 3) : "—"}
+                    </td>
+                    <td>
+                      {value?.ensemble ? fmt(value.ensemble.bias, 3) : "—"}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </details>
+      <details className="reference-limitations">
+        <summary>Captures and coverage</summary>
+        <div className="table-container">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>LEAD TIME</th>
                 <th>TARGET</th>
-                <th>ACTUAL LEAD</th>
+                <th>DAYS</th>
                 <th>STATUS</th>
-                <th>PROVIDER COVERAGE</th>
-                <th>INPUT ORIGIN</th>
+                <th>COVERAGE</th>
+                <th>ORIGIN</th>
                 <th>CONFIGURATION</th>
-                <th>FROZEN SCHEDULE</th>
+                <th>SCHEDULE</th>
               </tr>
             </thead>
             <tbody>
@@ -300,10 +305,10 @@ export function LeadTimeView({
                   <thead>
                     <tr>
                       <th>MODEL</th>
-                      <th>MATCHED PLAYERS</th>
+                      <th>PLAYERS</th>
                       <th>MODEL MAE</th>
                       <th>LIVE MAE</th>
-                      <th>ELIGIBILITY</th>
+                      <th>STATUS</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -341,21 +346,35 @@ export function LeadTimeView({
           )),
         )}
       </details>
-      <p className="source-caption">
-        <Info size={14} /> Metrics pool individual matched player-GW errors
-        within each window. Cohorts, model versions and manual assumptions can
-        differ across windows; the same outcomes recur across windows. These are
-        descriptive results, with no claim that one horizon is more accurate
-        until those differences are controlled. Provider coverage stays missing
-        beyond its supplied weeks. Fixture changes remain part of the error;
-        they are not discarded after outcomes.
-      </p>
+      <details className="reference-limitations">
+        <summary>
+          <Info size={13} /> Method
+        </summary>
+        <p className="help-text">
+          Every capture freezes the remaining season. Each time window selects
+          its latest valid capture for each target gameweek. Live ensemble and{" "}
+          {model} use identical player-GW rows. Counts labelled captured are
+          saved targets, not scored forecasts. Missing results remain
+          unavailable.
+        </p>
+        <p className="help-text">
+          Metrics pool individual matched player-GW errors within each window.
+          Cohorts, model versions and manual assumptions can differ across
+          windows; the same outcomes recur across windows. These are descriptive
+          results, with no claim that one horizon is more accurate until those
+          differences are controlled. Provider coverage stays missing beyond its
+          supplied weeks. Fixture changes remain part of the error; they are not
+          discarded after outcomes.
+        </p>
+        <p className="help-text">
+          Primary eligibility requires the declared capture policy and checked
+          official outcomes. Exploratory results can include stale inputs,
+          legacy receipts or changed deadlines.
+        </p>
+      </details>
       {report?.generated_at && (
         <small className="muted">
-          Scored {new Date(report.generated_at).toLocaleString()}.{" "}
-          {scope === "primary"
-            ? "Primary eligibility requires the declared capture policy and checked official outcomes."
-            : "Exploratory results can include stale inputs, legacy receipts or changed deadlines."}
+          Scored {new Date(report.generated_at).toLocaleString()}
         </small>
       )}
     </section>

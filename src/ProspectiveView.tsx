@@ -15,19 +15,13 @@ export function ProspectiveView({
     <section className="panel prospective-panel">
       <div className="panel-heading">
         <Clock3 size={16} />
-        <h3>Prospective forecast comparison</h3>
+        <h3>Forecast results</h3>
         <button className="button small" onClick={onScore}>
-          Score completed weeks
+          Score weeks
         </button>
       </div>
-      <p className="help-text">
-        Capture refreshes live inputs before freezing all model forecasts from
-        one dataset. Comparisons use the same captured players after official
-        outcomes are checked. Missing provider values remain missing.
-      </p>
       {!!report?.captures?.length && (
         <div className="capture-receipts">
-          <h4>Latest pre-deadline captures</h4>
           {report.captures.slice(0, 5).map((c) => {
             const receipt = c.capture_receipt;
             const keys = receipt
@@ -35,23 +29,32 @@ export function ProspectiveView({
               : [];
             const event = data.events.find((e) => e.id === c.gw);
             return (
-              <details
-                key={c.filename}
-                className="capture-receipt"
-                open={c.gw === data.next_gw}
-              >
+              <details key={c.filename} className="capture-receipt">
                 <summary>
                   <b>GW{c.gw}</b>
-                  <span>
-                    {new Date(c.recorded_at).toLocaleString()} ·{" "}
-                    {fmt(c.lead_hours, 1)}h before deadline
+                  <span>{fmt(c.lead_hours, 1)}h before deadline</span>
+                  <span
+                    className={`source-state ${receipt?.eligible_primary["Live ensemble"] ? "" : "orange"}`}
+                    title="Source freshness at capture"
+                  >
+                    {receipt
+                      ? receipt.eligible_primary["Live ensemble"]
+                        ? "Fresh inputs"
+                        : "Exploratory"
+                      : "Legacy"}
                   </span>
                   <em>
-                    {event?.finished
-                      ? "Awaiting or available scoring"
-                      : "Awaiting outcomes"}
+                    {report.gameweeks.some((week) => week.gw === c.gw)
+                      ? "Scored"
+                      : event?.finished
+                        ? "Not scored"
+                        : "Pending"}
                   </em>
                 </summary>
+                <p className="help-text">
+                  Captured {new Date(c.recorded_at).toLocaleString()} ·{" "}
+                  {c.players} players
+                </p>
                 {receipt ? (
                   <>
                     <div className="capture-eligibility">
@@ -60,7 +63,7 @@ export function ProspectiveView({
                           <div key={name}>
                             <span>{name}</span>
                             <b className={eligible ? "green" : "orange"}>
-                              {eligible ? "Fresh inputs" : "Exploratory inputs"}
+                              {eligible ? "Fresh" : "Exploratory"}
                             </b>
                             {receipt.eligibility_reasons[name]?.map((note) => (
                               <small key={note}>{note}</small>
@@ -111,7 +114,7 @@ export function ProspectiveView({
                                 </td>
                                 <td>
                                   {!source?.refetched
-                                    ? "Cached acquisition"
+                                    ? "Cached"
                                     : source.content_changed === null
                                       ? "Refetched"
                                       : source.content_changed
@@ -151,30 +154,22 @@ export function ProspectiveView({
         report.gameweeks.map((w) => (
           <div className="prospective-result" key={w.gw}>
             <div className="panel-heading">
-              <h3>GW{w.gw} · matched comparisons</h3>
+              <h3>GW{w.gw}</h3>
               <span>
-                {w.cohort?.eligible_count ?? w.count} eligible ·{" "}
-                {w.cohort?.missing_actual_ids.length ?? 0} missing outcomes
+                Live MAE {w.count ? fmt(w.mae, 3) : "—"} · {w.count} players
               </span>
             </div>
-            <p className="help-text">
-              {w.cohort?.selection ??
-                "Legacy captured ensemble projected 45+ minutes"}
-              . Headline live ensemble MAE {w.count ? fmt(w.mae, 3) : "—"} on{" "}
-              {w.count} players. Pairwise rows can use different subsets;
-              compare each provider with the ensemble value in its own row.
-            </p>
             {w.pairwise_comparisons ? (
               <div className="table-container">
                 <table className="data-table">
                   <thead>
                     <tr>
-                      <th>COMPARISON MODEL</th>
+                      <th>MODEL</th>
                       <th>COVERAGE</th>
-                      <th>MATCHED PLAYERS</th>
+                      <th>PLAYERS</th>
                       <th>MODEL MAE</th>
-                      <th>ENSEMBLE MAE</th>
-                      <th>ELIGIBILITY</th>
+                      <th>LIVE MAE</th>
+                      <th>STATUS</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -228,7 +223,15 @@ export function ProspectiveView({
               </div>
             )}
             <details className="reference-limitations">
-              <summary>Coverage and eligibility reasons</summary>
+              <summary>Method and coverage</summary>
+              <p className="help-text">
+                {w.cohort?.selection ??
+                  "Legacy captured ensemble projected 45+ minutes"}
+                . {w.cohort?.eligible_count ?? w.count} eligible players ·{" "}
+                {w.cohort?.missing_actual_ids.length ?? 0} missing outcomes.
+                Pairwise rows can use different subsets; compare each model with
+                the live value in its own row.
+              </p>
               {Object.entries(w.pairwise_comparisons ?? {}).map(
                 ([name, comparison]) => (
                   <div key={name}>
@@ -263,23 +266,32 @@ export function ProspectiveView({
           </div>
         ))
       ) : (
-        <p className="help-text">
-          No completed prospective results yet. Upcoming weeks stay pending.
-        </p>
+        <p className="help-text">No scored weeks yet.</p>
       )}
       {report?.excluded_gameweeks?.map((w) => (
         <p className="orange help-text" key={w.gw}>
-          GW{w.gw}: {w.reason}
+          GW{w.gw} · Not scored. {w.reason}
         </p>
       ))}
-      {data.forecast_layers?.map((layer) => (
-        <p className="help-text" key={layer.name}>
-          Active input: {layer.name} · {fmt(layer.weight * 100, 0)}% weight ·{" "}
-          {layer.direct_forecasts.toLocaleString()} direct /{" "}
-          {layer.extrapolated_forecasts.toLocaleString()} extrapolated forecasts
-          · {layer.half_life}-GW influence half-life.
+      <details className="reference-limitations">
+        <summary>
+          <Info size={13} /> Method
+        </summary>
+        <p className="help-text">
+          Capture refreshes live inputs before freezing all model forecasts from
+          one dataset. Comparisons use the same captured players after official
+          outcomes are checked. Missing provider values remain missing.
         </p>
-      ))}
+        {report?.method && <p className="help-text">{report.method}</p>}
+        {data.forecast_layers?.map((layer) => (
+          <p className="help-text" key={layer.name}>
+            {layer.name} · {fmt(layer.weight * 100, 0)}% weight ·{" "}
+            {layer.direct_forecasts.toLocaleString()} direct /{" "}
+            {layer.extrapolated_forecasts.toLocaleString()} extrapolated ·{" "}
+            {layer.half_life}-GW influence half-life.
+          </p>
+        ))}
+      </details>
     </section>
   );
 }

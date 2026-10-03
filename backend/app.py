@@ -428,7 +428,8 @@ def validate_plan(request: PlanRequest):
             raise HTTPException(422, {"gw": week.gw, "errors": errors})
         free = week.chip in ("wildcard", "freehit")
         hit = max(0, len(ins) - ft) * 4 if not free else 0
-        nextft = min(5, ft + 1 if free else max(0, ft - len(ins)) + 1)
+        # WC/FH retain the current allowance; they do not earn an extra FT.
+        nextft = ft if free else min(5, max(0, ft - len(ins)) + 1)
         score = team_points(
             week.starters,
             week.bench,
@@ -563,7 +564,7 @@ def import_team(entry_id: int):
             (c.get("name") for c in chips_used if c.get("event") == event), None
         )
         ft = (
-            min(5, ft + 1)
+            ft
             if chip in ("wildcard", "freehit")
             else min(5, max(0, ft - event_transfers[event]) + 1)
         )

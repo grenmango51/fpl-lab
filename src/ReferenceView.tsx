@@ -7,7 +7,7 @@ import {
   Search,
   Star,
 } from "lucide-react";
-import { PlayerName, Stat } from "./components";
+import { PlayerName } from "./components";
 import { download, fmt, money, xp } from "./lib";
 import type { Bootstrap } from "./types";
 
@@ -87,6 +87,7 @@ export function ReferenceView({
   const pages = Math.max(1, Math.ceil(rows.length / 25));
   const selectedPage = Math.min(page, pages - 1);
   const captainGW = source?.feeds?.fast_fantasy?.captain_gameweek;
+  const activeFeeds = baseline ? ["baselines", "fast_fantasy"] : [view];
   function exportRows() {
     const csv = [
       "player_id,name,team,position,reference_view,reference_gameweek,conditioning,duration_minutes,future_importance_score,expected_goals_given_start,expected_assists_given_start,expected_involvement_given_start,captain_flag_gameweek,captain_flag,open_fpl_gameweek,open_fpl_points",
@@ -117,78 +118,26 @@ export function ReferenceView({
   }
   return (
     <>
-      <div className="view-heading">
-        <div>
-          <span className="eyebrow">PROVIDER REFERENCES</span>
-          <h2>
-            A second perspective<span>.</span>
-          </h2>
-          <p>
-            Elevenify's selected-player tables, matched to the current FPL pool.
-          </p>
-        </div>
+      <div className="panel-heading reference-heading">
+        <h3>Elevenify</h3>
+        {source?.available && (
+          <span>{source.coverage.matched_players} players</span>
+        )}
         <button
           className="button small"
           onClick={exportRows}
           disabled={!rows.length}
         >
-          <Download size={14} /> Export references
+          <Download size={14} /> Export CSV
         </button>
       </div>
       {!source?.available ? (
         <section className="panel">
-          <h3>Reference tables unavailable</h3>
-          <p className="help-text">
-            No validated player table is available. Normal forecasts and
-            planning continue using their existing sources.
-          </p>
+          <h3>References unavailable</h3>
+          <p className="help-text">No validated provider table.</p>
         </section>
       ) : (
         <>
-          <div className="market-stats">
-            <Stat
-              label="MATCHED PLAYERS"
-              value={source.coverage.matched_players}
-              note={`Of ${source.coverage.official_players} current players`}
-            />
-            <Stat
-              label="ATTACKING BASELINES"
-              value={source.coverage.baseline_players}
-              note="Assumes a start vs an average PL team"
-            />
-            <Stat
-              label="IMPORTANCE SCORES"
-              value={source.coverage.importance_players}
-              note="Provider ranking, on a 0–100 scale"
-            />
-            <Stat
-              label="ATTACKING FORECAST PLAYERS"
-              value={source.coverage.attacking_players ?? 0}
-              note="Players with fixture-specific attacking forecasts"
-            />
-          </div>
-          <section className="panel reference-explanation">
-            <Info size={17} />
-            <p>
-              {baseline ? (
-                <>
-                  Goal and assist baselines assume a start against an average
-                  Premier League team. Duration is unspecified. Importance is a
-                  ranking score with an unspecified horizon.
-                </>
-              ) : (
-                <>
-                  GW{selectedGW} expected attacking counts assume the player
-                  starts; playing duration is unspecified. Only the provider's
-                  labelled weeks are shown. Next-GW and three-GW charts are
-                  separate series and can differ.
-                </>
-              )}{" "}
-              These references do not alter points forecasts. The orange xP
-              column is Open FPL's separate GW{selectedGW} forecast, including
-              its own appearance assumptions.
-            </p>
-          </section>
           <div className="table-toolbar reference-toolbar">
             <select
               aria-label="Reference view"
@@ -205,7 +154,7 @@ export function ReferenceView({
                 );
               }}
             >
-              <option value="baseline">Baselines and shortlist</option>
+              <option value="baseline">Baselines / shortlist</option>
               {["next_gw_attack", "three_gw_goals", "three_gw_assists"].map(
                 (key) => (
                   <option key={key} value={key}>
@@ -275,16 +224,33 @@ export function ReferenceView({
               <option value="points">Open FPL xP</option>
             </select>
           </div>
-          {!baseline && feed && (
-            <p className="source-caption">
-              {feed.caption} · {feed.status} · window{" "}
-              {feed.window_status ?? "unknown"}
-              {feed.caption_current === false
-                ? "; does not start at the current next gameweek"
-                : ""}
-              .
-            </p>
-          )}
+          <div className="reference-status">
+            <span
+              className="subtle-tag"
+              title="Goal and assist counts are conditional on starting; playing duration is not supplied."
+            >
+              Assumes a start · minutes unspecified
+            </span>
+            {activeFeeds.map((key) => {
+              const selectedFeed = source.feeds[key];
+              return (
+                <span
+                  key={key}
+                  className={`source-state ${!selectedFeed?.available || selectedFeed.status === "stale" ? "orange" : ""}`}
+                >
+                  {baseline
+                    ? `${key === "baselines" ? "Baselines" : "Shortlist"}: `
+                    : ""}
+                  {selectedFeed?.status ?? "unavailable"}
+                </span>
+              );
+            })}
+            {!baseline && feed?.caption_current === false && (
+              <span className="source-state orange">
+                Window {feed.window_status ?? "unknown"}
+              </span>
+            )}
+          </div>
           <div className="table-container">
             <table className="data-table reference-table">
               <thead>
@@ -293,12 +259,8 @@ export function ReferenceView({
                   <th>PLAYER</th>
                   <th>PRICE</th>
                   {baseline && <th>IMPORTANCE / 100</th>}
-                  <th>
-                    {baseline ? "GOAL BASELINE" : `GW${selectedGW} GOALS`}
-                  </th>
-                  <th>
-                    {baseline ? "ASSIST BASELINE" : `GW${selectedGW} ASSISTS`}
-                  </th>
+                  <th>{baseline ? "GOALS" : `GW${selectedGW} GOALS`}</th>
+                  <th>{baseline ? "ASSISTS" : `GW${selectedGW} ASSISTS`}</th>
                   <th>INVOLVEMENT</th>
                   {baseline && <th>CAPTAIN FLAG</th>}
                   <th>OPEN FPL GW{selectedGW} xP</th>
@@ -381,8 +343,7 @@ export function ReferenceView({
           </div>
           <div className="reference-pagination">
             <span>
-              {rows.length} matching players · page {selectedPage + 1} of{" "}
-              {pages}
+              {rows.length} players · {selectedPage + 1} / {pages}
             </span>
             <div>
               <button
@@ -403,31 +364,43 @@ export function ReferenceView({
               </button>
             </div>
           </div>
-          <p className="source-caption">
-            <Info size={14} /> Missing values mean no supplied reference.
+          <details className="reference-limitations">
+            <summary>
+              <Info size={13} /> Help
+            </summary>
+            <p className="help-text">
+              {baseline
+                ? "Goal and assist baselines assume a start against an average Premier League team. Importance is a 0–100 ranking score with an unspecified horizon."
+                : `GW${selectedGW} attacking counts assume a start. Next-GW and three-GW charts are separate series and can differ.`}{" "}
+              Playing duration is unspecified. These references do not alter
+              points forecasts. Open FPL xP uses its own appearance assumptions.
+              Missing values mean no supplied reference.
+            </p>
             {baseline ? (
-              <>
+              <p className="help-text">
                 Captain flags apply only to their labelled gameweek
                 {captainGW !== undefined && captainGW !== data.next_gw
                   ? `; the source's GW${captainGW} flag is not for the current next gameweek`
                   : ""}
                 .
-              </>
+              </p>
             ) : (
-              <>
-                Counts are conditional on starting. Missing outcomes are not
-                inferred or summed across separate provider charts.
-              </>
+              <p className="help-text">
+                Only labelled weeks are shown. Missing outcomes are not inferred
+                or summed across separate provider charts. {feed?.caption}
+              </p>
             )}
-          </p>
+            {source.limitations.map((note) => (
+              <p className="help-text" key={note}>
+                {note}
+              </p>
+            ))}
+          </details>
         </>
       )}
       {source?.feeds && (
-        <section className="panel reference-provenance">
-          <div className="panel-heading">
-            <h3>Reference provenance</h3>
-            <span>Local cached copies</span>
-          </div>
+        <details className="reference-limitations reference-provenance">
+          <summary>Source details</summary>
           <div className="reference-feed-grid">
             {Object.entries(source.feeds).map(([key, feed]) => (
               <div key={key}>
@@ -474,15 +447,7 @@ export function ReferenceView({
               </div>
             ))}
           </div>
-          <details className="reference-limitations">
-            <summary>Units, coverage and limitations</summary>
-            {source.limitations.map((note) => (
-              <p className="help-text" key={note}>
-                {note}
-              </p>
-            ))}
-          </details>
-        </section>
+        </details>
       )}
     </>
   );

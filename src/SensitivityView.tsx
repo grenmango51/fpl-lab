@@ -113,12 +113,20 @@ export function SensitivityView({
   const summary = job?.summary;
   const n = summary?.denominator ?? 0;
   return (
-    <section className="panel sensitivity-panel">
+    <details className="panel sensitivity-panel compact-details">
+      <summary>
+        Stress test
+        {active && (
+          <span className="compact-status">
+            {" "}
+            · {job?.completed ?? 0}/{job?.total ?? settings.scenarios}
+          </span>
+        )}
+      </summary>
       <div className="panel-heading sensitivity-heading">
         <FlaskConical size={19} />
         <div>
-          <span className="eyebrow">SENSITIVITY ANALYSIS</span>
-          <h3>How much does the plan depend on the forecast?</h3>
+          <h3>Strategy sensitivity</h3>
         </div>
         {job && !running(job) && (
           <button
@@ -134,11 +142,14 @@ export function SensitivityView({
           </button>
         )}
       </div>
-      <p className="help-text">
-        Rerun your strategy with a persistent point multiplier for each player.
-        Fixtures, appearance probabilities, prices, chips and constraints stay
-        fixed. The spread is an assumption you choose.
-      </p>
+      <details className="compact-details">
+        <summary>How it works</summary>
+        <p>
+          Rerun your strategy with a persistent point multiplier for each
+          player. Fixtures, appearance probabilities, prices, chips and
+          constraints stay fixed. The spread is an assumption you choose.
+        </p>
+      </details>
       <div className="field-grid stress-controls">
         <label>
           Stress horizon
@@ -449,6 +460,6 @@ export function SensitivityView({
           </details>
         </>
       )}
-    </section>
+    </details>
   );
 }

@@ -107,6 +107,41 @@ function stored<T>(key: string, fallback: T): T {
   }
 }
 
+type OptimiseContext = {
+  fresh: boolean;
+  startGW: number;
+  sourcePlan: Plan | null;
+  prefix: Week[];
+  baselinePlan: Plan | null;
+  prices: Record<string, number>;
+};
+
+export function restorePlanningState(
+  saved: Plan[],
+  activeId: string,
+  forecast: {
+    next_gw: number;
+    gameweeks: number[];
+    players: Pick<Player, "id">[];
+  },
+) {
+  const gameweeks = new Set(forecast.gameweeks);
+  const playerIds = new Set(forecast.players.map((player) => player.id));
+  const plans = saved.filter(
+    (plan) =>
+      plan.weeks.some((week) => gameweeks.has(week.gw)) &&
+      plan.base_squad.length === 15 &&
+      new Set(plan.base_squad).size === 15 &&
+      plan.base_squad.every((id) => playerIds.has(id)),
+  );
+  const active = plans.find((plan) => plan.id === activeId) ?? plans[0];
+  const selectedGW = active?.weeks.some((week) => week.gw === forecast.next_gw)
+    ? forecast.next_gw
+    : (active?.weeks.find((week) => gameweeks.has(week.gw))?.gw ??
+      forecast.next_gw);
+  return { plans, activeId: active?.id ?? "", gw: selectedGW };
+}
+
 export default function App() {
   const [data, setData] = useState<Bootstrap | null>(null),
     [loadError, setLoadError] = useState(""),
@@ -170,7 +205,7 @@ export default function App() {
     [csvError, setCsvError] = useState(""),
     [csvWeight, setCsvWeight] = useState(50);
   const [settings, setSettings] = useState<SolverSettings>({
-      horizon: 4,
+      horizon: 5,
       max_transfers: 2,
       decay: 0.9,
       ft_value: 1.5,
@@ -181,9 +216,10 @@ export default function App() {
       excluded: [],
     }),
     [solveResult, setSolveResult] = useState<SolveResult | null>(null),
-    [solveFresh, setSolveFresh] = useState(false);
+    [solveContext, setSolveContext] = useState<OptimiseContext | null>(null);
   const initRef = useRef(false),
     dataRequestRef = useRef(0),
+    solveRequestRef = useRef(0),
     fileRef = useRef<HTMLInputElement>(null);
   const notify = (text: string, error = false) => setToast({ text, error });
   const forecastArgs = {
@@ -213,19 +249,12 @@ export default function App() {
     api<Bootstrap>("/projections", forecastArgs)
       .then((d) => {
         if (!alive) return;
+        const restored = restorePlanningState(plans, activeId, d);
         setData(d);
-        setGw(d.next_gw);
+        setGw(restored.gw);
+        setActiveId(restored.activeId);
+        setPlans(restored.plans);
         setLoading(false);
-        setPlans((ps) =>
-          ps.filter(
-            (p) =>
-              p.weeks.some((w) => w.gw === d.next_gw) &&
-              p.base_squad.length === 15 &&
-              p.base_squad.every((id) =>
-                d.players.some((player) => player.id === id),
-              ),
-          ),
-        );
       })
       .catch((e) => {
         if (alive) {
@@ -625,68 +654,171 @@ export default function App() {
     await updatePlan(p, "Starting bank and free transfers updated.");
   }
   async function runSolve(fresh = false) {
-    if (!data) return;
-    setBusy("Optimising your plan…");
-    setSolveFresh(fresh);
+    if (!data || busy) return;
+    const startGW = data.gameweeks.includes(gw) ? gw : data.next_gw;
+    const sourcePlan = fresh ? null : active && structuredClone(active);
+    if (!fresh && !sourcePlan) return;
+    const forecasts = structuredClone(forecastArgs);
+    const strategy = structuredClone(settings);
+    const prices = Object.fromEntries(
+      data.players.map((player) => [String(player.id), player.price]),
+    );
+    const horizon = Math.max(
+      1,
+      Math.min(strategy.horizon, data.gameweeks.at(-1)! - startGW + 1),
+    );
+    const request = ++solveRequestRef.current;
+    setSolveResult(null);
+    setSolveContext(null);
+    setBusy("Optimising…");
     try {
-      const start = fresh ? null : active;
+      let prefix: Week[] = [];
+      let baselinePlan: Plan | null = null;
+      let squad = sourcePlan?.base_squad.slice() ?? [];
+      let bank = sourcePlan?.base_bank ?? 0;
+      let freeTransfers = sourcePlan?.free_transfers ?? 1;
+      const purchasePrices = { ...sourcePlan?.purchase_prices };
+      const usedChips = structuredClone(sourcePlan?.used_chips ?? []);
+      if (sourcePlan) {
+        if (!sourcePlan.weeks.some((week) => week.gw === startGW))
+          throw new Error("Select a planned gameweek.");
+        prefix = sourcePlan.weeks
+          .filter((week) => week.gw < startGW)
+          .sort((a, b) => a.gw - b.gw);
+        if (prefix.length && prefix.at(-1)!.gw !== startGW - 1)
+          throw new Error("Complete the preceding gameweeks first.");
+        const validateWeeks = async (weeks: Week[]) =>
+          api<{ weeks: Week[] }>("/plan/validate", {
+            ...forecasts,
+            base_squad: sourcePlan.base_squad,
+            bank: sourcePlan.base_bank,
+            free_transfers: sourcePlan.free_transfers,
+            purchase_prices: sourcePlan.purchase_prices,
+            used_chips: sourcePlan.used_chips ?? [],
+            weeks,
+          });
+        try {
+          const validated = await validateWeeks(sourcePlan.weeks);
+          baselinePlan = { ...sourcePlan, weeks: validated.weeks };
+          prefix = validated.weeks.filter((week) => week.gw < startGW);
+        } catch {
+          // An invalid later transfer need not prevent repairing its suffix.
+          // Only a fully validated baseline can support a points comparison.
+          if (prefix.length) prefix = (await validateWeeks(prefix)).weeks;
+        }
+        for (const week of prefix) {
+          freeTransfers = week.next_free_transfers;
+          if (
+            week.chip !== "none" &&
+            !usedChips.some(
+              (used) => used.chip === week.chip && used.gw === week.gw,
+            )
+          )
+            usedChips.push({ chip: week.chip, gw: week.gw });
+          if (week.chip === "freehit") continue;
+          const nextSquad = new Set(week.squad);
+          for (const id of squad)
+            if (!nextSquad.has(id)) delete purchasePrices[String(id)];
+          for (const id of week.squad)
+            if (!squad.includes(id))
+              purchasePrices[String(id)] = prices[String(id)];
+          squad = week.squad.slice();
+          bank = week.bank;
+        }
+      }
       const result = await api<SolveResult>("/optimise", {
-        ...forecastArgs,
-        ...settings,
-        squad: start?.base_squad ?? [],
-        bank: start?.base_bank ?? 0,
-        free_transfers: start?.free_transfers ?? 1,
-        purchase_prices: start?.purchase_prices ?? {},
-        used_chips: start?.used_chips ?? [],
-        start_gw: data.next_gw,
+        ...forecasts,
+        ...strategy,
+        horizon,
+        squad,
+        bank,
+        free_transfers: freeTransfers,
+        purchase_prices: Object.fromEntries(
+          squad.map((id) => [
+            String(id),
+            purchasePrices[String(id)] ?? prices[String(id)],
+          ]),
+        ),
+        used_chips: usedChips,
+        start_gw: startGW,
         budget: 100,
-        chips: start
-          ? Object.fromEntries(start.weeks.map((w) => [String(w.gw), w.chip]))
+        chips: sourcePlan
+          ? Object.fromEntries(
+              sourcePlan.weeks
+                .filter(
+                  (week) => week.gw >= startGW && week.gw < startGW + horizon,
+                )
+                .map((week) => [String(week.gw), week.chip]),
+            )
           : {},
       });
+      if (request !== solveRequestRef.current) return;
       setSolveResult(result);
-      notify("Feasible plan found. Review it, then use it as a new branch.");
+      setSolveContext({
+        fresh,
+        startGW,
+        sourcePlan,
+        prefix,
+        baselinePlan,
+        prices,
+      });
+      notify(`Plan ready · GW${startGW}–${startGW + horizon - 1}.`);
     } catch (e) {
-      notify((e as Error).message, true);
+      if (request === solveRequestRef.current)
+        notify((e as Error).message, true);
     } finally {
-      setBusy("");
+      if (request === solveRequestRef.current) setBusy("");
     }
   }
   async function applySolve() {
-    if (!data || !solveResult) return;
+    if (!data || !solveResult?.weeks.length || !solveContext || busy) return;
+    const context = solveContext;
+    const resultWeeks = structuredClone(solveResult.weeks);
     let p: Plan;
-    if (solveFresh) {
-      const first = solveResult.weeks[0];
+    if (context.fresh) {
+      const first = resultWeeks[0];
+      if (
+        first.squad.some(
+          (id) => lookup.get(id)?.price !== context.prices[String(id)],
+        )
+      ) {
+        notify("Prices changed. Solve again.", true);
+        return;
+      }
       p = planFromSquad(
         first.squad,
         data.players,
-        solveResult.weeks.map((w) => w.gw),
+        resultWeeks.map((w) => w.gw),
         first.bank,
         1,
         "Fresh squad · optimised",
       );
-      p.weeks = solveResult.weeks.map((w, index) => ({
+      p.purchase_prices = Object.fromEntries(
+        first.squad.map((id) => [String(id), context.prices[String(id)]]),
+      );
+      p.weeks = resultWeeks.map((w, index) => ({
         ...w,
         transfers_in: index === 0 ? [] : w.transfers_in,
         transfers_out: index === 0 ? [] : w.transfers_out,
       }));
     } else {
-      if (!active) return;
+      if (!context.sourcePlan) return;
       p = {
-        ...structuredClone(active),
+        ...structuredClone(context.sourcePlan),
         id: uid(),
-        name: `${active.name} · optimised`,
-        weeks: solveResult.weeks,
+        name: `${context.sourcePlan.name} · optimised`,
+        created_at: new Date().toISOString(),
+        weeks: [...structuredClone(context.prefix), ...resultWeeks],
       };
     }
-    setBusy("Validating the optimisation result…");
+    setBusy("Saving branch…");
     try {
       const valid = await validatedPlan(p);
       setPlans((ps) => [...ps, valid]);
       setActiveId(p.id);
-      setGw(p.weeks[0].gw);
+      setGw(context.startGW);
       setTab("lineup");
-      notify("Optimised branch saved. Your original plan is still available.");
+      notify(`Branch saved · through GW${resultWeeks.at(-1)!.gw}.`);
     } catch (e) {
       notify((e as Error).message, true);
     } finally {
@@ -1005,7 +1137,6 @@ export default function App() {
       <div className="workspace">
         <aside className="sidebar">
           <div className="sidebar-top">
-            <span className="eyebrow">YOUR WORKSPACE</span>
             <button
               className="team-switch"
               onClick={() => {
@@ -1022,14 +1153,14 @@ export default function App() {
                 <small>
                   {active?.entry_id
                     ? `Team ID ${active.entry_id}`
-                    : "Local planning workspace"}
+                    : "Local team"}
                 </small>
               </span>
               <ChevronDown size={14} />
             </button>
           </div>
           <div className="sidebar-section-title">
-            <span>PLANNING BRANCHES</span>
+            <span>PLANS</span>
             <button
               className="icon-button"
               onClick={clonePlan}
@@ -1056,7 +1187,7 @@ export default function App() {
                         0,
                       ),
                     )}{" "}
-                    xP · {p.weeks.length} gameweeks
+                    xP · {p.weeks.length} GWs
                   </small>
                 </span>
               </button>
@@ -1074,7 +1205,7 @@ export default function App() {
           </div>
           <div className="sidebar-divider" />
           <div className="sidebar-section-title">
-            <span>YOUR WATCHLIST</span>
+            <span>WATCHLIST</span>
             <span className="count-badge">{watch.length}</span>
           </div>
           <div className="sidebar-watch">
@@ -1090,11 +1221,7 @@ export default function App() {
                 ) : null;
               })
             ) : (
-              <p>
-                Keep an eye on players.
-                <br />
-                Star them in Projections.
-              </p>
+              <p>Star players to save them here.</p>
             )}
           </div>
           <button
@@ -1102,15 +1229,15 @@ export default function App() {
             onClick={() => setTab("projections")}
           >
             <Star size={14} />
-            Explore players
+            Players
             <ArrowUpRight size={13} />
           </button>
           <div className="sidebar-bottom">
             <div className="connection-status">
               <i />
               {Object.values(data.sources).some((s) => s.status === "stale")
-                ? "Using some cached feeds"
-                : "Public feeds connected"}
+                ? "Cached feeds"
+                : "Feeds connected"}
             </div>
             <span>
               Refreshed {pastRefresh}{" "}
@@ -1123,22 +1250,13 @@ export default function App() {
                 <RefreshCw size={13} />
               </button>
             </span>
-            <div>
-              <span>Free. Open. Yours.</span>
-              <span>v0.1</span>
-            </div>
           </div>
         </aside>
         <main
           className={`main-content ${tab === "lineup" ? "planner-content" : ""}`}
         >
           <div className="page-context">
-            <span>
-              <span className="context-dot" />
-              FANTASY PREMIER LEAGUE{" "}
-              <span className="context-separator">/</span>{" "}
-              {tabs.find((t) => t.id === tab)?.label}
-            </span>
+            <span>{tabs.find((t) => t.id === tab)?.label}</span>
             <div>
               <Clock3Icon />
               <span>
@@ -1161,16 +1279,7 @@ export default function App() {
             <>
               <div className="planner-heading">
                 <div>
-                  <span className="eyebrow">
-                    {active
-                      ? `THE NEXT ${active.weeks.length} GAMEWEEKS`
-                      : "PLAN THE NEXT GAMEWEEKS"}
-                  </span>
-                  <h1>
-                    Your next move,
-                    <br className="mobile-break" /> <span>informed.</span>
-                  </h1>
-                  <p>A little more clarity. A better fantasy team.</p>
+                  <h1>{active?.team_name ?? "Planner"}</h1>
                 </div>
                 <div className="button-row">
                   <button
@@ -1182,15 +1291,14 @@ export default function App() {
                     }}
                   >
                     <Link2 size={15} />
-                    Import team
+                    Team
                   </button>
                   <button
                     className="button primary"
                     onClick={() => setTab("optimise")}
                   >
                     <Sparkles size={16} />
-                    Optimise plan
-                    <ArrowUpRight size={15} />
+                    Optimise
                   </button>
                 </div>
               </div>
@@ -1225,56 +1333,27 @@ export default function App() {
                       <Trash2 size={14} />
                     </button>
                   </div>
-                  <div className="overview-strip">
-                    <Stat
-                      label="PLAN PROJECTION"
-                      value={
-                        <>
-                          {fmt(totalPlan)}
-                          <em> xP</em>
-                        </>
-                      }
-                      note={`GW${currentHorizon[0].gw}–${currentHorizon.at(-1)!.gw} · captain included`}
-                      accent
-                    />
-                    <Stat
-                      label={`GAMEWEEK ${gw}`}
-                      value={
-                        <>
-                          {fmt(week.net_points ?? week.points)}
-                          <em> xP</em>
-                        </>
-                      }
-                      note={
-                        week.hits
-                          ? `Includes −${week.hits} transfer hit`
-                          : `Includes autosubs +${fmt(week.autosub_points ?? 0)} · vice +${fmt(week.vice_points ?? 0)}`
-                      }
-                    />
-                    <Stat
-                      label="IN THE BANK"
-                      value={money(week.bank)}
-                      note={`${money(week.squad.reduce((n, id) => n + lookup.get(id)!.price, 0))} squad value`}
-                    />
-                    <Stat
-                      label="FREE TRANSFERS"
-                      value={
-                        <>
-                          {week.free_transfers}
-                          <em> / 5</em>
-                        </>
-                      }
-                      note={`${week.next_free_transfers} available next week`}
-                    />
-                    <Stat
-                      label="CAPTAIN PICK"
-                      value={captain?.name ?? "—"}
-                      note={
-                        captain
-                          ? `${fmt(xp(captain, gw) * (week.chip === "triplecaptain" ? 3 : 2))} xP with armband`
-                          : "—"
-                      }
-                    />
+                  <div className="planner-metrics">
+                    <span
+                      title={`${week.next_free_transfers} free transfers next gameweek`}
+                    >
+                      FTs <b>{week.free_transfers}</b>
+                    </span>
+                    <span
+                      title={`${money(week.squad.reduce((n, id) => n + lookup.get(id)!.price, 0))} squad value`}
+                    >
+                      ITB <b>{money(week.bank)}</b>
+                    </span>
+                    <span
+                      title={`Includes captain, autosubs and vice fallback${week.hits ? `; −${week.hits} transfer hit` : ""}`}
+                    >
+                      GW{gw} <b>{fmt(week.net_points ?? week.points)} xP</b>
+                    </span>
+                    <span
+                      title={`GW${currentHorizon[0].gw}–${currentHorizon.at(-1)!.gw}; captain and hits included`}
+                    >
+                      Plan <b>{fmt(totalPlan)} xP</b>
+                    </span>
                   </div>
                   <div className="timeline-heading">
                     <span>
@@ -1304,6 +1383,7 @@ export default function App() {
                           ...new Set([
                             active.weeks.length,
                             3,
+                            5,
                             6,
                             10,
                             14,
@@ -1319,10 +1399,8 @@ export default function App() {
                             </option>
                           ))}
                       </select>
-                      <i className="timeline-dot" />
-                      Saved on this device <span className="muted">·</span>
                       <button onClick={clonePlan}>
-                        New branch
+                        New
                         <Plus size={12} />
                       </button>
                     </span>
@@ -1337,6 +1415,7 @@ export default function App() {
                       <button
                         key={w.gw}
                         className={`week-node ${gw === w.gw ? "week-active" : ""}`}
+                        title={`${w.next_free_transfers} FT next · ${money(w.bank)} ITB`}
                         onClick={() => {
                           setGw(w.gw);
                           setSelected(null);
@@ -1359,18 +1438,12 @@ export default function App() {
                               {w.transfers_in.length} move
                               {w.transfers_in.length > 1 ? "s" : ""}
                             </span>
-                          ) : (
-                            <span>Roll</span>
-                          )}
+                          ) : null}
                         </span>
                         <strong>
                           {fmt(w.net_points ?? w.points)}
                           <small> xP</small>
                         </strong>
-                        <span className="week-bottom">
-                          {w.next_free_transfers} FT next{" "}
-                          <span>{money(w.bank)}</span>
-                        </span>
                       </button>
                     ))}
                   </div>
@@ -1378,9 +1451,30 @@ export default function App() {
                     <section className="lineup-panel panel">
                       <div className="lineup-header">
                         <div>
-                          <span className="eyebrow">STARTING ELEVEN</span>
                           <h3>
-                            Gameweek {gw}
+                            <button
+                              className="icon-button"
+                              aria-label="Previous gameweek"
+                              disabled={currentHorizon[0].gw === gw}
+                              onClick={() => {
+                                setGw(gw - 1);
+                                setSelected(null);
+                              }}
+                            >
+                              <ChevronLeft size={16} />
+                            </button>
+                            GW{gw}
+                            <button
+                              className="icon-button"
+                              aria-label="Next gameweek"
+                              disabled={currentHorizon.at(-1)!.gw === gw}
+                              onClick={() => {
+                                setGw(gw + 1);
+                                setSelected(null);
+                              }}
+                            >
+                              <ChevronRight size={16} />
+                            </button>
                             <span>
                               {[2, 3, 4]
                                 .map(
@@ -1436,10 +1530,6 @@ export default function App() {
                         onBenchSwap={swapBench}
                       />
                       <div className="pitch-foot">
-                        <span>
-                          <Info size={13} />
-                          Select a shirt to manage that player
-                        </span>
                         <button onClick={autoLineup} disabled={!!busy}>
                           <Sparkles size={13} />
                           Best XI
@@ -1450,7 +1540,7 @@ export default function App() {
                       {selectedPlayer ? (
                         <section className="panel selected-panel">
                           <div className="panel-heading">
-                            <h3>Your selected player</h3>
+                            <h3>Player</h3>
                             <button
                               className="icon-button"
                               onClick={() => setSelected(null)}
@@ -1525,10 +1615,11 @@ export default function App() {
                                 </button>
                               </div>
                             )}
-                          <p className="help-text">
+                          <details className="compact-details player-help">
+                            <summary>Controls</summary>
                             Pick a replacement below. To substitute, select a
                             starting shirt then choose a bench player.
-                          </p>
+                          </details>
                           {selectedPlayer.news && (
                             <p className="news-alert">{selectedPlayer.news}</p>
                           )}
@@ -1536,10 +1627,7 @@ export default function App() {
                       ) : (
                         <section className="panel captain-panel">
                           <div className="panel-heading">
-                            <span className="round-icon">
-                              <Target size={16} />
-                            </span>
-                            <h3>The armband conversation</h3>
+                            <h3>Captain</h3>
                             <span className="subtle-tag">GW{gw}</span>
                           </div>
                           <div className="captain-highlight">
@@ -1548,7 +1636,6 @@ export default function App() {
                               <span>C</span>
                             </div>
                             <div>
-                              <span className="eyebrow">YOUR CAPTAIN</span>
                               <h3>{captain?.name}</h3>
                               <p>
                                 {captain?.gw[String(gw)]?.fixtures
@@ -1594,7 +1681,7 @@ export default function App() {
                           <h3>
                             {selectedPlayer
                               ? `Replace ${selectedPlayer.name}`
-                              : "On the radar"}
+                              : "Players"}
                           </h3>
                           <button
                             className="icon-button"
@@ -1606,8 +1693,8 @@ export default function App() {
                         </div>
                         <div className="radar-tabs">
                           {[
-                            ["targets", "Targets"],
-                            ["captains", "Captaincy"],
+                            ["targets", "Transfers"],
+                            ["captains", "Captains"],
                             ["watch", "Watchlist"],
                           ].map(([key, label]) => (
                             <button
@@ -1661,14 +1748,14 @@ export default function App() {
                           className="view-all"
                           onClick={() => setTab("projections")}
                         >
-                          Explore all {data.players.length} players
+                          All players
                           <ArrowRight size={14} />
                         </button>
                       </section>
                       <section className="transfer-summary">
                         <div>
                           <ArrowDownUp size={14} />
-                          <h4>Planned moves · GW{gw}</h4>
+                          <h4>Transfers</h4>
                           <span>
                             {week.hits ? `−${week.hits} pts` : "No hit"}
                           </span>
@@ -1687,26 +1774,18 @@ export default function App() {
                           <p>
                             <Check size={14} />
                             {week.chip === "wildcard"
-                              ? "Wildcard ready — choose your transfers."
-                              : "No transfers planned. One more week of information."}
+                              ? "Wildcard"
+                              : "No transfers"}
                           </p>
                         )}
                       </section>
                     </div>
                   </div>
                   <footer className="planner-note">
-                    <ShieldCheck size={14} />
-                    <p>
-                      Explainable estimates. Your judgement.
-                      <span>
-                        {" "}
-                        No forecast is a promise. Minutes, team news and model
-                        assumptions matter.
-                      </span>
-                    </p>
-                    <button onClick={() => setTab("analysis")}>
-                      See the evidence
-                      <ArrowUpRight size={13} />
+                    <p>Updated {pastRefresh}</p>
+                    <button onClick={() => setModal("settings")}>
+                      Sources & model
+                      <Info size={13} />
                     </button>
                   </footer>
                 </>
@@ -1748,12 +1827,14 @@ export default function App() {
               <OptimiseView
                 data={data}
                 plan={active}
-                gw={data.next_gw}
+                gw={gw}
                 settings={settings}
                 onSettings={setSettings}
                 onSolve={runSolve}
                 result={solveResult}
-                busy={busy.startsWith("Optimising")}
+                busy={Boolean(busy)}
+                resultFresh={solveContext?.fresh}
+                baselinePlan={solveContext?.baselinePlan}
                 onApply={() => void applySolve()}
                 onDetail={setDetailId}
               />
@@ -2019,9 +2100,7 @@ export default function App() {
               <label className="toggle-row">
                 <span>
                   <b>FPL Form player forecasts</b>
-                  <small>
-                    Public next-three-GW points and appearance estimates
-                  </small>
+                  <small>Public player points and appearance estimates</small>
                 </span>
                 <input
                   type="checkbox"

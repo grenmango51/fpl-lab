@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Search,
   SlidersHorizontal,
@@ -29,9 +29,10 @@ import type {
   Prospective,
 } from "./types";
 import { api, fmt, money, xp, chipNames } from "./lib";
-import { Badge, Busy, LineChart, PlayerName, Stat } from "./components";
+import { Badge, Busy, LineChart, Pitch, PlayerName, Stat } from "./components";
 import { ProspectiveView } from "./ProspectiveView";
 import { LeadTimeView } from "./LeadTimeView";
+import { alignPlanGameweeks } from "./planComparison";
 
 type BaseProps = {
   data: Bootstrap;
@@ -124,18 +125,14 @@ export function ProjectionsView({
   );
   return (
     <>
-      <div className="view-heading">
+      <div className="view-heading compact-view-heading">
         <div>
-          <span className="eyebrow">THE PLAYER EXPLORER</span>
-          <h2>
-            Find your next difference-maker<span>.</span>
-          </h2>
-          <p>Every player. Every fixture. The reasoning behind every point.</p>
+          <h2>Projections</h2>
         </div>
         <div className="button-row">
           <button className="button" onClick={onCSV}>
             <Upload size={15} />
-            Import model
+            Import CSV
           </button>
           <button className="button" onClick={onExport}>
             <Download size={15} />
@@ -166,7 +163,7 @@ export function ProjectionsView({
                 setPage(0);
               }}
             >
-              {pos === "ALL" ? "All players" : pos}
+              {pos === "ALL" ? "All" : pos}
             </button>
           ))}
         </div>
@@ -331,10 +328,13 @@ export function ProjectionsView({
         )}
       </div>
       <div className="table-footer">
-        <span>
-          P: provider blend · E: extrapolated · Probabilities uncalibrated ·
-          Select a player to inspect their forecast
-        </span>
+        <details className="compact-details">
+          <summary>Forecast notes</summary>
+          <p>
+            P: provider blend · E: extrapolated. Probabilities are uncalibrated.
+            Select a player for sources and components.
+          </p>
+        </details>
         <div>
           <span>
             {Math.min(rows.length, page * 40 + 1)}–
@@ -392,16 +392,9 @@ export function FixturesView({ data, gw }: { data: Bootstrap; gw: number }) {
   );
   return (
     <>
-      <div className="view-heading">
+      <div className="view-heading compact-view-heading">
         <div>
-          <span className="eyebrow">THE FIXTURE LANDSCAPE</span>
-          <h2>
-            Know where the opportunity is<span>.</span>
-          </h2>
-          <p>
-            Official fixtures, market goal expectations, and clean-sheet
-            probabilities.
-          </p>
+          <h2>Fixtures</h2>
         </div>
         <div className="segmented">
           {[
@@ -509,12 +502,14 @@ export function FixturesView({ data, gw }: { data: Bootstrap; gw: number }) {
           </tbody>
         </table>
       </div>
-      <div className="source-caption">
-        <Info size={14} />
-        FDR: official FPL difficulty. Goals / CS: FPL Joe market projections,
-        then Elevenify, then an explicitly labelled historical fallback. Hover a
-        fixture for its source.
-      </div>
+      <details className="compact-details source-caption">
+        <summary>Sources</summary>
+        <p>
+          FDR: official FPL difficulty. Goals / CS: FPL Joe, then Elevenify,
+          then the labelled historical fallback. Hover a fixture for its source
+          and extraction time.
+        </p>
+      </details>
     </>
   );
 }
@@ -541,6 +536,8 @@ export function OptimiseView({
   busy,
   onApply,
   onDetail,
+  resultFresh,
+  baselinePlan,
 }: {
   data: Bootstrap;
   plan: Plan | null;
@@ -552,9 +549,15 @@ export function OptimiseView({
   busy: boolean;
   onApply: () => void;
   onDetail: (id: number) => void;
+  resultFresh?: boolean;
+  baselinePlan?: Plan | null;
 }) {
   const [query, setQuery] = useState("");
   const [constraint, setConstraint] = useState<"locked" | "excluded">("locked");
+  const [selectedGw, setSelectedGw] = useState(gw);
+  useEffect(() => {
+    setSelectedGw(result?.weeks[0]?.gw ?? gw);
+  }, [result, gw]);
   const change = (key: keyof SolverSettings, value: number) =>
     onSettings({ ...settings, [key]: value });
   const lookup = new Map(data.players.map((p) => [p.id, p]));
@@ -565,39 +568,61 @@ export function OptimiseView({
         ? settings[constraint].filter((v) => v !== id)
         : [...settings[constraint], id],
     });
+  const remainingGameweeks = data.gameweeks.filter((week) => week >= gw).length;
+  const effectiveHorizon = Math.max(
+    1,
+    Math.min(settings.horizon, remainingGameweeks),
+  );
+  const previewWeeks = result?.weeks.length
+    ? result.weeks
+    : (plan?.weeks.filter((week) => week.gw >= gw).slice(0, effectiveHorizon) ??
+      []);
+  const selectedWeek =
+    previewWeeks.find((week) => week.gw === selectedGw) ?? previewWeeks[0];
+  const resultPoints = result?.weeks.reduce(
+    (sum, week) => sum + week.net_points,
+    0,
+  );
+  const baselineWeeks = result?.weeks.map((week) =>
+    baselinePlan?.weeks.find((baseline) => baseline.gw === week.gw),
+  );
+  const baselinePoints =
+    resultFresh === false &&
+    result?.weeks.length &&
+    new Set(result.weeks.map((week) => week.gw)).size === result.weeks.length &&
+    baselineWeeks?.every((week) => week && Number.isFinite(week.net_points)) &&
+    Number.isFinite(resultPoints)
+      ? baselineWeeks.reduce((sum, week) => sum + week!.net_points, 0)
+      : null;
+  const pointsChange =
+    baselinePoints === null ? null : resultPoints! - baselinePoints;
   return (
     <>
-      <div className="view-heading">
+      <div className="view-heading compact-view-heading">
         <div>
-          <span className="eyebrow">THE OPTIMISER</span>
-          <h2>
-            A better plan. Within your rules<span>.</span>
-          </h2>
-          <p>
-            HiGHS integer optimisation across gameweeks, with budgets,
-            transfers, lineups and captaincy.
-          </p>
+          <h2>Optimise</h2>
         </div>
         <span className="engine-label">
           <ShieldCheck size={16} />
-          Constraint-checked on the server
+          Squad rules checked
         </span>
       </div>
-      <div className="solver-layout">
+      <div className="solver-layout solver-with-preview">
         <section className="panel solver-settings">
           <div className="panel-heading">
             <SlidersHorizontal size={16} />
-            <h3>Your strategy</h3>
+            <h3>Settings</h3>
           </div>
-          <div className="field-grid">
+          <div className="field-grid solver-primary-controls">
             <label>
-              Planning horizon
+              Horizon
               <select
-                value={settings.horizon}
+                value={effectiveHorizon}
                 onChange={(e) => change("horizon", +e.target.value)}
               >
-                {[1, 3, 4, 6, 8, 10, 14]
-                  .filter((v) => gw + v - 1 <= data.gameweeks.at(-1)!)
+                {[...new Set([1, 2, 3, 4, 5, 6, 8, 10, 14, effectiveHorizon])]
+                  .filter((v) => v <= remainingGameweeks)
+                  .sort((a, b) => a - b)
                   .map((v) => (
                     <option value={v} key={v}>
                       {v} gameweeks
@@ -618,86 +643,26 @@ export function OptimiseView({
                 ))}
               </select>
             </label>
-            <label>
-              Saved FT value
-              <input
-                type="number"
-                step="0.25"
-                min="0"
-                max="3.9"
-                value={settings.ft_value}
-                onChange={(e) => change("ft_value", +e.target.value)}
-              />
-              <small>Points value of keeping flexibility</small>
-            </label>
-            <label>
-              Future-week weight
-              <input
-                type="number"
-                step="0.01"
-                min="0.5"
-                max="1"
-                value={settings.decay}
-                onChange={(e) => change("decay", +e.target.value)}
-              />
-              <small>Each later GW is multiplied by this</small>
-            </label>
-            <label>
-              Bench weight
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                max="1"
-                value={settings.bench_weight}
-                onChange={(e) => change("bench_weight", +e.target.value)}
-              />
-              <small>Linear approximation for bench usage</small>
-            </label>
-            <label>
-              Solve time
-              <select
-                value={settings.seconds}
-                onChange={(e) => change("seconds", +e.target.value)}
-              >
-                {[5, 15, 30, 45].map((v) => (
-                  <option value={v} key={v}>
-                    {v} seconds
-                  </option>
-                ))}
-              </select>
-            </label>
           </div>
-          <label className="range-label">
-            Ownership preference{" "}
-            <b>
-              {settings.risk === 0
-                ? "Neutral"
-                : settings.risk < 0
-                  ? "Differentials"
-                  : "Popular picks"}
-            </b>
-            <input
-              aria-label="Ownership preference"
-              type="range"
-              min="-0.3"
-              max="0.3"
-              step="0.05"
-              value={settings.risk}
-              onChange={(e) => change("risk", +e.target.value)}
-            />
-          </label>
+          <button
+            className="button primary full"
+            disabled={busy || !plan}
+            onClick={() => onSolve(false)}
+          >
+            <Sparkles size={16} />
+            {busy ? "Solving…" : "Optimise"}
+          </button>
           <div className="divider" />
           <div className="panel-heading">
             <LockKeyhole size={15} />
-            <h3>Player constraints</h3>
+            <h3>Players</h3>
           </div>
           <div className="segmented">
             <button
               className={constraint === "locked" ? "active" : ""}
               onClick={() => setConstraint("locked")}
             >
-              Keep / include
+              Include
             </button>
             <button
               className={constraint === "excluded" ? "active" : ""}
@@ -718,7 +683,7 @@ export function OptimiseView({
             <Search size={14} />
             <input
               aria-label="Find a player constraint"
-              placeholder="Add a player constraint…"
+              placeholder="Find a player…"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
             />
@@ -745,123 +710,260 @@ export function OptimiseView({
                 ))}
             </div>
           )}
-          <button
-            className="button primary full"
-            disabled={busy || !plan}
-            onClick={() => onSolve(false)}
-          >
-            <Sparkles size={16} />
-            {busy ? "Searching feasible plans…" : "Optimise my plan"}
-          </button>
+          <details className="compact-details solver-advanced">
+            <summary>Advanced</summary>
+            <div className="field-grid">
+              <label>
+                FT value
+                <input
+                  type="number"
+                  step="0.25"
+                  min="0"
+                  max="3.9"
+                  value={settings.ft_value}
+                  onChange={(e) => change("ft_value", +e.target.value)}
+                />
+              </label>
+              <label>
+                Future weight
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0.5"
+                  max="1"
+                  value={settings.decay}
+                  onChange={(e) => change("decay", +e.target.value)}
+                />
+              </label>
+              <label>
+                Bench weight
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  max="1"
+                  value={settings.bench_weight}
+                  onChange={(e) => change("bench_weight", +e.target.value)}
+                />
+              </label>
+              <label>
+                Solve time
+                <select
+                  value={settings.seconds}
+                  onChange={(e) => change("seconds", +e.target.value)}
+                >
+                  {[5, 15, 30, 45].map((v) => (
+                    <option value={v} key={v}>
+                      {v} seconds
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <label className="range-label">
+              Ownership preference{" "}
+              <b>
+                {settings.risk === 0
+                  ? "Neutral"
+                  : settings.risk < 0
+                    ? "Differentials"
+                    : "Popular picks"}
+              </b>
+              <input
+                aria-label="Ownership preference"
+                type="range"
+                min="-0.3"
+                max="0.3"
+                step="0.05"
+                value={settings.risk}
+                onChange={(e) => change("risk", +e.target.value)}
+              />
+            </label>
+            <p>
+              FT value rewards saved transfers. Future weight discounts each
+              later gameweek. Bench weight is a linear approximation for bench
+              usage.
+            </p>
+            <p>
+              Ownership preference is a heuristic, not a measure of forecast
+              risk.
+            </p>
+            <p>
+              Chips follow your schedule. The solver screens candidates and
+              reports its gap; this does not measure forecast accuracy.
+            </p>
+          </details>
           <button
             className="button full"
             disabled={busy}
             onClick={() => onSolve(true)}
           >
-            Build a fresh £100m squad
+            New £100m squad
           </button>
-          <p className="help-text">
-            Chips follow your planned schedule. The solver screens the candidate
-            pool and reports its gap; forecast accuracy remains a separate
-            question.
-          </p>
         </section>
-        <section className="solver-output">
-          {busy && (
-            <Busy text="Exploring transfers, formations and captain choices…" />
-          )}
-          {result ? (
+        <section className="solver-output solver-preview">
+          {busy && <Busy text="Solving…" />}
+          {selectedWeek ? (
             <>
               <div className="panel result-summary">
                 <div>
-                  <span className="eyebrow">BEST FEASIBLE PLAN</span>
                   <h3>
-                    {result.weeks
-                      .reduce((n, w) => n + w.net_points, 0)
-                      .toFixed(1)}
-                    <span> projected points</span>
+                    {fmt(
+                      previewWeeks.reduce(
+                        (sum, week) => sum + week.net_points,
+                        0,
+                      ),
+                    )}
+                    <span> xP</span>
                   </h3>
-                  <p>
-                    {result.status} · gap {fmt(result.gap * 100, 1)}% ·{" "}
-                    {result.candidate_count} candidates
-                  </p>
-                </div>
-                <button className="button primary" onClick={onApply}>
-                  Use this plan
-                  <ArrowUpRight size={16} />
-                </button>
-              </div>
-              {result.weeks.map((w) => (
-                <div className="panel result-week" key={w.gw}>
-                  <div className="result-week-top">
-                    <b>GW{w.gw}</b>
-                    <span>{chipNames[w.chip]}</span>
-                    <strong>
-                      {fmt(w.net_points)}
-                      <small> xP</small>
-                    </strong>
-                  </div>
-                  <div className="result-transfers">
-                    {w.transfers_in.length ? (
-                      w.transfers_in.map((id, i) => (
-                        <div key={id}>
-                          <button
-                            onClick={() =>
-                              w.transfers_out[i] && onDetail(w.transfers_out[i])
-                            }
-                          >
-                            {lookup.get(w.transfers_out[i])?.name ??
-                              "New squad"}
-                          </button>
-                          <ArrowUpRight size={14} />
-                          <button
-                            className="green"
-                            onClick={() => onDetail(id)}
-                          >
-                            {lookup.get(id)?.name}
-                          </button>
-                        </div>
-                      ))
-                    ) : (
-                      <span className="green">
-                        Roll the transfer · keep your flexibility
+                  <p className="compact-status">
+                    {result ? "Draft" : "Current plan"} · {previewWeeks.length}{" "}
+                    GWs
+                    {result && (
+                      <>
+                        {" "}
+                        ·{" "}
+                        {result.weeks.reduce(
+                          (sum, week) => sum + week.transfers_in.length,
+                          0,
+                        )}{" "}
+                        transfers
+                      </>
+                    )}
+                    {pointsChange !== null && (
+                      <span className={pointsChange >= 0 ? "green" : "red"}>
+                        {" · "}
+                        {pointsChange >= 0 ? "+" : ""}
+                        {fmt(pointsChange)} xP vs baseline
                       </span>
                     )}
-                  </div>
-                  <div className="result-week-foot">
-                    <span>
-                      Captain: <b>{lookup.get(w.captain)?.name}</b>
-                    </span>
-                    <span>
-                      {w.hits ? `−${w.hits} hit` : "No hit"} · {money(w.bank)}{" "}
-                      bank · {w.next_free_transfers} FT next
-                    </span>
-                  </div>
-                </div>
-              ))}
-              <div className="assumptions">
-                <h4>What this solve assumes</h4>
-                {result.assumptions.map((a) => (
-                  <p key={a}>
-                    <Info size={13} />
-                    {a}
                   </p>
+                </div>
+                {result && (
+                  <button
+                    className="button primary"
+                    disabled={busy}
+                    onClick={onApply}
+                  >
+                    Apply
+                    <ArrowUpRight size={16} />
+                  </button>
+                )}
+              </div>
+              <div
+                className="solver-week-tabs"
+                role="tablist"
+                aria-label="Preview gameweek"
+              >
+                {previewWeeks.map((week) => (
+                  <button
+                    key={week.gw}
+                    role="tab"
+                    aria-selected={selectedWeek.gw === week.gw}
+                    className={selectedWeek.gw === week.gw ? "active" : ""}
+                    onClick={() => setSelectedGw(week.gw)}
+                    title={
+                      week.chip === "none"
+                        ? `${fmt(week.net_points)} xP`
+                        : `${chipNames[week.chip]} · ${fmt(week.net_points)} xP`
+                    }
+                  >
+                    <b>GW{week.gw}</b>
+                    <span>{fmt(week.net_points)}</span>
+                    {week.chip !== "none" && (
+                      <small>{chipNames[week.chip]}</small>
+                    )}
+                  </button>
                 ))}
               </div>
+              <div className="panel result-week solver-selected-week">
+                <div className="result-week-top">
+                  <b>GW{selectedWeek.gw}</b>
+                  <span>{chipNames[selectedWeek.chip]}</span>
+                  <strong>
+                    {fmt(selectedWeek.net_points)}
+                    <small> xP</small>
+                  </strong>
+                </div>
+                <Pitch
+                  week={selectedWeek}
+                  players={data.players}
+                  selected={null}
+                  onSelect={onDetail}
+                  onDetail={onDetail}
+                  onBenchSwap={onDetail}
+                />
+                <div className="result-transfers">
+                  {selectedWeek.transfers_in.length ? (
+                    selectedWeek.transfers_in.map((id, index) => (
+                      <div key={id}>
+                        <button
+                          disabled={!selectedWeek.transfers_out[index]}
+                          onClick={() =>
+                            onDetail(selectedWeek.transfers_out[index])
+                          }
+                        >
+                          {lookup.get(selectedWeek.transfers_out[index])
+                            ?.name ?? "New squad"}
+                        </button>
+                        <ArrowUpRight size={14} />
+                        <button className="green" onClick={() => onDetail(id)}>
+                          {lookup.get(id)?.name}
+                        </button>
+                      </div>
+                    ))
+                  ) : (
+                    <span className="green">Roll transfer</span>
+                  )}
+                </div>
+                <div className="result-week-foot">
+                  <span>
+                    Captain: <b>{lookup.get(selectedWeek.captain)?.name}</b>
+                  </span>
+                  <span>
+                    {selectedWeek.hits ? `−${selectedWeek.hits} hit` : "No hit"}{" "}
+                    · {money(selectedWeek.bank)} bank ·{" "}
+                    {selectedWeek.next_free_transfers} FT next
+                  </span>
+                </div>
+              </div>
+              {result && (
+                <>
+                  <details className="assumptions compact-details">
+                    <summary>Solver details</summary>
+                    <p>
+                      {result.status} · gap {fmt(result.gap * 100, 1)}% ·{" "}
+                      {result.candidate_count} candidates
+                    </p>
+                    <p>
+                      Objective {fmt(result.objective)} · {result.pool_count}{" "}
+                      players screened
+                    </p>
+                    {baselinePoints !== null && (
+                      <p>
+                        {baselinePlan?.name ?? "Baseline"}:{" "}
+                        {fmt(baselinePoints)} xP over the same{" "}
+                        {result.weeks.length} gameweeks. Totals include transfer
+                        hits.
+                      </p>
+                    )}
+                  </details>
+                  <details className="assumptions compact-details">
+                    <summary>Assumptions</summary>
+                    {result.assumptions.map((assumption) => (
+                      <p key={assumption}>
+                        <Info size={13} />
+                        {assumption}
+                      </p>
+                    ))}
+                  </details>
+                </>
+              )}
             </>
           ) : (
             <div className="solver-intro">
-              <Sparkles size={35} />
-              <h3>Give your next move a second opinion.</h3>
-              <p>
-                Set your horizon and constraints, then search for a legal
-                multiweek plan. Compare it against your own branch before
-                applying it.
-              </p>
-              <div className="solver-promise">
-                <ShieldCheck size={17} />
-                15 players · £100m budget · 3 per club · legal formations
-              </div>
+              <h3>No result yet</h3>
+              <p>Choose your settings, then optimise.</p>
             </div>
           )}
         </section>
@@ -887,229 +989,284 @@ export function AnalysisView({
   prospective: Prospective | null;
   onScore: () => void;
 }) {
+  const [section, setSection] = useState<"overview" | "benchmarks" | "sources">(
+    "overview",
+  );
   const [scope, setScope] = useState<"starters" | "all">("starters");
   const metrics =
     scope === "starters" ? evalData?.models : evalData?.all_players;
-  const comparison = plans.filter((p) => p.weeks.length);
+  const comparison = alignPlanGameweeks([
+    ...plans.filter((plan) => plan.id === active?.id),
+    ...plans.filter((plan) => plan.id !== active?.id),
+  ]);
   return (
     <>
-      <div className="view-heading">
+      <div className="view-heading compact-view-heading">
         <div>
-          <span className="eyebrow">THE EVIDENCE</span>
-          <h2>
-            Good decisions need receipts<span>.</span>
-          </h2>
-          <p>
-            Compare plans, inspect sources, and measure forecasts before
-            trusting them.
-          </p>
+          <h2>Analysis</h2>
         </div>
-        <button className="button" onClick={onSnapshot}>
-          <Clock3 size={15} />
-          Freeze pre-deadline forecast
-        </button>
-      </div>
-      <ProspectiveView data={data} report={prospective} onScore={onScore} />
-      <LeadTimeView
-        data={data}
-        captureKey={prospective?.captures?.[0]?.filename ?? ""}
-      />
-      {comparison.length > 0 && (
-        <section className="panel analysis-plan">
-          <div className="panel-heading">
-            <Activity size={16} />
-            <h3>Your planning branches</h3>
-            <span>Projected points by gameweek</span>
-          </div>
-          <LineChart
-            series={comparison.slice(0, 4).map((p) => ({
-              name: p.name,
-              values: p.weeks.map((w) => w.net_points ?? w.points),
-            }))}
-            labels={active?.weeks.map((w) => `GW${w.gw}`) ?? []}
-          />
-          <div className="branch-comparison">
-            {comparison.map((p) => (
-              <div key={p.id}>
-                <span>{p.name}</span>
-                <b>
-                  {fmt(
-                    p.weeks.reduce((n, w) => n + (w.net_points ?? w.points), 0),
-                  )}{" "}
-                  xP
-                </b>
-                <small>
-                  {p.weeks.length} GWs ·{" "}
-                  {p.weeks.reduce((n, w) => n + w.hits, 0)} hit points
-                </small>
-              </div>
-            ))}
-          </div>
-          <p className="source-caption">
-            Compare totals only over matching gameweek ranges. Current
-            forecasts; captain included, automatic substitutions excluded.
-          </p>
-        </section>
-      )}
-      <div className="section-title">
-        <div>
-          <h3>Historical benchmark</h3>
-          <p>2025/26 held out. Features update only after each gameweek.</p>
-        </div>
-        <div className="segmented">
-          <button
-            className={scope === "starters" ? "active" : ""}
-            onClick={() => setScope("starters")}
-          >
-            Projected 45+ mins
+        <div className="toolbar-actions">
+          <button className="button" onClick={onSnapshot}>
+            <Clock3 size={15} />
+            Capture forecasts
           </button>
           <button
-            className={scope === "all" ? "active" : ""}
-            onClick={() => setScope("all")}
+            className="button secondary"
+            onClick={() => {
+              onScore();
+              setSection("benchmarks");
+            }}
           >
-            All players
+            <Activity size={15} />
+            Score completed
           </button>
         </div>
       </div>
-      {evalData?.available && metrics ? (
+      <div
+        className="segmented analysis-tabs"
+        role="tablist"
+        aria-label="Analysis views"
+      >
+        {(["overview", "benchmarks", "sources"] as const).map((name) => (
+          <button
+            key={name}
+            role="tab"
+            aria-selected={section === name}
+            className={section === name ? "active" : ""}
+            onClick={() => setSection(name)}
+          >
+            {name[0].toUpperCase() + name.slice(1)}
+          </button>
+        ))}
+      </div>
+      {section === "overview" &&
+        (comparison.gameweeks.length > 0 ? (
+          <section className="panel analysis-plan">
+            <div className="panel-heading">
+              <Activity size={16} />
+              <h3>Plans</h3>
+              <span>
+                {comparison.gameweeks.length} shared GWs · GW
+                {comparison.gameweeks[0]}–{comparison.gameweeks.at(-1)}
+              </span>
+            </div>
+            <LineChart
+              series={comparison.plans.slice(0, 4).map(({ plan, weeks }) => ({
+                name: plan.name,
+                values: weeks.map((w) => w.net_points ?? w.points),
+              }))}
+              labels={comparison.gameweeks.map((gw) => `GW${gw}`)}
+            />
+            <div className="branch-comparison">
+              {comparison.plans.map(({ plan, weeks, points, hits }) => (
+                <div key={plan.id}>
+                  <span>{plan.name}</span>
+                  <b>{fmt(points)} xP</b>
+                  <small>
+                    {weeks.length} GWs · {hits} hit points
+                  </small>
+                </div>
+              ))}
+            </div>
+            <p className="source-caption">
+              Totals use shared gameweeks.
+              {comparison.plans.length > 4
+                ? " Chart shows the first four plans."
+                : ""}
+            </p>
+          </section>
+        ) : (
+          <section className="panel">
+            <p className="compact-status">
+              {comparison.plans.length
+                ? "These plans have no shared gameweeks."
+                : "Create a plan to compare gameweeks."}
+            </p>
+          </section>
+        ))}
+      {section === "benchmarks" && (
         <>
-          <div className="benchmark-stats">
-            {Object.entries(metrics).map(([name, m]) => (
-              <div
-                className={`panel benchmark-card ${name === "Component model" ? "ours" : ""}`}
-                key={name}
+          <ProspectiveView data={data} report={prospective} onScore={onScore} />
+          <LeadTimeView
+            data={data}
+            captureKey={prospective?.captures?.[0]?.filename ?? ""}
+          />
+          <div className="section-title">
+            <div>
+              <h3>Historical benchmark</h3>
+              <span className="compact-status">2025/26 holdout</span>
+            </div>
+            <div className="segmented">
+              <button
+                className={scope === "starters" ? "active" : ""}
+                onClick={() => setScope("starters")}
               >
-                <span className="eyebrow">{name}</span>
-                <strong>
-                  {fmt(m.mae, 3)}
-                  <small> MAE</small>
-                </strong>
-                <p>
-                  RMSE {fmt(m.rmse, 3)} · bias {m.bias >= 0 ? "+" : ""}
-                  {fmt(m.bias, 3)}
-                </p>
-                <small>
-                  {m.count.toLocaleString()} player-fixture forecasts
-                </small>
-              </div>
-            ))}
+                Projected 45+ mins
+              </button>
+              <button
+                className={scope === "all" ? "active" : ""}
+                onClick={() => setScope("all")}
+              >
+                All players
+              </button>
+            </div>
           </div>
-          <div className="analysis-grid">
-            <section className="panel">
-              <div className="panel-heading">
-                <h3>Error across gameweeks</h3>
-                <span>Lower is better</span>
-              </div>
-              <LineChart
-                yLabel="MAE (points)"
-                series={[
-                  {
-                    name: "Component model",
-                    values: evalData.gameweeks!.map((v) => v.component),
-                  },
-                  {
-                    name: "ML challenger",
-                    values: evalData.gameweeks!.map((v) => v.ml),
-                  },
-                  {
-                    name: "Recent form",
-                    values: evalData.gameweeks!.map((v) => v.form),
-                  },
-                ]}
-                labels={evalData.gameweeks!.map((v) => `GW${v.gw}`)}
-              />
-              <p className="source-caption">
-                Source: vaastav FPL archives · 2025/26 · projected 45+ minutes
-                cohort
-              </p>
-            </section>
-            <section className="panel">
-              <div className="panel-heading">
-                <h3>By position</h3>
-                <span>Component model</span>
-              </div>
-              <div className="position-metrics">
-                {evalData.positions!.map((p) => (
-                  <div key={p.position}>
-                    <span>{p.position}</span>
-                    <div>
-                      <i style={{ width: `${(p.mae / 5) * 100}%` }} />
-                    </div>
-                    <b>{fmt(p.mae, 2)}</b>
-                    <small>{p.count.toLocaleString()} rows</small>
+          {evalData?.available && metrics ? (
+            <>
+              <div className="benchmark-stats">
+                {Object.entries(metrics).map(([name, m]) => (
+                  <div
+                    className={`panel benchmark-card ${name === "Component model" ? "ours" : ""}`}
+                    key={name}
+                  >
+                    <span>{name}</span>
+                    <strong>
+                      {fmt(m.mae, 3)}
+                      <small> MAE</small>
+                    </strong>
+                    <p>
+                      RMSE {fmt(m.rmse, 3)} · bias {m.bias >= 0 ? "+" : ""}
+                      {fmt(m.bias, 3)}
+                    </p>
+                    <small>
+                      {m.count.toLocaleString()} player-fixture forecasts
+                    </small>
                   </div>
                 ))}
               </div>
-              <p className="source-caption">
-                MAE in points · same held-out starter cohort
-              </p>
+              <div className="analysis-grid">
+                <section className="panel">
+                  <div className="panel-heading">
+                    <h3>Error across gameweeks</h3>
+                    <span>Lower is better</span>
+                  </div>
+                  <LineChart
+                    yLabel="MAE (points)"
+                    series={[
+                      {
+                        name: "Component model",
+                        values: evalData.gameweeks!.map((v) => v.component),
+                      },
+                      {
+                        name: "ML challenger",
+                        values: evalData.gameweeks!.map((v) => v.ml),
+                      },
+                      {
+                        name: "Recent form",
+                        values: evalData.gameweeks!.map((v) => v.form),
+                      },
+                    ]}
+                    labels={evalData.gameweeks!.map((v) => `GW${v.gw}`)}
+                  />
+                  <p className="source-caption">
+                    Source: vaastav FPL archives · 2025/26 · projected 45+
+                    minutes cohort
+                  </p>
+                </section>
+                <section className="panel">
+                  <div className="panel-heading">
+                    <h3>By position</h3>
+                    <span>Component model</span>
+                  </div>
+                  <div className="position-metrics">
+                    {evalData.positions!.map((p) => (
+                      <div key={p.position}>
+                        <span>{p.position}</span>
+                        <div>
+                          <i style={{ width: `${(p.mae / 5) * 100}%` }} />
+                        </div>
+                        <b>{fmt(p.mae, 2)}</b>
+                        <small>{p.count.toLocaleString()} rows</small>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="source-caption">
+                    MAE in points · same held-out starter cohort
+                  </p>
+                </section>
+              </div>
+              <details className="panel methodology compact-details">
+                <summary>Method and limitations</summary>
+                <p>{evalData.method}</p>
+                <p>Features update only after each gameweek.</p>
+                <p className="orange">
+                  Paid-provider competitiveness is unproven. Live forecasts use
+                  current market, Elevenify and optional FPL Form inputs; this
+                  backtest tests the component model with historical team
+                  estimates. The live blend and extrapolation require
+                  prospective evaluation.
+                </p>
+                <div className="method-notes">
+                  {evalData.limitations?.map((l) => (
+                    <p key={l}>
+                      <Info size={13} />
+                      {l}
+                    </p>
+                  ))}
+                </div>
+                <small>
+                  Evaluation generated{" "}
+                  {new Date(evalData.generated_at!).toLocaleString()} · Live
+                  model: {data.model_version}. ML challenger stays in research.
+                </small>
+              </details>
+            </>
+          ) : (
+            <section className="panel">
+              <Busy
+                text={evalData?.message ?? "Loading historical evaluation…"}
+              />
             </section>
-          </div>
-          <section className="panel methodology">
+          )}
+        </>
+      )}
+      {section === "sources" && (
+        <>
+          <section className="panel sources-panel">
             <div className="panel-heading">
-              <ShieldCheck size={16} />
-              <h3>What this proves — and what remains open</h3>
+              <h3>Sources</h3>
+              <span>
+                {data.history_rows.toLocaleString()} historical records
+              </span>
             </div>
-            <p>{evalData.method}</p>
-            <p className="orange">
-              Paid-provider competitiveness is unproven. Live forecasts use
-              current market, Elevenify and optional FPL Form inputs; this
-              backtest tests the component model with historical team estimates.
-              The live blend and extrapolation require prospective evaluation.
-            </p>
+            <div className="source-list">
+              {Object.entries(data.sources)
+                .filter(([key]) => !key.startsWith("fpl_live_"))
+                .map(([key, source]) => (
+                  <div key={key}>
+                    <span
+                      className={`status-dot ${source.status === "stale" || source.status === "unavailable" ? "stale" : ""}`}
+                    />
+                    <div>
+                      <a href={source.url} target="_blank" rel="noreferrer">
+                        {key.replaceAll("_", " ")}
+                      </a>
+                      <small>
+                        {source.fetched_at
+                          ? new Date(source.fetched_at).toLocaleString()
+                          : "Unavailable"}{" "}
+                        · {source.sha256?.slice(0, 12) ?? "No hash"}
+                      </small>
+                    </div>
+                    <span className="source-state">{source.status}</span>
+                  </div>
+                ))}
+            </div>
+          </section>
+          <details className="panel methodology compact-details">
+            <summary>Forecast limitations</summary>
             <div className="method-notes">
-              {evalData.limitations?.map((l) => (
-                <p key={l}>
+              {data.limitations.map((limitation) => (
+                <p key={limitation}>
                   <Info size={13} />
-                  {l}
+                  {limitation}
                 </p>
               ))}
             </div>
-            <small>
-              Evaluation generated{" "}
-              {new Date(evalData.generated_at!).toLocaleString()} · Live model:{" "}
-              {data.model_version}. ML challenger stays in research.
-            </small>
-          </section>
+            <small>Model {data.model_version}</small>
+          </details>
         </>
-      ) : (
-        <section className="panel">
-          <Busy text={evalData?.message ?? "Loading historical evaluation…"} />
-          <p className="help-text">
-            Evaluation results appear here once the walk-forward run completes.
-            No accuracy claim is assumed.
-          </p>
-        </section>
       )}
-      <section className="panel sources-panel">
-        <div className="panel-heading">
-          <h3>Data provenance</h3>
-          <span>{data.history_rows.toLocaleString()} historical records</span>
-        </div>
-        <div className="source-list">
-          {Object.entries(data.sources)
-            .filter(([key]) => !key.startsWith("fpl_live_"))
-            .map(([key, source]) => (
-              <div key={key}>
-                <span
-                  className={`status-dot ${source.status === "stale" || source.status === "unavailable" ? "stale" : ""}`}
-                />
-                <div>
-                  <a href={source.url} target="_blank" rel="noreferrer">
-                    {key.replaceAll("_", " ")}
-                  </a>
-                  <small>
-                    {source.fetched_at
-                      ? new Date(source.fetched_at).toLocaleString()
-                      : "Unavailable"}{" "}
-                    · {source.sha256?.slice(0, 12) ?? "No hash"}
-                  </small>
-                </div>
-                <span className="source-state">{source.status}</span>
-              </div>
-            ))}
-        </div>
-      </section>
     </>
   );
 }
@@ -1132,49 +1289,35 @@ export function MarketView({ data, gw, onDetail, watch, onWatch }: BaseProps) {
   const totalIn = data.players.reduce((n, p) => n + p.transfers_in, 0);
   return (
     <>
-      <div className="view-heading">
+      <div className="view-heading compact-view-heading">
         <div>
-          <span className="eyebrow">THE MARKET PULSE</span>
-          <h2>
-            Follow the movement<span>.</span>
-          </h2>
-          <p>
-            Official transfer counts and price signals. Keep value in your
-            planning equation.
-          </p>
+          <h2>Market</h2>
         </div>
         <span className="engine-label">
           <TrendingUp size={16} />
-          Official FPL feed
+          Official FPL
         </span>
       </div>
       <div className="market-stats">
+        <Stat label="Transfers in" value={totalIn.toLocaleString()} />
         <Stat
-          label="TRANSFERS IN THIS GW"
-          value={totalIn.toLocaleString()}
-          note="Across the whole player pool"
-        />
-        <Stat
-          label="MOST BOUGHT"
+          label="Most bought"
           value={
             [...data.players].sort((a, b) => b.transfers_in - a.transfers_in)[0]
               ?.name
           }
-          note="Official gameweek transfers"
         />
         <Stat
-          label="MOST SOLD"
+          label="Most sold"
           value={
             [...data.players].sort(
               (a, b) => b.transfers_out - a.transfers_out,
             )[0]?.name
           }
-          note="Official gameweek transfers"
         />
         <Stat
-          label="PRICE CHANGES"
+          label="Price changes"
           value={data.players.filter((p) => p.price_change !== 0).length}
-          note="Players whose price moved this GW"
         />
       </div>
       <div className="table-toolbar">
@@ -1261,12 +1404,18 @@ export function MarketView({ data, gw, onDetail, watch, onWatch }: BaseProps) {
           </tbody>
         </table>
       </div>
-      <p className="source-caption">
-        <Info size={14} />
-        The official price signal is displayed as published by FPL. It is not a
-        calibrated probability of a price change. Showing the top 80 matching
-        players.
-      </p>
+      <div className="table-footer">
+        <span>
+          {Math.min(80, players.length)} of {players.length} players
+        </span>
+        <details className="compact-details">
+          <summary>Price signal</summary>
+          <p>
+            The official FPL signal is not a calibrated probability of a price
+            change.
+          </p>
+        </details>
+      </div>
     </>
   );
 }

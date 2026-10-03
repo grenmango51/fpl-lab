@@ -335,14 +335,19 @@ def optimise(
             b.constraint({hits[w]: 1, z: -15}, high=0)
             b.constraint({n: 1, ft[w]: -1, z: -15}, high=0)
             b.constraint({n: 1, ft[w]: -1, z: -15}, low=-15)
-        ft[w + 1] = b.var(low=1, high=5)
-        burn = b.var()
-        equation = {ft[w + 1]: 1, ft[w]: -1, burn: 1}
-        if not free:
-            equation[n] = 1
-            equation[hits[w]] = -1
-        b.constraint(equation, low=1, high=1)
-        b.constraint({ft[w + 1]: 1, burn: -5}, low=0)
+        if chip in ("wildcard", "freehit"):
+            # Preserve saved FTs exactly, including a user-supplied zero.
+            ft[w + 1] = b.var(low=0, high=5)
+            b.constraint({ft[w + 1]: 1, ft[w]: -1}, low=0, high=0)
+        else:
+            ft[w + 1] = b.var(low=1, high=5)
+            burn = b.var()
+            equation = {ft[w + 1]: 1, ft[w]: -1, burn: 1}
+            if not free:
+                equation[n] = 1
+                equation[hits[w]] = -1
+            b.constraint(equation, low=1, high=1)
+            b.constraint({ft[w + 1]: 1, burn: -5}, low=0)
         if chip != "freehit":
             last_permanent = w
     result = b.solve(seconds)

@@ -91,6 +91,6 @@ def test_import_restores_permanent_squad_after_freehit(monkeypatch):
     result = TestClient(api_module.app).get("/api/teams/7").json()
     assert result["squad"] == permanent
     assert result["bank"] == 4
-    assert result["free_transfers"] == 5
+    assert result["free_transfers"] == 4
     assert result["used_chips"] == [{"chip": "freehit", "gw": 5}]
     assert result["purchase_prices"][str(permanent[1])] == 4

@@ -341,12 +341,28 @@ def load_elevenify(joe, teams, *, refresh=False):
     }
 
 
-def load_fplform(season, start, players, teams, *, refresh=False):
-    """Normal public export; only the next three GWs anchor our live ensemble."""
+def load_fplform(season, start, players, teams, *, refresh=False, horizon=5):
+    """Normal public export with five direct GWs by default, clipped at GW38.
+
+    Only explicitly supplied numeric gameweek headers/cells become anchors.
+    Missing predictions remain absent, while supplied zeroes are preserved.
+    """
+    import re
+
+    if (
+        not isinstance(start, int)
+        or isinstance(start, bool)
+        or not 1 <= start <= 38
+        or not isinstance(horizon, int)
+        or isinstance(horizon, bool)
+        or not 1 <= horizon <= 38
+    ):
+        raise ValueError("FPL Form start/horizon must be integer gameweek ranges 1–38.")
+    requested_weeks = list(range(start, min(39, start + horizon)))
     key = f"fplform_{season}_gw{start}"
     form = {
         "firstgw": str(start),
-        "lastgw": str(min(38, start + 2)),
+        "lastgw": str(requested_weeks[-1]),
         "all": "1",
         "submit": "submit",
     }
@@ -362,9 +378,32 @@ def load_fplform(season, start, players, teams, *, refresh=False):
         return {}
     forecasts = {}
     verified = 0
+    supplied_weeks = set()
     try:
-        for row in csv.DictReader(io.StringIO(raw)):
+        reader = csv.DictReader(io.StringIO(raw.lstrip("\ufeff")), strict=True)
+        headers = reader.fieldnames or []
+        if not {"ID", "Name", "Team", "Pos", "Price"}.issubset(headers) or len(
+            headers
+        ) != len(set(headers)):
+            raise ValueError("Missing or duplicate player columns")
+        header_weeks = sorted(
+            {
+                int(match.group(1))
+                for header in headers
+                if (match := re.fullmatch(r"([1-9]\d*)_with_prob", header))
+                and int(match.group(1)) in requested_weeks
+            }
+        )
+        if not header_weeks:
+            raise ValueError("No explicit forecast columns in the requested window")
+        seen_ids = set()
+        for row in reader:
+            if None in row or any(value is None for value in row.values()):
+                raise ValueError("Malformed player row")
             pid = int(row["ID"])
+            if pid in seen_ids:
+                raise ValueError("Duplicate FPL player ID")
+            seen_ids.add(pid)
             p = players.get(pid)
             if p is None or row.get("Team") != teams[p["team"]]["short_name"]:
                 continue
@@ -375,23 +414,36 @@ def load_fplform(season, start, players, teams, *, refresh=False):
             }:
                 continue
             # Price tolerance allows an update during the source's cache window.
-            if abs(float(row["Price"]) - p["now_cost"] / 10) > 0.2:
+            price = number(row["Price"], None)
+            if price is None or abs(price - p["now_cost"] / 10) > 0.2 + 1e-9:
                 continue
             points = {}
             probabilities = {}
-            for gw in range(start, min(39, start + 3)):
-                value = float(row[f"{gw}_with_prob"])
-                prob = float(row[f"{gw}_prob"])
-                if not -5 <= value <= 60 or not 0 <= prob <= 1:
-                    raise ValueError("Invalid points or appearance probability")
-                points[str(gw)] = value
+            for gw in header_weeks:
+                raw_points = row[f"{gw}_with_prob"].strip()
+                if raw_points:
+                    value = number(raw_points, None)
+                    if value is None or not -5 <= value <= 60:
+                        raise ValueError("Invalid points")
+                    points[str(gw)] = value
+                    supplied_weeks.add(gw)
                 # This column describes the first fixture only. Never use it
                 # as whole-GW appearance probability in a double.
-                probabilities[str(gw)] = prob
+                raw_probability = row.get(f"{gw}_prob", "").strip()
+                if raw_probability:
+                    probability = number(raw_probability, None)
+                    if probability is None or not 0 <= probability <= 1:
+                        raise ValueError("Invalid appearance probability")
+                    probabilities[str(gw)] = probability
             forecasts[str(pid)] = {"points": points, "probabilities": probabilities}
             verified += 1
-    except (ValueError, KeyError, TypeError):
-        _statuses[key]["validation"] = "Unexpected CSV schema; provider ignored."
+    except (ValueError, KeyError, TypeError, csv.Error) as exc:
+        _statuses[key]["validation"] = f"Unexpected CSV schema; provider ignored. {exc}"
+        return {}
+    if not supplied_weeks:
+        _statuses[key]["validation"] = (
+            "No supplied point values in the requested window; provider ignored."
+        )
         return {}
     if verified < 0.8 * len(players):
         _statuses[key]["validation"] = (
@@ -403,8 +455,14 @@ def load_fplform(season, start, players, teams, *, refresh=False):
         "name": "FPL Form",
         "source_at": _statuses[key]["fetched_at"],
         "url": "https://www.fplform.com/export-fpl-form-data",
-        "weeks": list(range(start, min(39, start + 3))),
+        "weeks": sorted(supplied_weeks),
+        "header_weeks": header_weeks,
+        "requested_weeks": requested_weeks,
+        "missing_weeks": sorted(set(requested_weeks) - supplied_weeks),
         "matched_players": verified,
+        "prediction_players": sum(
+            bool(player["points"]) for player in forecasts.values()
+        ),
     }
 
 

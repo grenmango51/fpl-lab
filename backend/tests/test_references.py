@@ -102,6 +102,59 @@ def provenance(status="live"):
     }
 
 
+def next_attack_csv(rows=None, gw=6, leading=True):
+    content = write_csv(
+        ["Player", "", f"GW{gw} Goals", f"GW{gw} Assists", f"GW{gw} Involvement"],
+        rows
+        if rows is not None
+        else [
+            ["E. Haaland", badge(43), 0.58, 0.12, 0.70],
+            ["J. Pedro", badge(8), 0.46, 0.21, 0.68],
+            ["K. Mitoma", badge(36), 0.30, 0.20, 0.53],
+            ["B. Thomas", badge(9), 0.25, 0.10, 0.36],
+        ],
+    )
+    return (",,,,\n" if leading else "") + content
+
+
+def three_gw_csv(rows=None, weeks=(6, 7, 8), leading=True):
+    content = write_csv(
+        ["Player", "", *map(str, weeks), "TOTAL"],
+        rows
+        if rows is not None
+        else [
+            ["E. Haaland", badge(43), 0.56, 0.96, 0.69, 2.21],
+            ["J. Pedro", badge(8), 0.48, 0.38, 0.44, 1.30],
+        ],
+    )
+    return ("," * (len(weeks) + 2) + "\n" if leading else "") + content
+
+
+def alias_pool(pool):
+    players, teams = pool
+    teams[6] = {"id": 6, "short_name": "CRY", "code": 31}
+    teams[7] = {"id": 7, "short_name": "TOT", "code": 6}
+    players[211] = {
+        "id": 211,
+        "code": 488024,
+        "first_name": "Yéremy",
+        "second_name": "Pino Santos",
+        "web_name": "Yeremy",
+        "team": 6,
+        "element_type": 3,
+    }
+    players[403] = {
+        "id": 403,
+        "code": 510281,
+        "first_name": "Sávio",
+        "second_name": "Moreira de Oliveira",
+        "web_name": "Sávio",
+        "team": 7,
+        "element_type": 3,
+    }
+    return players, teams
+
+
 def test_baseline_matches_aliases_and_preserves_unknown_duration(pool):
     players, teams = pool
     before = copy.deepcopy(pool)
@@ -245,7 +298,8 @@ def test_merge_retains_sources_and_warns_for_different_captain_gameweek(pool):
         season="2026-27",
         next_gw=6,
     )
-    assert result["status"] == "stale"
+    assert result["status"] == "partial"
+    assert result["feeds"]["baselines"]["status"] == "stale"
     assert len(result["players"]["411"]["matches"]) == 2
     assert result["feeds"]["fast_fantasy"]["captain_gameweek_matches_next"] is False
     assert result["feeds"]["fast_fantasy"]["source_at"] == "2026-10-02T18:38:25+00:00"
@@ -254,6 +308,7 @@ def test_merge_retains_sources_and_warns_for_different_captain_gameweek(pool):
         "matched_players": 6,
         "baseline_players": 4,
         "importance_players": 6,
+        "attacking_players": 0,
     }
     assert result["players"]["411"]["attacking_baseline"]["duration_minutes"] is None
 
@@ -263,7 +318,7 @@ def test_optional_sources_unavailable_do_not_break_data_loading(pool, monkeypatc
     statuses = {}
     calls = []
 
-    def unavailable(url, key, ttl, *, optional):
+    def unavailable(url, key, ttl, *, optional, refresh=False):
         assert optional is True
         calls.append(url)
         statuses[key] = {
@@ -276,7 +331,7 @@ def test_optional_sources_unavailable_do_not_break_data_loading(pool, monkeypatc
     monkeypatch.setattr(data_module, "_statuses", statuses)
     monkeypatch.setattr(data_module, "fetch", unavailable)
     result = data_module.load_elevenify_reference("2026-27", 6, players, teams)
-    assert len(calls) == 2
+    assert len(calls) == len(FEEDS)
     assert result["status"] == "unavailable" and result["available"] is False
     assert result["players"] == {}
     assert all(feed["error"] == "HTTP 503" for feed in result["feeds"].values())
@@ -333,3 +388,202 @@ def test_fetch_preserves_last_modified_and_explicit_stale_fallback(
     )
     assert reference["feeds"]["baselines"]["status"] == "stale"
     assert reference["feeds"]["baselines"]["available"]
+
+
+def test_next_gameweek_counts_keep_conditioning_and_actual_row_numbers(pool):
+    players, teams = pool
+    result = parse_reference(next_attack_csv(), "next_gw_attack", players, teams)
+    assert result["error"] is None and result["matched_players"] == 4
+    assert result["players"]["411"]["matches"][0]["row"] == 3
+    view = result["players"]["411"]["attacking_views"]["next_gw_attack"]
+    assert (
+        view["conditioning"] == "assumes_player_starts"
+        and view["duration_minutes"] is None
+    )
+    assert view["gameweeks"] == {
+        "6": {"goal": 0.58, "assist": 0.12, "goal_involvement": 0.7}
+    }
+    assert "points" not in view and "expected_points" not in view
+    assert result["gameweeks"] == [6]
+
+
+def test_all_series_merge_without_overwriting_overlapping_gameweek_values(pool):
+    players, teams = pool
+    raw = {
+        "baselines": baseline_csv(),
+        "fast_fantasy": fantasy_csv(),
+        "next_gw_attack": next_attack_csv(),
+        "three_gw_goals": three_gw_csv(),
+        "three_gw_assists": three_gw_csv(),
+    }
+    before = copy.deepcopy(raw)
+    result = build_reference(
+        raw, provenance(), players, teams, season="2026-27", next_gw=6
+    )
+    assert result["status"] == "live" and len(result["feeds"]) == len(FEEDS)
+    haaland = result["players"]["411"]
+    assert len(haaland["attacking_views"]) == 3
+    assert (
+        haaland["attacking_views"]["next_gw_attack"]["gameweeks"]["6"]["goal"] == 0.58
+    )
+    assert (
+        haaland["attacking_views"]["three_gw_goals"]["gameweeks"]["6"]["goal"] == 0.56
+    )
+    assert set(haaland["attacking_views"]["three_gw_assists"]["gameweeks"]["6"]) == {
+        "assist"
+    }
+    assert len(haaland["matches"]) == len(FEEDS)
+    assert result["coverage"]["attacking_players"] == 4
+    assert (
+        result["coverage"]["baseline_players"] == 4
+        and result["coverage"]["importance_players"] == 6
+    )
+    assert result["feeds"]["three_gw_goals"]["gameweeks"] == [6, 7, 8]
+    assert result["feeds"]["three_gw_goals"]["caption_current"] is True
+    assert raw == before
+
+
+def test_official_documented_fixture_view_aliases_match_with_stable_codes(pool):
+    players, teams = alias_pool(pool)
+    raw = next_attack_csv(
+        rows=[
+            ["Y. Pino", badge(31), 0.2, 0.2, 0.4],
+            ["Savinho", badge(6), 0.2, 0.2, 0.4],
+        ]
+    )
+    result = parse_reference(raw, "next_gw_attack", players, teams)
+    assert result["error"] is None and set(result["players"]) == {"211", "403"}
+    assert result["players"]["211"]["matches"][0]["official_code"] == 488024
+    assert result["players"]["403"]["matches"][0]["method"] == "documented_alias"
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("id", 777),
+        ("code", 1),
+        ("team", 1),
+        ("element_type", 4),
+        ("web_name", "Other Player"),
+    ],
+)
+def test_fixture_alias_requires_current_id_code_club_position_and_name(
+    pool, field, value
+):
+    players, teams = alias_pool(pool)
+    players[211][field] = value
+    raw = next_attack_csv(rows=[["Y. Pino", badge(31), 0.2, 0.2, 0.4]])
+    result = parse_reference(raw, "next_gw_attack", players, teams)
+    assert not result["players"]
+    assert result["diagnostics"]["unmatched"][0]["provider_name"] == "Y. Pino"
+
+
+@pytest.mark.parametrize(
+    "weeks", [(0, 1, 2), (37, 38, 39), (6, 7, 8, 9), (6, 8), ("06", 7, 8)]
+)
+def test_impossible_or_overlong_attacking_window_is_rejected(pool, weeks):
+    players, teams = pool
+    row = ["E. Haaland", badge(43), *([0.3] * len(weeks)), round(0.3 * len(weeks), 2)]
+    result = parse_reference(
+        three_gw_csv(rows=[row], weeks=weeks), "three_gw_goals", players, teams
+    )
+    assert result["error"] and not result["players"]
+
+
+def test_end_of_season_window_can_have_fewer_than_three_weeks(pool):
+    players, teams = pool
+    result = parse_reference(
+        three_gw_csv(rows=[["E. Haaland", badge(43), 0.3, 0.3]], weeks=(38,)),
+        "three_gw_goals",
+        players,
+        teams,
+    )
+    assert result["error"] is None and result["gameweeks"] == [38]
+
+
+def test_old_caption_is_preserved_and_marked_stale_instead_of_relabelled(pool):
+    players, teams = pool
+    result = build_reference(
+        {"next_gw_attack": next_attack_csv(gw=5)},
+        provenance(),
+        players,
+        teams,
+        season="2026-27",
+        next_gw=6,
+    )
+    feed = result["feeds"]["next_gw_attack"]
+    assert feed["status"] == "stale" and feed["source_status"] == "live"
+    assert feed["caption_current"] is False and feed["window_status"] == "past"
+    assert feed["gameweeks"] == [5]
+    assert set(
+        result["players"]["411"]["attacking_views"]["next_gw_attack"]["gameweeks"]
+    ) == {"5"}
+
+
+def test_mixed_next_gameweek_headers_are_not_silently_combined(pool):
+    players, teams = pool
+    raw = next_attack_csv().replace("GW6 Assists", "GW7 Assists")
+    result = parse_reference(raw, "next_gw_attack", players, teams)
+    assert result["error"] and not result["players"]
+
+
+@pytest.mark.parametrize("value", ["nan", "inf", "-0.1", "5.1"])
+def test_nonfinite_or_implausible_fixture_counts_disable_the_feed(pool, value):
+    players, teams = pool
+    result = parse_reference(
+        next_attack_csv(rows=[["E. Haaland", badge(43), value, 0.2, 0.3]]),
+        "next_gw_attack",
+        players,
+        teams,
+    )
+    assert result["error"] and not result["players"]
+
+
+def test_expected_counts_above_one_are_not_misread_as_probabilities(pool):
+    players, teams = pool
+    result = parse_reference(
+        next_attack_csv(rows=[["E. Haaland", badge(43), 1.2, 0.2, 1.4]]),
+        "next_gw_attack",
+        players,
+        teams,
+    )
+    assert result["error"] is None
+
+
+def test_three_week_total_is_validated_without_becoming_a_fourth_gameweek(pool):
+    players, teams = pool
+    raw = three_gw_csv(rows=[["E. Haaland", badge(43), 0.3, 0.3, 0.3, 1.5]])
+    result = parse_reference(raw, "three_gw_goals", players, teams)
+    assert result["error"] and not result["players"]
+    valid = parse_reference(three_gw_csv(), "three_gw_goals", players, teams)
+    assert (
+        "TOTAL"
+        not in valid["players"]["411"]["attacking_views"]["three_gw_goals"]["gameweeks"]
+    )
+
+
+def test_only_leading_empty_rows_are_skipped(pool):
+    players, teams = pool
+    content = next_attack_csv(leading=False)
+    assert (
+        parse_reference("\n,,,,\n" + content, "next_gw_attack", players, teams)["error"]
+        is None
+    )
+    assert parse_reference(
+        "unexpected title\n" + content, "next_gw_attack", players, teams
+    )["error"]
+    assert parse_reference(content + ",,,,\n", "next_gw_attack", players, teams)[
+        "error"
+    ]
+
+
+def test_duplicate_conditional_view_ids_disable_feed(pool):
+    players, teams = pool
+    row = ["E. Haaland", badge(43), 0.3, 0.2, 0.5]
+    result = parse_reference(
+        next_attack_csv(rows=[row, row]), "next_gw_attack", players, teams
+    )
+    assert (
+        not result["players"]
+        and result["diagnostics"]["duplicates"][0]["player_id"] == 411
+    )

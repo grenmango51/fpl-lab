@@ -1,34 +1,32 @@
 # Provider access and integration
 
-Verified 2026-10-02, Europe/Kiev. Initial research used primary public pages and the existing integration code. The primary agent subsequently completed a free Elevenify/Substack signup in the assigned Ilmari Chrome profile; the signed-in article confirmed access and revealed its normal published forecast embeds. The HTTP verification below used those exact embeds and their declared public assets, without transferring any browser credentials or cookies. No paid subscription was purchased. Review's signed-in export availability remains outstanding.
+Initial research 2026-10-02; updated **2026-10-03, Europe/Kiev**, with the primary agent's confirmed assigned-browser findings. A free Elevenify/Substack signup revealed its normal published forecast embeds. The HTTP verification below used those exact embeds and their declared public assets, without transferring any browser credentials or cookies. Ilmari Chrome was already connected to Patreon for FPL Review, without premium membership; no new Review account was needed. No paid subscription was purchased.
 
 ## FPL Review
 
-The [Free Model](https://docs.fplreview.com/the-model/projections/free-model/) provides expected points over three gameweeks, with a simpler model and fewer solver capabilities than Massive Data. Massive Data is a separate premium model with an outlook of up to 14 weeks; its documentation describes hourly refreshes and pre-deadline news updates. These are provider descriptions, not an independent accuracy assessment. [Massive Data documentation](https://docs.fplreview.com/the-model/projections/massive-data-model/)
+The [Free Model documentation](https://docs.fplreview.com/the-model/projections/free-model/) describes a **three-gameweek** outlook with a simpler model and fewer solver capabilities than Massive Data. **The current free app observation showed four labelled weeks, GW6–9**, as confirmed in assigned Ilmari Chrome during the 2026-10-03 update. Retain that distinction between published documentation and the observed current interface; it does not establish a permanent four-week entitlement.
 
-Free account access does **not** require a paid membership. The [official login guide](https://docs.fplreview.com/the-site/logging-in/) explicitly permits an ordinary Patreon account without an active FPL Review subscription, for saving a team ID and settings:
+Massive Data remains a separate premium model, documented with an outlook up to 14 weeks, hourly refreshes and pre-deadline news updates. No MDM access or point export was acquired. These are provider descriptions, not an independent accuracy assessment. [Massive Data documentation](https://docs.fplreview.com/the-model/projections/massive-data-model/)
 
-1. In the assigned browser, open [FPL Review](https://fplreview.com/) or the [current app](https://app.fplreview.com/) and choose Login/Connect with Patreon.
-2. Use an existing Patreon account, or create a free Patreon account if needed. Follow the displayed authentication/authorisation flow.
-3. Return to Review and inspect the Free Model. Do not select a paid tier merely to authenticate.
+The [official login guide](https://docs.fplreview.com/the-site/logging-in/) permits an ordinary Patreon account without an active FPL Review subscription for saving team ID/settings. The assigned profile was already Patreon-connected, so the primary agent opened the [free app](https://app.fplreview.com/free) and loaded public sample team ID **1**. Its Projections view contained **50 DOM player rows**, sorted by total, with **one-decimal** displayed points for GW6–9. The table may be virtualised; this observation does not establish the full player pool, full-precision values or a complete forecast matrix.
 
-The current app shell could be reached anonymously, but this research did not obtain a full current player forecast response. No documented anonymous player export endpoint was found in the reviewed primary pages. This is a bounded finding, not proof that no such endpoint exists.
+**The normal CSV action was verified as premium-gated.** Clicking **Export to CSV** opened a **Premium Feature** dialog explaining that downloading the complete dataset requires premium. The dialog was dismissed with **Maybe Later**. No CSV was downloaded or imported. This agrees with the [premium feature list](https://docs.fplreview.com/getting-started/premium-features/), which lists data export as a premium benefit.
 
-**CSV access is an unresolved free-tier limitation.** The [premium feature list](https://docs.fplreview.com/getting-started/premium-features/) lists data export as a premium benefit. The separate [export guide](https://docs.fplreview.com/the-model/planner-interface/export_projections/) describes export contents but does not establish free-tier permission. After login, verify whether a free CSV control is actually enabled; do not assume the three-week free outlook is automatically downloadable.
+Visible free forecasts remain a possible authorised reference, with recorded display precision and player/GW coverage. No documented anonymous complete-player export endpoint was found in the reviewed primary sources. That is a bounded research finding, not proof that none exists.
 
-The export contains FPL ID, name, team, position, buying/selling prices, expected points and expected minutes, with separate gameweek columns. It covers the currently displayed table, so clear filters before exporting a complete pool. The [upload/template guide](https://docs.fplreview.com/the-model/planner-interface/upload_projections/) documents `Pos`, `ID`, `Name`, `BV`, `SV`, `Team`, `GW_xMins`, `GW_Pts`, and `Elite%`; only `ID` and `GW_Pts` are required. Here `GW` means the numeric gameweek, for example `6_Pts`.
+For an export obtained through authorised access, the [export guide](https://docs.fplreview.com/the-model/planner-interface/export_projections/) describes FPL IDs, player details, buying/selling prices, EV and xMins, with separate GW columns. Its scope follows the current table filters. The [upload/template guide](https://docs.fplreview.com/the-model/planner-interface/upload_projections/) documents `Pos`, `ID`, `Name`, `BV`, `SV`, `Team`, `GW_xMins`, `GW_Pts`, and `Elite%`; only `ID` and `GW_Pts` are required. Here `GW` means the numeric gameweek, for example `6_Pts`.
 
 Open FPL already accepts `ID` with numeric `GW_Pts` columns. Review's unconditional expected minutes must not be relabelled `conditional_minutes`. The current importer intentionally does not make that conversion.
 
 ## Elevenify
 
-The current [Premier League data page](https://www.elevenify.com/p/premier-league-data), dated 2026-03-13 and rechecked today, states that access is free. Anonymous visitors can see match/team/rating embeds; **Player Predictions** and **Fast Fantasy Model 2.0** show a free-subscriber gate. The page promises a free Google Sheet of team goals and clean sheets for GW1–38, and says predictions update after each gameweek's final fixture.
+The [Premier League data page](https://www.elevenify.com/p/premier-league-data), dated 2026-03-13 and checked 2026-10-02, states that access is free. Anonymous visitors can see match/team/rating embeds; **Player Predictions** and **Fast Fantasy Model 2.0** show a free-subscriber gate. The page promises a free Google Sheet of team goals and clean sheets for GW1–38, and says predictions update after each gameweek's final fixture.
 
 Free signup is now complete. The signed-in page revealed Player Predictions at `https://datawrapper.dwcdn.net/tDC0G/2/` and Fast Fantasy Model at `https://datawrapper.dwcdn.net/MmYOs/17/`.
 
 Fast Fantasy Model incorporates FPL Review Massive Data predictions adjusted to Elevenify team strengths. The actual released table is an importance ranking, as verified below; that lineage does not provide complete Review MDM player forecasts.
 
-The revealed embeds' declared CSV assets are publicly readable. Neither of the two files contains per-gameweek FPL expected points. Older-season articles and World Cup tables are not current FPL inputs.
+The revealed embeds and their ordinary links expose **five** declared, publicly readable player-reference CSVs. None supplies per-gameweek FPL expected points. Older-season articles and World Cup tables are not current FPL inputs.
 
 ### Published Datawrapper access
 
@@ -60,16 +58,32 @@ CSV SHA256: `27a5c8d233f8f7610e32ca6ee0bd84080c78feaf40a73f3b3909f4a04255a1cb`.
 
 The current club/position matches and GW6 caption establish compatibility with the live 2026/27 pool, but neither file explicitly labels its season. Chart `lastModifiedAt` is a chart-edit timestamp, not the live CSV freshness timestamp. Preserve fetch time, HTTP Last-Modified and source hash separately.
 
+### Fixture-specific attacking views now integrated
+
+The baseline chart's actual links led to three additional normal declared assets:
+
+- [Next-GW goals, assists and involvement](https://static.dwcdn.net/data/YmfDr.csv): **99/99** current players matched, with explicit **GW6** component headers.
+- [Three-GW goals](https://static.dwcdn.net/data/ALYf8.csv): **49/49** matched, with separate **GW6, GW7 and GW8** counts and a total.
+- [Three-GW assists](https://static.dwcdn.net/data/VK19h.csv): **49/49** matched, with separate **GW6, GW7 and GW8** counts and a total.
+
+All three descriptions assume the player **starts**. Their duration and start probabilities are unspecified, and an identical FPL fantasy-assist definition is not established. Current official fixtures contain one match per club in each supplied GW; future doubles/rearrangements need fresh checks.
+
+The implementation skips only leading all-empty CSV rows, validates labelled windows/counts, and guards aliases by identity/club/position; the new Pino/Savinho aliases additionally require their verified stable player codes. Original GW headers remain intact when stale. Each series retains its own provenance because next-GW and three-GW values differ on the same GW. No conditional count becomes a per-90 rate, availability probability or total expected-points forecast.
+
+All **five feeds** are integrated as optional references: **176 unique players**, of whom **112 have fixture-specific attacking views**, from the current 667-player pool. Baseline and importance coverage remain 49 and 99. Missing players/components are unavailable rather than zero. Market displays separate series and source coverage; references do not modify numerical forecasts. Full access, schemas, conditioning, timestamp/hash evidence and alias sources are documented in [ELEVENIFY_FIXTURE_VIEWS.md](ELEVENIFY_FIXTURE_VIEWS.md).
+
 ## Already accessible team export
 
 The existing `backend/data.py` legitimately reads the public [Elevenify Google Sheet CSV](https://docs.google.com/spreadsheets/d/1rJaMd03-t5ovug0Zn8fY9jJ1_H0C8PDSC10HqbdwSyk/export?format=csv&gid=0), whose source link was discovered in FPL Joe's public attribution metadata. It parses two tables, matches all club codes to the current official season, and validates goal/clean-sheet ranges. This provides **team** expectations, not player expected points. Existing source timestamps and ignored local caches should remain the provenance record.
 
 ## Integration decisions
 
-1. Integrate the revealed Elevenify CSVs as distinct analytical inputs: an attacking-baseline comparison and a ranked shortlist/captaincy reference. Save inferred season, extraction time, HTTP Last-Modified, ID/club matches, missing rows, units and source hash. Refresh normally with a bounded cache and record validation/fallback status. Do not turn absent players into zero forecasts.
-2. Recheck Review free login and export availability separately. If no free CSV exists, use only legitimately visible values or an export obtained through an authorised account; retain the working FPL Form feed meanwhile.
+1. Preserve the implemented five-feed Elevenify references as distinct analytical series, including inferred season, extraction time, HTTP Last-Modified, ID/club matches, missing rows, units and source hash. Normal bounded refresh/cache handling records stale, invalid and unavailable sources.
+2. Review's free view and premium export gate are now confirmed. Any future authorised visible-value capture must record its one-decimal display precision, actual player/GW coverage and extraction time. No premium dataset or MDM access is claimed; FPL Form remains the working direct points feed.
 3. For a points export, map current FPL IDs and import `ID,<gw>_Pts` or `player_id,gameweek,expected_points`. Sum fixture rows before importing doubles, preserve blanks, and retain unavailable weeks as unavailable. A ranking, baseline goals/assists rate, star marker or multiweek aggregate is not a per-player/per-GW point forecast.
 4. Treat Review and Elevenify Fast Fantasy as related inputs. Additional weight on both can double-count the same MDM information; record their lineage and compare on the same pre-deadline player cohort before tuning weights.
 5. Continue the existing fading anchor extension beyond supplied weeks, visibly marking extrapolations. Longer coverage alone does not establish better accuracy. Public/free viewing does not establish a redistribution licence; keep source datasets local until hosting rights are settled.
 
-**Forecast recommendation:** keep FPL Form as the directly verified player/GW points anchor. Do not feed `Future Importance` into the points importer or divide it into fabricated GW values. Use Elevenify baseline values to inspect attacking-rate disagreements first; automatic event-component blending needs a verified duration/conditioning interpretation. The baseline chart links to actual next-GW goal involvement and three-GW goals/assists views, which are appropriate follow-up sources to inspect rather than extrapolating a ranking as points.
+**Forecast recommendation:** keep FPL Form as the directly verified player/GW points anchor. Do not feed `Future Importance` into the points importer or divide it into fabricated GW values. Fixture-specific counts are stronger attacking references than an average-opponent baseline, but an optional event-component blend needs explicit start/cameo and duration assumptions, separate source handling and prospective evaluation before becoming a default forecast.
+
+The capture endpoint now freezes available future targets with target-specific receipts. Fixed lead-time bins and matched model comparisons are implemented, with pending coverage and separate primary/exploratory results. Future-GW outcomes remain pending; neither wider capture coverage nor borrowed inputs establishes competitive accuracy. See [STATUS.md](STATUS.md) for verification rather than treating this access note as benchmark evidence.

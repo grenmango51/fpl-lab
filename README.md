@@ -39,7 +39,7 @@ The development app is **http://127.0.0.1:5173**. `./start.ps1 -Development` sta
 - Background strategy stress tests with seeded assumptions, progress/cancellation, transfer/captain frequencies, JSON reports and separate validated branches. The variation is user-defined, not calibrated uncertainty.
 - Searchable/sortable/filterable player projections, watchlists, fixture heatmaps, captain comparisons, player history, and explicitly uncalibrated event simulations.
 - CSV model import/blending, CSV export, official transfer/price view, historical benchmark charts, immutable forecast snapshots and a prospective scoring command.
-- Elevenify selected-player attacking baselines and importance/captain shortlists under Market → Provider shortlists, with units, mapping coverage, extraction time and source hashes. These references remain separate from points forecasts.
+- Elevenify's five selected-player references under Market → Provider shortlists: average-opponent baselines, importance/captain ranks, next-GW attack and three-GW goals/assists. View supplied weeks with start conditioning, coverage, extraction times and hashes; export the selected series. These references remain separate from points forecasts.
 - Responsive mobile planning, including branch switching.
 
 Plans do not submit transfers to FPL. Local data caches and vendor payloads are ignored by Git. The original World Cup research and StatsBomb folders are preserved.
@@ -66,9 +66,14 @@ The component model supplies the base forecasts; the ML challenger was weaker on
 python -m backend.prospective
 python -m backend.prospective --watch
 python -m backend.prospective --score
+python -m backend.prospective --cached
 ```
 
-The first command saves one strictly pre-deadline snapshot, including component, live ensemble and FPL Form forecasts. `--watch` records every 15 minutes while running; it does not install a Windows scheduled task. `--score` evaluates the latest pre-deadline snapshot per **completed** gameweek on identical player rows. Analysis also has capture and scoring buttons. Pending weeks produce no fabricated result.
+The first command refreshes live inputs and saves a strictly pre-deadline snapshot from one frozen dataset. It preserves component/live forecasts through GW38 and raw FPL Form points only where supplied. `--watch` repeats every 15 minutes while running; it does not install a Windows scheduled task. `--cached` skips refresh and records existing extraction ages. Source-freshness eligibility uses a declared 30-minute extraction policy; refetching is not proof of a provider's publication time.
+
+New snapshots are compressed `.json.gz` files under ignored `data/snapshots/`. Both scoring views retain support for older plain JSON archives; raw vendor payloads are not committed.
+
+`--score` compares the latest next-GW capture for each **completed** gameweek. The cohort uses captured component projected minutes of at least 45, never observed appearances. Each provider-versus-live comparison uses identical player IDs and reports missing coverage. A separate Analysis lead-time scorer selects the latest valid capture per target GW in six fixed windows: under 24 hours, 1–3 days, 3–7 days, 1–2 weeks, 2–4 weeks and 4+ weeks. Target deadlines, fixture membership, source receipts and configuration are frozen. Changed deadlines and stale/legacy inputs stay visibly exploratory; unchecked/pending outcomes produce no fabricated score. Aggregate errors weight individual matched player-GW rows. Different windows may have different cohorts and reuse outcomes, so their metrics alone do not establish that accuracy improves nearer the deadline.
 
 ## Checks
 

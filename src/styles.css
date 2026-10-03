@@ -1530,6 +1530,70 @@ input[type="checkbox"] {
 .market-mode {
   margin-bottom: 24px;
 }
+.prospective-panel {
+  margin-bottom: 28px;
+}
+.capture-receipts {
+  margin: 22px 0;
+}
+.capture-receipts > h4 {
+  font-size: 12px;
+  margin-bottom: 14px;
+}
+.capture-receipt {
+  border-top: 1px solid var(--line);
+  padding: 14px 0;
+}
+.capture-receipt summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 9px 14px;
+  font-size: 11px;
+  cursor: pointer;
+  color: #95a9c2;
+}
+.capture-receipt summary b {
+  color: #e1e8f2;
+}
+.capture-receipt summary em {
+  margin-left: auto;
+  color: #d3a785;
+  font-style: normal;
+}
+.capture-receipt > small {
+  font-size: 9px;
+  overflow-wrap: anywhere;
+}
+.capture-eligibility {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+  gap: 12px;
+  margin: 18px 0;
+}
+.capture-eligibility > div {
+  padding: 12px;
+  background: #0c141f;
+  border: 1px solid #243144;
+  border-radius: 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 11px;
+}
+.capture-eligibility small {
+  font-size: 10px;
+  line-height: 1.6;
+  color: #96a9c0;
+}
+.capture-sources {
+  font-size: 10px;
+}
+.prospective-result {
+  border-top: 1px solid var(--line);
+  padding-top: 22px;
+  margin-top: 22px;
+}
 .reference-explanation {
   display: flex;
   gap: 12px;
@@ -4174,4 +4238,34 @@ input[type="checkbox"] {
 }
 .minutes-assumption-list > div > button:first-child {
   text-align: left;
+}
+.lead-time-bins {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin: 18px 0;
+}
+.lead-time-bin {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px;
+}
+.lead-time-bin strong {
+  display: block;
+  font-size: 23px;
+  margin: 12px 0 8px;
+}
+.lead-time-bin strong small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+}
+.lead-time-bin p,
+.lead-time-bin > .muted {
+  font-size: 11px;
+  line-height: 1.5;
+}
+.lead-time-panel > .table-toolbar {
+  flex-wrap: wrap;
 }

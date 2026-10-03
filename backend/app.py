@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import csv
 import io
+import hashlib
+import gzip
 import json
 import logging
 from datetime import datetime, timezone
@@ -20,6 +22,7 @@ from .solver import optimise, best_lineup, validate_squad, sale_price
 from .scoring import team_points
 from .ensemble import blend_forecasts
 from .sensitivity import jobs as sensitivity_jobs
+from .capture import capture_receipt, latest_capture_receipts
 
 app = FastAPI(title="Open FPL", version="0.1.0")
 app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=3)
@@ -66,10 +69,10 @@ class ForecastRequest(BaseModel):
             )
         return self.overrides
 
-    def validated_schedule(self):
+    def validated_schedule(self, dataset=None):
         if not self.minutes_schedule:
             return {}
-        data = get_data()
+        data = dataset if dataset is not None else get_data()
         if len(self.minutes_schedule) > 700 or any(
             not pid.isdigit()
             or pid != str(int(pid))
@@ -91,12 +94,17 @@ class ForecastRequest(BaseModel):
         return self.model_dump(exclude_none=True)["minutes_schedule"]
 
 
-def forecast_for(request: ForecastRequest):
-    schedule = request.validated_schedule()
+def forecast_for(request: ForecastRequest, *, dataset=None):
+    dataset = dataset if dataset is not None else get_data()
+    schedule = request.validated_schedule(dataset)
     overrides = request.validated_overrides()
-    payload = projections(overrides, request.use_market, schedule)
-    calibration = projections(overrides, request.use_market) if schedule else None
-    payload["reference_data"] = get_data().get("elevenify_reference", {})
+    payload = {**projections(overrides, request.use_market, schedule, dataset=dataset)}
+    calibration = (
+        projections(overrides, request.use_market, dataset=dataset)
+        if schedule
+        else None
+    )
+    payload["reference_data"] = dataset.get("elevenify_reference", {})
 
     def apply_layer(points, weight, name, probabilities=None, source_at=None):
         nonlocal payload, calibration
@@ -120,7 +128,7 @@ def forecast_for(request: ForecastRequest):
         )
 
     if request.use_provider and request.provider_weight > 0:
-        source = get_data().get("fplform", {})
+        source = dataset.get("fplform", {})
         supplied = {
             pid: v["points"]
             for pid, v in source.get("players", {}).items()
@@ -613,7 +621,7 @@ def evaluation():
 @app.get("/api/prospective")
 def prospective_report():
     path = ROOT / "data" / "prospective.json"
-    return (
+    report = (
         json.loads(path.read_text(encoding="utf-8"))
         if path.exists()
         else {
@@ -621,13 +629,37 @@ def prospective_report():
             "method": "No completed prospective scores yet. Capture before deadlines, then run the scoring command.",
         }
     )
+    report["captures"] = latest_capture_receipts(ROOT, get_data()["season"])
+    return report
 
 
 @app.post("/api/prospective/score")
 def score_completed_gameweeks():
     from .prospective import score
 
-    return score()
+    result = score()
+    result["captures"] = latest_capture_receipts(ROOT, result["season"])
+    return result
+
+
+@app.get("/api/lead-time")
+def lead_time_report():
+    from .leadtime import capture_inventory
+
+    path = ROOT / "data" / "lead-time.json"
+    report = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    return {**report, "inventory": capture_inventory(data=get_data(), root=ROOT)}
+
+
+@app.post("/api/lead-time/score")
+def score_lead_times():
+    from .leadtime import score, capture_inventory
+
+    dataset = get_data()
+    return {
+        **score(data=dataset, root=ROOT),
+        "inventory": capture_inventory(data=dataset, root=ROOT),
+    }
 
 
 @app.get("/api/export/projections.csv")
@@ -683,35 +715,60 @@ def export_projections():
 
 
 @app.post("/api/snapshot")
-def save_snapshot(request: ForecastRequest):
-    payload = forecast_for(request)
-    event = next(e for e in payload["events"] if e["id"] == payload["next_gw"])
+def save_snapshot(request: ForecastRequest, refresh_inputs: bool = True):
+    started = datetime.now(timezone.utc)
+    before = get_data()
+    event = next(
+        e for e in before["bootstrap"]["events"] if e["id"] == before["next_gw"]
+    )
     deadline = datetime.fromisoformat(event["deadline_time"].replace("Z", "+00:00"))
-    now = datetime.now(timezone.utc)
-    if now >= deadline:
+    if started >= deadline:
         raise HTTPException(
             422,
             "The upcoming deadline has passed; a pre-deadline snapshot cannot be recorded.",
         )
-    path = (
-        ROOT
-        / "data"
-        / "snapshots"
-        / f"{payload['season']}_gw{payload['next_gw']}_{now.strftime('%Y%m%dT%H%M%S%fZ')}.json"
+    dataset = get_data(refresh_live=True) if refresh_inputs else before
+    if (dataset["season"], dataset["next_gw"]) != (before["season"], before["next_gw"]):
+        raise HTTPException(
+            422, "The capture target changed during refresh; no snapshot was saved."
+        )
+    fresh_event = next(
+        e for e in dataset["bootstrap"]["events"] if e["id"] == dataset["next_gw"]
     )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    base = {
-        p["id"]: p
-        for p in projections(
-            request.overrides, request.use_market, request.validated_schedule()
-        )["players"]
-    }
-    vendor = get_data().get("fplform", {}).get("players", {})
+    fresh_deadline = datetime.fromisoformat(
+        fresh_event["deadline_time"].replace("Z", "+00:00")
+    )
+    payload = forecast_for(request, dataset=dataset)
+    component = projections(
+        request.validated_overrides(),
+        request.use_market,
+        request.validated_schedule(dataset),
+        dataset=dataset,
+    )
+    base = {p["id"]: p for p in component["players"]}
+    vendor = dataset.get("fplform", {}).get("players", {})
+    now = datetime.now(timezone.utc)
+    if now >= min(deadline, fresh_deadline):
+        raise HTTPException(
+            422, "The target deadline passed during acquisition; no snapshot was saved."
+        )
+    receipt = capture_receipt(
+        before, dataset, payload, component, request, started, now
+    )
+    receipt["refresh_requested"] = refresh_inputs
     snapshot = {
+        "season": dataset["season"],
+        "gameweek": dataset["next_gw"],
         "recorded_at": now.isoformat(),
-        "deadline": event["deadline_time"],
+        "deadline": fresh_event["deadline_time"],
+        "capture_receipt": receipt,
         "model_version": payload["model_version"],
         "configuration": request.model_dump(),
+        "configuration_hash": hashlib.sha256(
+            json.dumps(
+                request.model_dump(), sort_keys=True, separators=(",", ":")
+            ).encode()
+        ).hexdigest(),
         "sources": payload["sources"],
         "players": [
             {
@@ -722,7 +779,58 @@ def save_snapshot(request: ForecastRequest):
             for p in payload["players"]
         ],
     }
+    # Freeze the full forecast horizon now. Future evaluation must not recreate
+    # historical predictions from newly available player or fixture information.
+    snapshot["future_targets"] = {}
+    for target_event in dataset["bootstrap"]["events"]:
+        gw = target_event["id"]
+        if gw not in payload["gameweeks"] or target_event.get("finished"):
+            continue
+        target_deadline = datetime.fromisoformat(
+            target_event["deadline_time"].replace("Z", "+00:00")
+        )
+        if target_deadline <= now:
+            continue
+        target_receipt = capture_receipt(
+            before, dataset, payload, component, request, started, now, target_gw=gw
+        )
+        target_receipt["refresh_requested"] = refresh_inputs
+        target_players = []
+        for player in payload["players"]:
+            forecast = player["gw"][str(gw)]
+            baseline = base[player["id"]]["gw"][str(gw)]
+            models = {
+                "Live ensemble": forecast["points"],
+                "Component model": baseline["points"],
+            }
+            raw_points = vendor.get(str(player["id"]), {}).get("points", {})
+            if str(gw) in raw_points:
+                models["FPL Form"] = raw_points[str(gw)]
+            target_players.append(
+                {
+                    "id": player["id"],
+                    "code": player["code"],
+                    "forecast": {k: forecast[k] for k in ("points", "xmins")},
+                    "component_forecast": {k: baseline[k] for k in ("points", "xmins")},
+                    "models": models,
+                    "prediction_source": forecast.get("prediction_source"),
+                    "minutes_scenario": forecast.get("minutes_scenario"),
+                    "fixture_ids": [fixture["id"] for fixture in forecast["fixtures"]],
+                }
+            )
+        snapshot["future_targets"][str(gw)] = {
+            "gameweek": gw,
+            "deadline": target_event["deadline_time"],
+            "capture_receipt": target_receipt,
+            "fixtures": [
+                {k: fixture.get(k) for k in ("id", "team_h", "team_a", "kickoff_time")}
+                for fixture in dataset["fixtures"]
+                if fixture.get("event") == gw
+            ],
+            "players": target_players,
+        }
     for row in snapshot["players"]:
+        row["component_forecast"] = base[row["id"]]["gw"][str(payload["next_gw"])]
         row["models"] = {
             "Live ensemble": row["forecast"]["points"],
             "Component model": base[row["id"]]["gw"][str(payload["next_gw"])]["points"],
@@ -730,14 +838,31 @@ def save_snapshot(request: ForecastRequest):
         source = vendor.get(str(row["id"]), {}).get("points", {})
         if str(payload["next_gw"]) in source:
             row["models"]["FPL Form"] = source[str(payload["next_gw"])]
-    with path.open("x", encoding="utf-8") as file:
-        json.dump(snapshot, file, ensure_ascii=False, allow_nan=False)
+    # Complete serialisation before the final deadline check or creating a file.
+    body = json.dumps(snapshot, ensure_ascii=False, allow_nan=False)
+    compressed = gzip.compress(body.encode("utf-8"), compresslevel=6, mtime=0)
+    if datetime.now(timezone.utc) >= min(deadline, fresh_deadline):
+        raise HTTPException(
+            422,
+            "The target deadline passed during serialisation; no snapshot was saved.",
+        )
+    path = (
+        ROOT
+        / "data"
+        / "snapshots"
+        / f"{payload['season']}_gw{payload['next_gw']}_{now.strftime('%Y%m%dT%H%M%S%fZ')}.json.gz"
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("xb") as file:
+        file.write(compressed)
     return {
         "saved": True,
         "filename": path.name,
         "recorded_at": now.isoformat(),
-        "deadline": event["deadline_time"],
+        "deadline": fresh_event["deadline_time"],
+        "capture_receipt": receipt,
         "players": len(payload["players"]),
+        "captured_gameweeks": sorted(int(gw) for gw in snapshot["future_targets"]),
     }
 
 

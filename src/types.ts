@@ -105,6 +105,18 @@ export type PlayerReference = {
     source_key: string;
   };
   future_importance?: number;
+  attacking_views?: Record<
+    string,
+    {
+      source_key: string;
+      conditioning: string;
+      duration_minutes: number | null;
+      gameweeks: Record<
+        string,
+        { goal?: number; assist?: number; goal_involvement?: number }
+      >;
+    }
+  >;
   captain?: boolean;
   captain_gameweek?: number;
   matches: {
@@ -135,6 +147,13 @@ export type ReferenceData = {
       row_count: number;
       matched_players: number;
       captain_gameweek?: number;
+      caption?: string;
+      units?: string;
+      conditioning?: string;
+      duration_minutes?: number | null;
+      gameweeks?: number[];
+      caption_current?: boolean;
+      window_status?: string;
       validation: string | null;
       diagnostics: Record<string, unknown[]>;
     }
@@ -144,6 +163,7 @@ export type ReferenceData = {
     matched_players: number;
     baseline_players: number;
     importance_players: number;
+    attacking_players?: number;
   };
   limitations: string[];
 };
@@ -287,14 +307,140 @@ export type SensitivityJob = {
   limitations: string[];
 };
 export type Metric = { mae: number; rmse: number; bias: number; count: number };
+export type CaptureReceipt = {
+  capture_started_at: string;
+  capture_finished_at: string;
+  dataset_loaded_at: string;
+  refresh_requested: boolean;
+  max_source_age_seconds: number;
+  eligible_primary: Record<string, boolean>;
+  eligibility_reasons: Record<string, string[]>;
+  required_sources: Record<string, string[]>;
+  origin_gameweek?: number;
+  target_gameweek?: number;
+  comparison_models?: string[];
+  method: string;
+  sources: Record<
+    string,
+    {
+      url?: string;
+      status: string;
+      fetched_at: string | null;
+      sha256: string | null;
+      age_seconds: number | null;
+      refetched: boolean;
+      content_changed: boolean | null;
+      last_modified?: string | null;
+    }
+  >;
+};
+export type LeadTimeTarget = {
+  gw: number;
+  snapshot: string;
+  recorded_at: string;
+  deadline: string;
+  current_deadline: string;
+  deadline_changed: boolean;
+  fixture_schedule_changed?: boolean | null;
+  fixtures?:
+    | {
+        id: number;
+        team_h: number;
+        team_a: number;
+        kickoff_time: string | null;
+      }[]
+    | null;
+  lead_hours: number;
+  origin_gameweek: number;
+  model_version: string;
+  configuration_hash: string | null;
+  manual_configuration: boolean;
+  status: string;
+  cohort: { eligible_count: number };
+  coverage: Record<string, { forecast_count: number; eligible_count: number }>;
+  pairwise_comparisons?: Prospective["gameweeks"][number]["pairwise_comparisons"];
+};
+export type LeadTimeAggregate = {
+  count: number;
+  gameweek_count: number;
+  model: Metric | null;
+  ensemble: Metric | null;
+  denominator: string;
+};
+export type LeadTimeBin = {
+  id: string;
+  label: string;
+  capture_count: number;
+  pending_count: number;
+  ready_count: number;
+  pending_targets: LeadTimeTarget[];
+  captured_targets: LeadTimeTarget[];
+  gameweeks: LeadTimeTarget[];
+  pairwise_comparisons: Record<
+    string,
+    {
+      all: LeadTimeAggregate;
+      primary: LeadTimeAggregate;
+      exploratory: LeadTimeAggregate;
+    }
+  >;
+};
+export type LeadTimeReport = {
+  generated_at?: string;
+  method?: string;
+  bins?: LeadTimeBin[];
+  diagnostics?: unknown[];
+  inventory: { bins: LeadTimeBin[]; method?: string };
+};
 export type Prospective = {
   generated_at?: string;
   method: string;
+  captures?: {
+    gw: number;
+    filename: string;
+    recorded_at: string;
+    deadline: string;
+    lead_hours: number;
+    players: number;
+    capture_receipt: CaptureReceipt | null;
+  }[];
+  excluded_gameweeks?: { gw: number; reason: string }[];
   vendor_comparison?: string;
   gameweeks: ({
     gw: number;
     snapshot: string;
     models: Record<string, Metric>;
+    common_cohort_count?: number;
+    cohort?: {
+      selection: string;
+      eligible_count: number;
+      scored_count: number;
+      missing_actual_ids: number[];
+    };
+    pairwise_comparisons?: Record<
+      string,
+      {
+        reference: string;
+        count: number;
+        model: Metric | null;
+        ensemble: Metric | null;
+        eligibility: string;
+        eligible_primary: boolean;
+        eligibility_reasons: string[];
+      }
+    >;
+    coverage?: Record<
+      string,
+      {
+        eligible_count: number;
+        forecast_count: number;
+        missing_forecast_count: number;
+        invalid_forecast_count: number;
+        scored_count: number;
+      }
+    >;
+    actual_source?: Source;
+    actual_data_checked?: boolean | null;
   } & Metric)[];
 };
 export type Evaluation = {

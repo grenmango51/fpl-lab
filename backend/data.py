@@ -50,7 +50,7 @@ def archive_payload(key, raw, meta):
     return str(path.relative_to(ROOT))
 
 
-def fetch(url: str, key: str, ttl=3600, *, optional=False, form=None):
+def fetch(url: str, key: str, ttl=3600, *, optional=False, form=None, refresh=False):
     """Return text. A stale cache is labelled and never silently substituted."""
     CACHE.mkdir(parents=True, exist_ok=True)
     path = CACHE / f"{key}.json"
@@ -60,7 +60,7 @@ def fetch(url: str, key: str, ttl=3600, *, optional=False, form=None):
             old = json.loads(path.read_text(encoding="utf-8"))
             if old.get("request_form") != form:
                 old = None
-            if old and time.time() - old["fetched_epoch"] < ttl:
+            if old and not refresh and time.time() - old["fetched_epoch"] < ttl:
                 recovered = old["body"].encode("utf-8")
                 if hashlib.sha256(recovered).hexdigest() == old.get("sha256"):
                     old["raw_archive"] = archive_payload(key, recovered, old)
@@ -130,6 +130,12 @@ def number(value, default=0.0):
         return n if n == n and abs(n) != float("inf") else default
     except (ValueError, TypeError):
         return default
+
+
+def source_metadata(key):
+    """Read acquisition provenance, including sources fetched after dataset load."""
+    with _lock:
+        return dict(_statuses.get(key, {}))
 
 
 ALIASES = {
@@ -263,7 +269,7 @@ def load_archive(season: str):
     return sorted(result, key=lambda r: (r["date"], r["code"]))
 
 
-def load_elevenify(joe, teams):
+def load_elevenify(joe, teams, *, refresh=False):
     source = joe.get("supplementalProjections", {}).get("source", {})
     url = (
         source.get("url")
@@ -275,7 +281,7 @@ def load_elevenify(joe, teams):
     if not match:
         return {}
     csv_url = f"https://docs.google.com/spreadsheets/d/{match.group(1)}/export?format=csv&gid=0"
-    raw = fetch(csv_url, "elevenify_sheet", 3600, optional=True)
+    raw = fetch(csv_url, "elevenify_sheet", 3600, optional=True, refresh=refresh)
     if not raw:
         return {}
     tables = []
@@ -335,7 +341,7 @@ def load_elevenify(joe, teams):
     }
 
 
-def load_fplform(season, start, players, teams):
+def load_fplform(season, start, players, teams, *, refresh=False):
     """Normal public export; only the next three GWs anchor our live ensemble."""
     key = f"fplform_{season}_gw{start}"
     form = {
@@ -350,6 +356,7 @@ def load_fplform(season, start, players, teams):
         3600,
         optional=True,
         form=form,
+        refresh=refresh,
     )
     if not raw:
         return {}
@@ -401,10 +408,12 @@ def load_fplform(season, start, players, teams):
     }
 
 
-def load_elevenify_reference(season, start, players, teams):
+def load_elevenify_reference(season, start, players, teams, *, refresh=False):
     """Read only the normal published assets; unavailable references are optional."""
     raw_by_feed = {
-        feed: fetch(config["url"], config["source_key"], 3600, optional=True)
+        feed: fetch(
+            config["url"], config["source_key"], 3600, optional=True, refresh=refresh
+        )
         for feed, config in REFERENCE_FEEDS.items()
     }
     reference = build_reference(
@@ -418,25 +427,25 @@ def load_elevenify_reference(season, start, players, teams):
     return reference
 
 
-def get_data(force=False):
+def get_data(force=False, *, refresh_live=False):
     global _dataset, _loaded
     with _lock:
-        if _dataset is not None and not force and time.time() - _loaded < 900:
+        if (
+            _dataset is not None
+            and not force
+            and not refresh_live
+            and time.time() - _loaded < 900
+        ):
             return _dataset
-        if force:
-            # Refresh live sources, retaining immutable archived files.
-            for path in CACHE.glob("*.json"):
-                if not path.stem.startswith("archive_"):
-                    try:
-                        envelope = json.loads(path.read_text(encoding="utf-8"))
-                        envelope["fetched_epoch"] = 0
-                        path.write_text(
-                            json.dumps(envelope, ensure_ascii=False), encoding="utf-8"
-                        )
-                    except (ValueError, OSError):
-                        pass
-        bootstrap = json.loads(fetch(f"{FPL}/bootstrap-static/", "fpl_bootstrap", 900))
-        fixtures = json.loads(fetch(f"{FPL}/fixtures/", "fpl_fixtures", 3600))
+        refresh = force or refresh_live
+        # Explicit cache bypass retains the old envelope for a labelled stale
+        # fallback; deadline captures refresh live inputs, not completed history.
+        bootstrap = json.loads(
+            fetch(f"{FPL}/bootstrap-static/", "fpl_bootstrap", 900, refresh=refresh)
+        )
+        fixtures = json.loads(
+            fetch(f"{FPL}/fixtures/", "fpl_fixtures", 3600, refresh=refresh)
+        )
         teams = {t["id"]: t for t in bootstrap["teams"]}
         players = {p["id"]: p for p in bootstrap["elements"]}
         next_event = next((e for e in bootstrap["events"] if e.get("is_next")), None)
@@ -448,7 +457,7 @@ def get_data(force=False):
         year = int(bootstrap["events"][0]["deadline_time"][:4])
         season = f"{year}-{str(year + 1)[-2:]}"
         joe_url = f"https://www.fpljoe.com/api/odds/projections?competition=premier-league&season={season}&scope=season%3A{season}"
-        joe_text = fetch(joe_url, "fpljoe", 3600, optional=True)
+        joe_text = fetch(joe_url, "fpljoe", 3600, optional=True, refresh=refresh)
         try:
             joe = json.loads(joe_text) if joe_text else {}
             if not isinstance(joe, dict) or not isinstance(
@@ -460,10 +469,12 @@ def get_data(force=False):
             _statuses["fpljoe"]["validation"] = (
                 "Unexpected provider JSON; using historical fallback."
             )
-        elevenify = load_elevenify(joe, teams)
-        fplform = load_fplform(season, next_event["id"], players, teams)
+        elevenify = load_elevenify(joe, teams, refresh=refresh)
+        fplform = load_fplform(
+            season, next_event["id"], players, teams, refresh=refresh
+        )
         elevenify_reference = load_elevenify_reference(
-            season, next_event["id"], players, teams
+            season, next_event["id"], players, teams, refresh=refresh
         )
         history = []
         for start in range(year - 3, year):
@@ -477,6 +488,7 @@ def get_data(force=False):
                 f"fpl_live_{season}_{event['id']}",
                 6 * 3600,
                 optional=True,
+                refresh=force,
             )
             if not raw:
                 continue

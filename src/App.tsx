@@ -738,10 +738,27 @@ export default function App() {
     }
   }
   async function snapshot() {
-    setBusy("Recording a pre-deadline snapshot…");
+    setBusy("Refreshing live inputs and recording a pre-deadline snapshot…");
     try {
-      const r = await api<{ filename: string }>("/snapshot", forecastArgs);
-      notify(`Forecast archived before the deadline: ${r.filename}`);
+      const r = await api<{ filename: string; captured_gameweeks: number[] }>(
+        "/snapshot",
+        forecastArgs,
+      );
+      notify(
+        `Archived ${r.captured_gameweeks.length} gameweeks before the deadline.`,
+      );
+      try {
+        const [receipt, forecasts] = await Promise.all([
+          api<Prospective>("/prospective"),
+          api<Bootstrap>("/projections", forecastArgs),
+        ]);
+        setProspective(receipt);
+        setData(forecasts);
+      } catch {
+        notify(
+          "Forecast saved. Refresh the app to reload its capture receipt and forecasts.",
+        );
+      }
     } catch (e) {
       notify((e as Error).message, true);
     } finally {

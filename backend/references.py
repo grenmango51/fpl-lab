@@ -12,20 +12,63 @@ FEEDS = {
     "baselines": {
         "source_key": "elevenify_player_baselines",
         "url": "https://static.dwcdn.net/data/tDC0G.csv",
+        "caption": "Average-opponent attacking baselines",
+        "units": "Expected attacking counts given a start against an average Premier League team",
+        "conditioning": "starts_against_average_premier_league_team",
     },
     "fast_fantasy": {
         "source_key": "elevenify_fast_fantasy",
         "url": "https://static.dwcdn.net/data/MmYOs.csv",
+        "caption": "Future importance and captaincy reference",
+        "units": "Ranking score and captaincy marker; no point or probability units",
+        "conditioning": None,
+    },
+    "next_gw_attack": {
+        "source_key": "elevenify_next_gw_attack",
+        "url": "https://static.dwcdn.net/data/YmfDr.csv",
+        "caption": "Next-gameweek goals, assists and goal involvement",
+        "units": "Expected goals, assists and goal involvement given a start",
+        "conditioning": "assumes_player_starts",
+    },
+    "three_gw_goals": {
+        "source_key": "elevenify_three_gw_goals",
+        "url": "https://static.dwcdn.net/data/ALYf8.csv",
+        "caption": "Three-gameweek goals",
+        "units": "Expected goals given a start",
+        "conditioning": "assumes_player_starts",
+    },
+    "three_gw_assists": {
+        "source_key": "elevenify_three_gw_assists",
+        "url": "https://static.dwcdn.net/data/VK19h.csv",
+        "caption": "Three-gameweek assists",
+        "units": "Expected assists given a start",
+        "conditioning": "assumes_player_starts",
     },
 }
 
 CONDITIONING = "starts_against_average_premier_league_team"
+ATTACKING_FEEDS = {"next_gw_attack", "three_gw_goals", "three_gw_assists"}
 POSITIONS = {"GK": 1, "GKP": 1, "DEF": 2, "MID": 3, "FWD": 4}
-# These two exact provider aliases were checked against the 2026/27 official
-# pool. IDs alone never establish identity: club, position and name must agree.
+# Exact aliases checked against the current official pool and primary club
+# profiles. IDs alone never establish identity. The two new fixture-view
+# spellings additionally require the verified stable player code.
 NAME_ALIASES = {
     "jpedro": {"id": 165, "team": "CHE", "position": 4, "name": "joaopedro"},
     "kmitoma": {"id": 121, "team": "BHA", "position": 3, "name": "mitoma"},
+    "ypino": {
+        "id": 211,
+        "code": 488024,
+        "team": "CRY",
+        "position": 3,
+        "name": "yeremy",
+    },
+    "savinho": {
+        "id": 403,
+        "code": 510281,
+        "team": "TOT",
+        "position": 3,
+        "name": "savio",
+    },
 }
 
 
@@ -45,19 +88,27 @@ def name_variants(player):
 
 
 def _table(raw, required):
-    reader = csv.DictReader(io.StringIO(raw.lstrip("\ufeff")), strict=True)
-    headers = [header.strip() for header in (reader.fieldnames or [])]
+    reader = csv.reader(io.StringIO(raw.lstrip("\ufeff")), strict=True)
+    header_row, headers = 0, []
+    for row in reader:
+        header_row += 1
+        if any(value.strip() for value in row):
+            headers = [value.strip() for value in row]
+            break
     if not headers or not set(required).issubset(headers):
         raise ValueError("Unexpected CSV columns; reference disabled.")
     if len(headers) != len(set(headers)):
         raise ValueError("Duplicate CSV columns; reference disabled.")
-    reader.fieldnames = headers
     rows = list(reader)
     if not rows:
         raise ValueError("CSV contains no player rows; reference disabled.")
-    if any(None in row or any(value is None for value in row.values()) for row in rows):
+    if any(len(row) != len(headers) for row in rows):
         raise ValueError("Malformed CSV row; reference disabled.")
-    return headers, [{key: value.strip() for key, value in row.items()} for row in rows]
+    return (
+        headers,
+        [dict(zip(headers, (value.strip() for value in row))) for row in rows],
+        header_row + 1,
+    )
 
 
 def _number(raw, low, high, label):
@@ -139,9 +190,11 @@ def _match(row, row_number, players, teams, source_key, *, has_position):
         candidate = players.get(alias["id"])
         if (
             candidate in cohort
+            and candidate["id"] == alias["id"]
             and candidate["element_type"] == alias["position"]
             and team["short_name"] == alias["team"]
             and normalise_name(candidate["web_name"]) == alias["name"]
+            and ("code" not in alias or candidate.get("code") == alias["code"])
         ):
             candidates = [candidate]
             method = "documented_alias"
@@ -166,6 +219,7 @@ def _match(row, row_number, players, teams, source_key, *, has_position):
         {
             **evidence,
             "official_name": player["web_name"],
+            "official_code": player.get("code"),
             "team": team["short_name"],
             "team_code": team["code"],
             "position": player["element_type"],
@@ -174,6 +228,80 @@ def _match(row, row_number, players, teams, source_key, *, has_position):
         },
         "matched",
     )
+
+
+def _attacking_columns(headers, feed):
+    """Interpret explicit published GW labels, without shifting their dates."""
+    if feed == "next_gw_attack":
+        columns = {}
+        names = {
+            "Goals": "goal",
+            "Assists": "assist",
+            "Involvement": "goal_involvement",
+        }
+        for header in headers:
+            if match := re.fullmatch(r"GW(\d+) (Goals|Assists|Involvement)", header):
+                gw = int(match.group(1))
+                if not 1 <= gw <= 38:
+                    raise ValueError("Invalid attacking gameweek.")
+                columns.setdefault(gw, {})[names[match.group(2)]] = header
+        if len(columns) != 1 or set(next(iter(columns.values()), {})) != set(
+            names.values()
+        ):
+            raise ValueError(
+                "Expected goals, assists and involvement for one numbered gameweek."
+            )
+        expected = {"Player", ""} | {
+            column for mapping in columns.values() for column in mapping.values()
+        }
+        if set(headers) != expected:
+            raise ValueError("Unexpected next-gameweek attacking columns.")
+        return columns
+    label = "goal" if feed == "three_gw_goals" else "assist"
+    columns = {}
+    for header in headers:
+        if header.isdigit():
+            gw = int(header)
+            if not 1 <= gw <= 38 or str(gw) != header:
+                raise ValueError("Invalid attacking gameweek.")
+            columns[gw] = {label: header}
+    weeks = sorted(columns)
+    if not 1 <= len(weeks) <= 3 or weeks != list(range(weeks[0], weeks[-1] + 1)):
+        raise ValueError(
+            "Expected a consecutive attacking window of at most three gameweeks."
+        )
+    if set(headers) != {"Player", "", "TOTAL"} | {str(gw) for gw in weeks}:
+        raise ValueError("Unexpected three-gameweek attacking columns.")
+    return columns
+
+
+def _attacking_values(row, feed, columns, source_key):
+    gameweeks = {}
+    for gw, mapping in sorted(columns.items()):
+        gameweeks[str(gw)] = {
+            component: _number(
+                row[column], 0, 10 if component == "goal_involvement" else 5, component
+            )
+            for component, column in mapping.items()
+        }
+    if feed != "next_gw_attack":
+        total = _number(row["TOTAL"], 0, 5 * len(columns), "attacking total")
+        rounded_sum = sum(
+            next(iter(components.values())) for components in gameweeks.values()
+        )
+        # Three cells plus a total rounded to 0.01 can differ by up to 0.02.
+        if abs(total - rounded_sum) > 0.005 * (len(columns) + 1) + 1e-9:
+            raise ValueError("Attacking total disagrees with rounded gameweek counts.")
+    return {
+        "attacking_views": {
+            feed: {
+                "source_key": source_key,
+                "conditioning": "assumes_player_starts",
+                "duration_minutes": None,
+                "gameweeks": gameweeks,
+            }
+        }
+    }
 
 
 def parse_reference(raw, feed, players, teams):
@@ -187,16 +315,19 @@ def parse_reference(raw, feed, players, teams):
     }
     source_key = FEEDS[feed]["source_key"]
     baseline = feed == "baselines"
+    attacking = feed in ATTACKING_FEEDS
     required = (
         ["Player", "Goal Baseline", "Assist Baseline", "Goal Involvement Baseline"]
         if baseline
+        else ["Player", ""]
+        if attacking
         else ["Player", "Team", "Position", "Future Importance"]
     )
     try:
-        headers, rows = _table(raw, required)
+        headers, rows, first_data_row = _table(raw, required)
         result["row_count"] = len(rows)
         captain_header, captain_gameweek = None, None
-        if not baseline:
+        if feed == "fast_fantasy":
             captain_headers = [
                 (header, match)
                 for header in headers
@@ -209,8 +340,22 @@ def parse_reference(raw, feed, players, teams):
             if not 1 <= captain_gameweek <= 38:
                 raise ValueError("Invalid captaincy gameweek.")
             result["captain_gameweek"] = captain_gameweek
+            result["gameweeks"] = [captain_gameweek]
+            result["caption"] = f"Future importance and GW{captain_gameweek} captaincy"
+        columns = _attacking_columns(headers, feed) if attacking else None
+        if attacking:
+            result["gameweeks"] = sorted(columns)
+            gw_label = ", ".join(f"GW{gw}" for gw in sorted(columns))
+            outcome_label = (
+                "goals, assists and involvement"
+                if feed == "next_gw_attack"
+                else "goals"
+                if feed == "three_gw_goals"
+                else "assists"
+            )
+            result["caption"] = f"{gw_label} {outcome_label}, conditional on starting"
         matched = {}
-        for row_number, row in enumerate(rows, start=2):
+        for row_number, row in enumerate(rows, start=first_data_row):
             if baseline:
                 values = {
                     "attacking_baseline": {
@@ -230,6 +375,8 @@ def parse_reference(raw, feed, players, teams):
                         "source_key": source_key,
                     }
                 }
+            elif attacking:
+                values = _attacking_values(row, feed, columns, source_key)
             else:
                 star = row[captain_header].replace("\ufe0f", "")
                 if star not in ("", "⭐"):
@@ -243,7 +390,12 @@ def parse_reference(raw, feed, players, teams):
                     "captain_gameweek": captain_gameweek,
                 }
             pid, evidence, category = _match(
-                row, row_number, players, teams, source_key, has_position=not baseline
+                row,
+                row_number,
+                players,
+                teams,
+                source_key,
+                has_position=feed == "fast_fantasy",
             )
             if category != "matched":
                 result["diagnostics"][category].append(evidence)
@@ -293,7 +445,29 @@ def build_reference(raw_by_feed, provenance, players, teams, *, season, next_gw)
         )
         available = bool(parsed["players"])
         source_status = meta.get("status", "unavailable")
-        status = "invalid" if raw and parsed["error"] else source_status
+        status = (
+            "unavailable"
+            if not raw
+            else "invalid"
+            if parsed["error"]
+            else source_status
+        )
+        weeks = parsed.get("gameweeks", [])
+        window_status = (
+            "unspecified"
+            if not weeks
+            else "current"
+            if weeks[0] == next_gw
+            else "past"
+            if weeks[0] < next_gw
+            else "future"
+        )
+        if (
+            available
+            and feed in ATTACKING_FEEDS
+            and window_status in ("past", "future")
+        ):
+            status = "stale"
         feeds[feed] = {
             "source_key": config["source_key"],
             "url": config["url"],
@@ -304,6 +478,13 @@ def build_reference(raw_by_feed, provenance, players, teams, *, season, next_gw)
             "last_modified": meta.get("last_modified"),
             "raw_archive": meta.get("raw_archive"),
             "available": available,
+            "caption": parsed.get("caption", config["caption"]),
+            "units": config["units"],
+            "conditioning": config["conditioning"],
+            "duration_minutes": None,
+            "gameweeks": weeks,
+            "caption_current": weeks[0] == next_gw if weeks else None,
+            "window_status": window_status,
             "row_count": parsed["row_count"],
             "matched_players": parsed["matched_players"],
             "coverage": parsed["matched_players"] / parsed["row_count"]
@@ -325,6 +506,11 @@ def build_reference(raw_by_feed, provenance, players, teams, *, season, next_gw)
                 **player,
                 "matches": previous.get("matches", []) + player["matches"],
             }
+            if previous.get("attacking_views") or player.get("attacking_views"):
+                combined[pid]["attacking_views"] = {
+                    **previous.get("attacking_views", {}),
+                    **player.get("attacking_views", {}),
+                }
     enabled = [feed for feed in feeds.values() if feed["available"]]
     status = (
         "unavailable"
@@ -354,6 +540,9 @@ def build_reference(raw_by_feed, provenance, players, teams, *, season, next_gw)
             "importance_players": feeds["fast_fantasy"]["matched_players"]
             if feeds["fast_fantasy"]["available"]
             else 0,
+            "attacking_players": sum(
+                bool(player.get("attacking_views")) for player in combined.values()
+            ),
         },
         "limitations": [
             "Attacking baselines assume a start against an average Premier League team; duration is unspecified, so these are not per-90 rates or gameweek forecasts.",
@@ -361,5 +550,7 @@ def build_reference(raw_by_feed, provenance, players, teams, *, season, next_gw)
             "These tables cover selected players only. Missing players have no supplied reference, not zero importance or attacking expectation.",
             "The season is inferred from matches to the current official pool; a dated captaincy column applies only to that gameweek.",
             "Fast Fantasy incorporates FPL Review Massive Data and is not an independent second set of points forecasts.",
+            "Gameweek attacking views assume the player starts; their duration and start probability are unspecified and their assist definition is not verified as identical to FPL's.",
+            "Next-gameweek and three-gameweek attacking series can differ on the same gameweek. They are kept separate and do not change the numerical points forecast.",
         ],
     }

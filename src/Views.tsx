@@ -30,6 +30,8 @@ import type {
 } from "./types";
 import { api, fmt, money, xp, chipNames } from "./lib";
 import { Badge, Busy, LineChart, PlayerName, Stat } from "./components";
+import { ProspectiveView } from "./ProspectiveView";
+import { LeadTimeView } from "./LeadTimeView";
 
 type BaseProps = {
   data: Bootstrap;
@@ -907,53 +909,11 @@ export function AnalysisView({
           Freeze pre-deadline forecast
         </button>
       </div>
-      <section className="panel methodology">
-        <div className="panel-heading">
-          <Clock3 size={16} />
-          <h3>Prospective forecast comparison</h3>
-          <button className="button small" onClick={onScore}>
-            Score completed weeks
-          </button>
-        </div>
-        <p>
-          Capture the component model, FPL Form and live ensemble before the
-          deadline. Score all three on identical player rows after the gameweek
-          finishes.
-        </p>
-        {prospective?.gameweeks.length ? (
-          prospective.gameweeks.map((w) => (
-            <div key={w.gw}>
-              <h3>GW{w.gw}</h3>
-              <div className="benchmark-stats">
-                {Object.entries(w.models ?? {}).map(([name, m]) => (
-                  <div className="benchmark-card" key={name}>
-                    <span className="eyebrow">{name}</span>
-                    <strong>
-                      {fmt(m.mae, 3)}
-                      <small> MAE</small>
-                    </strong>
-                    <p>
-                      RMSE {fmt(m.rmse, 3)} · {m.count} players
-                    </p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))
-        ) : (
-          <p className="help-text">
-            No completed prospective results yet. Upcoming weeks stay pending.
-          </p>
-        )}
-        {data.forecast_layers?.map((l) => (
-          <p key={l.name} className="help-text">
-            Active input: {l.name} · {fmt(l.weight * 100, 0)}% weight ·{" "}
-            {l.direct_forecasts.toLocaleString()} direct /{" "}
-            {l.extrapolated_forecasts.toLocaleString()} extrapolated forecasts ·{" "}
-            {l.half_life}-GW influence half-life.
-          </p>
-        ))}
-      </section>
+      <ProspectiveView data={data} report={prospective} onScore={onScore} />
+      <LeadTimeView
+        data={data}
+        captureKey={prospective?.captures?.[0]?.filename ?? ""}
+      />
       {comparison.length > 0 && (
         <section className="panel analysis-plan">
           <div className="panel-heading">

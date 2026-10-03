@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import itertools
+import warnings
 from collections import Counter
 from threading import Lock
 
@@ -140,14 +141,20 @@ class Builder:
             (self.values, (self.rows, self.cols)),
             shape=(len(self.clow), len(self.cost)),
         ).tocsc()
-        # HTTP requests and background stress jobs share the native solver.
-        with _MILP_LOCK:
+        # Serialise callers and keep HiGHS off its native worker pool on Windows.
+        # SciPy forwards this HiGHS option despite not listing it in its API.
+        with _MILP_LOCK, warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message=r"Unrecognized options detected: \{'threads'\}.*",
+                category=RuntimeWarning,
+            )
             return milp(
                 c=np.array(self.cost),
                 integrality=np.array(self.integral),
                 bounds=Bounds(self.low, self.high),
                 constraints=LinearConstraint(matrix, self.clow, self.chigh),
-                options={"time_limit": seconds, "mip_rel_gap": 0.01},
+                options={"time_limit": seconds, "mip_rel_gap": 0.01, "threads": 1},
             )
 
 

@@ -9,6 +9,8 @@ data/snapshots/
 data/history/
 data/exports/
 data/prospective.json
+data/lead-time.json
+data/*-qa.json
 *.log
 *.tsbuildinfo
 .env

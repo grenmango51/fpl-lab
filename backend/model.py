@@ -452,14 +452,20 @@ def canonical_minutes_schedule(minutes_schedule, player_ids, gameweeks):
     return result
 
 
-def projections(overrides=None, use_market=True, minutes_schedule=None):
+def projections(
+    overrides=None, use_market=True, minutes_schedule=None, *, dataset=None
+):
     with _projection_lock:
-        return _build_projections(overrides, use_market, minutes_schedule)
+        return _build_projections(
+            overrides, use_market, minutes_schedule, dataset=dataset
+        )
 
 
-def _build_projections(overrides=None, use_market=True, minutes_schedule=None):
+def _build_projections(
+    overrides=None, use_market=True, minutes_schedule=None, *, dataset=None
+):
     global _projections, _projection_key
-    data = get_data()
+    data = dataset if dataset is not None else get_data()
     overrides = overrides or {}
     start = data["next_gw"]
     horizon = list(range(start, 39))
@@ -476,7 +482,13 @@ def _build_projections(overrides=None, use_market=True, minutes_schedule=None):
         )
         for pid, weeks in sorted(minutes_schedule.items())
     )
-    key = (data["loaded_at"], str(sorted(overrides.items())), use_market, schedule_key)
+    key = (
+        data["loaded_at"],
+        id(data),
+        str(sorted(overrides.items())),
+        use_market,
+        schedule_key,
+    )
     if _projections is not None and _projection_key == key:
         return _projections
     history = attach_team_xg(data["history"])

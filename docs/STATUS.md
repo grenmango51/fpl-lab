@@ -8,7 +8,7 @@ Production: http://127.0.0.1:8000. Development: http://127.0.0.1:5173.
 
 From `fpl-lab/`, run `./start.ps1 -Install` once, then `./start.ps1`. An existing Open FPL server is detected. Development uses `./start.ps1 -Development`. See the README for separate-terminal commands.
 
-Root `AGENTS.md` and `.cursor/rules/open-fpl.mdc` explain the new scope. The legacy football research and StatsBomb folders were preserved; their staged changes were not altered.
+`fpl-lab/AGENTS.md` explains the scope and rules. The legacy football research and StatsBomb folders were preserved; their staged changes were not altered.
 
 ## Delivered
 

@@ -373,7 +373,7 @@ export function LineChart({
   yLabel = "Expected points",
   colors = ["#ff764d", "#61ba9a", "#7c94cb"],
 }: {
-  series: { name: string; values: number[] }[];
+  series: { name: string; values: (number | null)[] }[];
   labels: string[];
   height?: number;
   yLabel?: string;
@@ -386,7 +386,10 @@ export function LineChart({
     right = 15;
   const plotHeight = height - top - bottom,
     plotWidth = width - left - right;
-  const max = Math.max(1, ...series.flatMap((s) => s.values)) * 1.1;
+  const values = series.flatMap((s) => s.values.filter((value): value is number => value !== null && Number.isFinite(value)));
+  const max = Math.max(1, ...values) * 1.1;
+  const min = Math.min(0, ...values);
+  const range = max - min;
   return (
     <div className="chart">
       <svg
@@ -411,17 +414,18 @@ export function LineChart({
               textAnchor="end"
               fontSize="11"
             >
-              {fmt(max * (1 - i / 4))}
+              {fmt(max - (i * range) / 4)}
             </text>
           </g>
         ))}
         {series.map((s, index) => (
-          <polyline
-            key={s.name}
-            points={s.values
+          <g key={s.name}>
+          <path
+            d={s.values
               .map(
                 (v, i) =>
-                  `${left + (i * plotWidth) / Math.max(1, s.values.length - 1)},${top + plotHeight - (v / max) * plotHeight}`,
+                  v === null || !Number.isFinite(v) ? "" :
+                  `${i === 0 || s.values[i - 1] === null || !Number.isFinite(s.values[i - 1]) ? "M" : "L"}${left + (i * plotWidth) / Math.max(1, s.values.length - 1)},${top + ((max - v) / range) * plotHeight}`,
               )
               .join(" ")}
             fill="none"
@@ -429,6 +433,12 @@ export function LineChart({
             strokeWidth="2.4"
             strokeLinejoin="round"
           />
+          {s.values.map((value, i) => value === null || !Number.isFinite(value) ? null : (
+            <circle key={i} cx={left + (i * plotWidth) / Math.max(1, s.values.length - 1)} cy={top + ((max - value) / range) * plotHeight} r="2.7" fill={colors[index % colors.length]}>
+              <title>{s.name} · {labels[i]}: {fmt(value, 2)}</title>
+            </circle>
+          ))}
+          </g>
         ))}
         {labels.map(
           (label, i) =>

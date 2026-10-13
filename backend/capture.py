@@ -142,6 +142,10 @@ def capture_receipt(
             problems.append(
                 "Imported CSV extraction time is not independently established."
             )
+        if name == "Live ensemble" and any(
+            gw in weeks for weeks in getattr(request, "stat_schedule", {}).values()
+        ):
+            problems.append("User-assumed player stats are a planning scenario, not an independently sourced forecast.")
         reasons[name] = problems
     return {
         "capture_started_at": started.isoformat(),

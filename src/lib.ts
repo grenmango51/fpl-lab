@@ -158,7 +158,7 @@ export function planFromSquad(
       squad.map((id) => [String(id), players.find((p) => p.id === id)!.price]),
     ),
     created_at: new Date().toISOString(),
-    weeks: weeks.slice(0, 6).map((gw, index) => ({
+    weeks: weeks.slice(0, 5).map((gw, index) => ({
       gw,
       squad: [...squad],
       ...optimalLineup(squad, players, gw),

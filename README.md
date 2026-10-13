@@ -9,10 +9,12 @@ Requires Python 3.11+ and Node 20.19+ / 22.12+. Tested here on Python 3.11.9 and
 From this folder in PowerShell:
 
 ```powershell
-./start.ps1 -Install
+./start.ps1
 ```
 
-This installs dependencies if requested, builds the app if necessary, and serves it at **http://127.0.0.1:8000**. Subsequent runs: `./start.ps1`.
+This checks Python/Node versions, installs missing or changed dependencies, rebuilds missing or outdated production files, and serves the app at **http://127.0.0.1:8000**. The API stays running in the background after the command returns. Its logs and process record are under ignored `data/cache/runtime/`.
+
+`./start.ps1 -Install` reinstalls dependencies. `./start.ps1 -Rebuild` forces a production rebuild; `./start.ps1 -Restart` restarts an API started by this script. Routine startup also refreshes its own API when backend files have changed. Unfamiliar processes are never stopped. If an older API was started manually, restart its original terminal before retrying; the script reports an outdated or API-only server instead of silently returning a stale app.
 
 For development, run the API and frontend in separate terminals:
 
@@ -24,18 +26,23 @@ python -m uvicorn backend.app:app --host 127.0.0.1 --port 8000
 npm run dev
 ```
 
-The development app is **http://127.0.0.1:5173**. `./start.ps1 -Development` starts a hidden API helper if port 8000 is free, then runs Vite in the current terminal. No cloud service or paid subscription is required. Data access failures are shown, with labelled cached fallbacks where available.
+The development app is **http://127.0.0.1:5173**. `./start.ps1 -Development` checks dependencies, starts a hidden API helper if port 8000 is free, then runs Vite in the current terminal. An existing Vite instance for this checkout is detected; dependency or Vite configuration changes require restarting that terminal. No cloud service or paid subscription is required. Data access failures are shown, with labelled cached fallbacks where available.
 
 ## What works
 
+- Connected scenario/gameweek canvas beside Lineup, Projections, Optimise, Plans and Fixtures, with a compact mobile branch selector and scrolling GW cards.
 - Current official players, prices, fixtures, news, defensive contributions and price signals.
 - Player forecasts through GW38, with per-event breakdowns, minutes scenarios, blank/double fixtures and provenance.
 - Per-gameweek conditional minutes and availability assumptions, including user-defined recovery schedules. Scheduled weeks take priority over provider/CSV points.
+- Per-gameweek player stat scenarios for expected points, xG, xA and clean-sheet probability, with the original forecast preserved for comparison. These human assumptions apply after provider/CSV calibration and carry an explicit scenario label.
 - Public FPL Form player forecasts for the next five GWs, blended at a configurable weight. Longer-range player adjustments follow future fixtures and fade toward the component baseline; direct and extrapolated weeks are labelled. Team inputs use near-term FPL Joe markets and the full-season Elevenify sheet.
 - Public FPL team-ID import, bank / FT adjustments, legal squad and formation checks, captain and vice-captain selection, bench swaps and bench priority. Expected totals include formation-aware autosubs and vice fallback under an explicit independent-appearance approximation.
 - Transfers across future GWs, profit-aware selling prices, hits, 5-FT carryover, and Wildcard / Free Hit / Bench Boost / Triple Captain planning. Free Hit restores the permanent squad and bank. Current prices are held fixed.
-- Named independent planning branches saved in browser storage; export/import of validated plan files.
-- A 1–14-week SciPy / HiGHS MILP solver with player locks/exclusions, budget, position and club limits, transfer costs, FT retention value, time decay and ownership preference. Solver results are reviewed before becoming a new branch.
+- Named independent planning branches and forecast/solver settings saved in browser storage; export/import of validated plan files, copyable backup text and paste import. After a GW advances, expired decisions are archived and remaining plans recover using saved permanent holdings, bank, FTs and purchase receipts. Legacy missing receipts have a labelled fallback.
+- A SciPy / HiGHS MILP solver through GW38, with global and per-week player locks/exclusions, captain locks, per-week transfer limits, budget, position and club limits, transfer costs, FT retention value, time decay and ownership preference. Solver results are reviewed before becoming a new branch. Long solves have a bounded time limit and disclose the feasible incumbent, candidate pool and optimality gap; a full-season request does not guarantee proven optimality.
+- Automatic Triple Captain/Bench Boost placement within a fixed validated plan, preserving manual chips and first/second-half allowances. Save the result as a separate branch. A separate bounded Wildcard/Free Hit search reoptimises sampled legal placement weeks against a frozen baseline, with progress, cancellation and validated branch adoption. It searches one chip allowance at a time; [search scope and API](docs/CHIP_STRATEGY_CONTRACT.md).
+- Timestamped fixture-market history and movement graphs, with source/time filters, explicit missing/single-snapshot states and local exports. Player scenarios do not change sourced market observations.
+- Plans insights for matched-GW holding comparisons, weaker starters, points components, expected bench/fallback contributions, FT/bank pressure and player/club exposure. Ownership uses official selection percentages; appearance estimates are independent and uncalibrated.
 - Background strategy stress tests with seeded assumptions, progress/cancellation, transfer/captain frequencies, JSON reports and separate validated branches. The variation is user-defined, not calibrated uncertainty.
 - Searchable/sortable/filterable player projections, watchlists, fixture heatmaps, captain comparisons, player history, and explicitly uncalibrated event simulations.
 - CSV model import/blending, CSV export, official transfer/price view, historical benchmark charts, immutable forecast snapshots and a prospective scoring command.
@@ -51,6 +58,8 @@ Point forecasts use `player_id,gameweek,expected_points`. FPL Review-style wide 
 A weight blends matched forecasts. With extrapolation enabled, later weeks carry a player-level adjustment through the future fixture schedule. The adjustment's default half-life is six GWs; both weight and half-life are configurable. Blank weeks remain zero. This is a declared heuristic, not a verified reconstruction of the provider's hidden model. CSV xMins columns are not silently treated as conditional minutes.
 
 Weekly scenarios use `player_id,gameweek,conditional_minutes,availability`. Supply at least one of duration (0–90) or availability (0–1); `0` remains a valid value. Availability requires a gameweek, and duplicate player/GW scenarios are rejected. `player_id,conditional_minutes` remains the legacy all-horizon format. Conditional duration is distinct from the model's unconditional `expected_minutes` export column. Scheduled weeks bypass provider/CSV blends; other weeks retain normal calibration. Uploaded points do not change underlying xG/xA components or simulation distributions. The app labels the imported adjustment.
+
+Player stat edits are separate planning scenarios. xG and xA are unconditional gameweek totals, including all fixtures in a double gameweek; clean-sheet probability applies to each fixture and still respects the player's 60-minute appearance state. Blank weeks stay zero, and positive points/attack edits cannot restore a player with zero appearance probability without a minutes/availability edit. A direct points edit appears as a separate adjustment in the scoring breakdown. Unedited player-weeks stay unchanged. API fields, ranges, provenance and per-week optimiser constraints are documented in [docs/BACKEND_CONTRACT.md](docs/BACKEND_CONTRACT.md).
 
 ## Evaluation
 
@@ -81,9 +90,10 @@ New snapshots are compressed `.json.gz` files under ignored `data/snapshots/`. B
 python -m pytest backend/tests -q
 npm test
 npm run build
+python tools/verify_forecast_coverage.py
 ```
 
-The checks cover squad legality, scoring, sale rounding, transfer hits, FT caps, Free Hit restoration, exclusions, bank rejection, server recomputation, autosub formation/priority, captain fallback, provider extrapolation, CSV compatibility and strictly pre-deadline evaluation.
+The checks cover squad legality, scoring, sale rounding, transfer hits, FT caps, Free Hit restoration, weekly constraints, stat scenarios, chip placement, saved-state recovery, source blending and strictly pre-deadline evaluation. The separate coverage script checks every current player in every remaining GW, fixture membership, component totals, blank weeks and provenance against the running API; it writes an ignored report under `data/`.
 
 Research and build plan: [docs/PLAN.md](docs/PLAN.md). Model derivation and limits: [docs/MODEL.md](docs/MODEL.md). Provider access findings: [docs/PROVIDER_ACCESS.md](docs/PROVIDER_ACCESS.md). Current handover and verification: [docs/STATUS.md](docs/STATUS.md).
 

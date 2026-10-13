@@ -10,6 +10,7 @@ import type {
 } from "./types";
 import type { SolverSettings } from "./Views";
 import { stressRunning as running, watchSensitivity } from "./sensitivity";
+import { solverSettingsForHorizon } from "./planningPersistence";
 
 const storageKey = "open-fpl-sensitivity-job";
 
@@ -73,22 +74,25 @@ export function SensitivityView({
 
   async function start() {
     if (!plan) return;
+    const startGW = plan.weeks[0]?.gw ?? data.next_gw;
+    const horizon = Math.min(settings.horizon, 39 - startGW);
     setSending(true);
     setError("");
     try {
       const result = await api<SensitivityJob>("/sensitivity", {
         ...forecast,
-        ...strategy,
+        ...solverSettingsForHorizon(strategy, startGW, horizon),
         ...settings,
+        horizon,
         squad: plan.base_squad,
         bank: plan.base_bank,
         free_transfers: plan.free_transfers,
         purchase_prices: plan.purchase_prices,
         used_chips: plan.used_chips ?? [],
-        start_gw: data.next_gw,
+        start_gw: startGW,
         name: plan.name,
         chips: Object.fromEntries(
-          plan.weeks.map((w) => [String(w.gw), w.chip]),
+          plan.weeks.filter((w) => w.gw >= startGW && w.gw < startGW + horizon).map((w) => [String(w.gw), w.chip]),
         ),
       });
       setJob(result);
@@ -315,7 +319,7 @@ export function SensitivityView({
                 <b>Reference plan</b>
                 <span>
                   {fmt(job.baseline_value ?? 0)} discounted net xP · gap{" "}
-                  {fmt(job.baseline.gap * 100)}%
+                  {job.baseline.gap === null ? "unknown" : `${fmt(job.baseline.gap * 100)}%`}
                 </span>
                 <small>
                   {job.baseline.weeks[0].transfers_in

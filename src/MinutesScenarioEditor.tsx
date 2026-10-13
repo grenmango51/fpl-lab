@@ -70,11 +70,9 @@ export function MinutesScenarioEditor({
   }
   return (
     <div className="minutes-schedule-editor">
-      <h3>Your minutes assumptions</h3>
+      <h3>Edit minutes</h3>
       <p className="help-text">
-        Set match duration and, optionally, your own availability estimate. A
-        return from injury is your assumption; it is not inferred from the news.
-        The same settings apply to each fixture in a double.
+        Your duration and availability assumptions override these weeks.
       </p>
       <div className="field-grid">
         <label>
@@ -140,16 +138,10 @@ export function MinutesScenarioEditor({
           />
         </label>
       )}
-      <p className="help-text">
-        {ownAvailability
-          ? "Your percentage replaces the official availability for these weeks."
-          : "Official availability is retained. Duration alone cannot restore a player marked unavailable."}{" "}
-        Manual gameweek assumptions take priority over provider and uploaded
-        point blends.
-      </p>
+      <details className="compact-details minutes-notes"><summary>Minutes notes</summary><p className="help-text">Duration is conditional on appearance and applies per fixture in a double. Official availability remains unless you replace it. Injury recovery is your assumption. These edits take priority over point blends.</p></details>
       <div className="button-row">
         <button className="button primary small" onClick={apply}>
-          Save minutes assumption
+          Save minutes
         </button>
         <button className="button small" onClick={onReset}>
           Use model

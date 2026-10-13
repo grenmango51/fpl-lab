@@ -1,0 +1,172 @@
+.chip-strategy {
+  border: 1px solid var(--border, #233044);
+  border-radius: 7px;
+  margin: 12px 0;
+  background: #0c1422;
+}
+.chip-strategy > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 13px;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+.chip-strategy > summary span {
+  color: #92a1b8;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+.chip-strategy > summary small {
+  margin-left: auto;
+  color: #ff895b;
+}
+.chip-strategy-body {
+  padding: 0 13px 13px;
+}
+.chip-strategy-body > p {
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: #a5b2c6;
+}
+.chip-strategy-controls {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.chip-strategy-controls label,
+.chip-search-limits label {
+  font-size: 11px;
+}
+.chip-search-limits {
+  margin: 10px 0;
+}
+.chip-search-limits .field-grid {
+  margin: 10px 0;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.chip-search-limits small,
+.chip-strategy-run > small,
+.chip-strategy-result > small {
+  font-size: 11px;
+  color: #899ab2;
+}
+.chip-strategy-run {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 10px 0;
+}
+.chip-strategy-error {
+  color: #ffae9a !important;
+  margin: 10px 0 !important;
+  font-size: 12px;
+}
+.chip-strategy-result {
+  margin-top: 14px;
+  padding-top: 13px;
+  border-top: 1px solid #233044;
+}
+.chip-strategy-result > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.chip-strategy-result > header b {
+  font-size: 13px;
+}
+.chip-strategy-result > header small {
+  display: block;
+  margin-top: 4px;
+  color: #91a1b9;
+  font-size: 11px;
+}
+.chip-strategy-result progress {
+  width: 100%;
+  height: 5px;
+  margin: 12px 0 5px;
+  accent-color: #ff895b;
+}
+.chip-strategy-coverage {
+  font-size: 11px;
+  color: #91a1b9;
+  margin: 5px 0 10px;
+}
+.chip-strategy-best {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 6px 16px;
+  padding: 12px;
+  background: #151f2d;
+  border-radius: 5px;
+  margin: 10px 0;
+}
+.chip-strategy-best > b {
+  font-size: 13px;
+}
+.chip-strategy-best > strong {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  font-size: 22px;
+  color: #ff895b;
+  text-align: right;
+}
+.chip-strategy-best > strong small {
+  display: block;
+  margin-top: 3px;
+  font-size: 10px;
+  font-weight: 400;
+  color: #98a7bd;
+  max-width: 150px;
+}
+.chip-strategy-best > span {
+  font-size: 11px;
+  color: #98a7bd;
+}
+.chip-strategy-table {
+  font-size: 11px;
+  min-width: 430px;
+}
+.chip-strategy-table td,
+.chip-strategy-table th {
+  padding: 9px 8px;
+  white-space: nowrap;
+}
+.chip-strategy-table .best-candidate td {
+  background: #ff895b0c;
+  color: #ffd0b8;
+}
+.chip-strategy-actions {
+  display: flex;
+  gap: 7px;
+  margin: 12px 0 6px;
+  flex-wrap: wrap;
+}
+.chip-strategy-method {
+  margin-top: 12px;
+}
+.chip-strategy-method p {
+  font-size: 11px;
+  color: #9aacc3;
+  line-height: 1.6;
+}
+@media (max-width: 480px) {
+  .chip-search-limits .field-grid {
+    grid-template-columns: 1fr;
+  }
+  .chip-strategy-best {
+    grid-template-columns: 1fr;
+  }
+  .chip-strategy-best > strong {
+    grid-column: 1;
+    grid-row: auto;
+    text-align: left;
+  }
+  .chip-strategy-best > strong small {
+    max-width: none;
+  }
+}

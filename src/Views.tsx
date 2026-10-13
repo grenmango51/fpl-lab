@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Search,
   SlidersHorizontal,
@@ -33,6 +33,8 @@ import { Badge, Busy, LineChart, Pitch, PlayerName, Stat } from "./components";
 import { ProspectiveView } from "./ProspectiveView";
 import { LeadTimeView } from "./LeadTimeView";
 import { alignPlanGameweeks } from "./planComparison";
+import { PlanInsights } from "./PlanInsights.tsx";
+import "./optimise-review.css";
 
 type BaseProps = {
   data: Bootstrap;
@@ -41,326 +43,7 @@ type BaseProps = {
   watch: number[];
   onWatch: (id: number) => void;
 };
-export function ProjectionsView({
-  data,
-  gw,
-  onDetail,
-  watch,
-  onWatch,
-  onCSV,
-  onExport,
-}: { onCSV: () => void; onExport: () => void } & BaseProps) {
-  const [query, setQuery] = useState(""),
-    [position, setPosition] = useState("ALL"),
-    [team, setTeam] = useState(0),
-    [budget, setBudget] = useState(20),
-    [minMins, setMinMins] = useState(0),
-    [horizon, setHorizon] = useState(6),
-    [watchOnly, setWatchOnly] = useState(false),
-    [sort, setSort] = useState("total"),
-    [descending, setDescending] = useState(true),
-    [page, setPage] = useState(0);
-  const weeks = data.gameweeks.filter((w) => w >= gw).slice(0, horizon);
-  const total = (p: Player) => weeks.reduce((n, w) => n + xp(p, w), 0);
-  const value = (p: Player, key: string) =>
-    key === "total"
-      ? total(p)
-      : key === "price"
-        ? p.price
-        : key === "ownership"
-          ? p.ownership
-          : key === "xmins"
-            ? p.xmins
-            : key === "value"
-              ? total(p) / p.price
-              : key.startsWith("gw")
-                ? xp(p, Number(key.slice(2)))
-                : 0;
-  const rows = useMemo(
-    () =>
-      data.players
-        .filter(
-          (p) =>
-            (position === "ALL" || p.position === position) &&
-            (!team || p.team === team) &&
-            p.price <= budget &&
-            p.xmins >= minMins &&
-            (!watchOnly || watch.includes(p.id)) &&
-            `${p.name} ${p.full_name} ${p.team_name}`
-              .toLowerCase()
-              .includes(query.toLowerCase()),
-        )
-        .sort(
-          (a, b) => (value(a, sort) - value(b, sort)) * (descending ? -1 : 1),
-        ),
-    [
-      data,
-      position,
-      team,
-      budget,
-      minMins,
-      watchOnly,
-      watch,
-      query,
-      sort,
-      descending,
-      horizon,
-      gw,
-    ],
-  );
-  const sortHeader = (label: string, key: string) => (
-    <button
-      onClick={() => {
-        setSort(key);
-        setDescending(sort === key ? !descending : true);
-      }}
-    >
-      {label}
-      {sort === key ? (
-        <ChevronDown size={12} className={!descending ? "rotate" : ""} />
-      ) : (
-        <ArrowDownUp size={11} />
-      )}
-    </button>
-  );
-  return (
-    <>
-      <div className="view-heading compact-view-heading">
-        <div>
-          <h2>Projections</h2>
-        </div>
-        <div className="button-row">
-          <button className="button" onClick={onCSV}>
-            <Upload size={15} />
-            Import CSV
-          </button>
-          <button className="button" onClick={onExport}>
-            <Download size={15} />
-            Export CSV
-          </button>
-        </div>
-      </div>
-      <div className="table-toolbar">
-        <div className="search-box">
-          <Search size={16} />
-          <input
-            aria-label="Search players"
-            placeholder="Search players or clubs…"
-            value={query}
-            onChange={(e) => {
-              setQuery(e.target.value);
-              setPage(0);
-            }}
-          />
-        </div>
-        <div className="segmented">
-          {["ALL", "GKP", "DEF", "MID", "FWD"].map((pos) => (
-            <button
-              key={pos}
-              className={pos === position ? "active" : ""}
-              onClick={() => {
-                setPosition(pos);
-                setPage(0);
-              }}
-            >
-              {pos === "ALL" ? "All" : pos}
-            </button>
-          ))}
-        </div>
-        <button
-          className={`button small ${watchOnly ? "selected" : ""}`}
-          onClick={() => {
-            setWatchOnly(!watchOnly);
-            setPage(0);
-          }}
-        >
-          <Star size={14} />
-          Watchlist
-        </button>
-      </div>
-      <div className="filter-row">
-        <label>
-          Club
-          <select
-            value={team}
-            onChange={(e) => {
-              setTeam(Number(e.target.value));
-              setPage(0);
-            }}
-          >
-            <option value={0}>All clubs</option>
-            {data.teams.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Max price
-          <select
-            value={budget}
-            onChange={(e) => {
-              setBudget(Number(e.target.value));
-              setPage(0);
-            }}
-          >
-            {[20, 15, 12, 10, 8, 7, 6, 5, 4.5].map((v) => (
-              <option key={v} value={v}>
-                {v === 20 ? "Any price" : money(v)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Expected minutes
-          <select
-            value={minMins}
-            onChange={(e) => {
-              setMinMins(Number(e.target.value));
-              setPage(0);
-            }}
-          >
-            {[0, 30, 45, 60, 75].map((v) => (
-              <option key={v} value={v}>
-                {v === 0 ? "Any minutes" : `${v}+ minutes`}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Forecast horizon
-          <select
-            value={horizon}
-            onChange={(e) => setHorizon(Number(e.target.value))}
-          >
-            {[...new Set([1, 3, 6, 10, 14, 28, data.gameweeks.length])]
-              .filter((v) => v <= data.gameweeks.length)
-              .map((v) => (
-                <option key={v} value={v}>
-                  {v} gameweek{v > 1 ? "s" : ""}
-                </option>
-              ))}
-          </select>
-        </label>
-        <span className="result-count">
-          {rows.length} players <span>·</span> GW{weeks[0]}–{weeks.at(-1)}
-        </span>
-      </div>
-      <div className="table-container">
-        <table className="data-table projections-table">
-          <thead>
-            <tr>
-              <th></th>
-              <th className="name-col">PLAYER</th>
-              <th>{sortHeader("PRICE", "price")}</th>
-              <th>{sortHeader("OWNED", "ownership")}</th>
-              <th>{sortHeader("xMINS", "xmins")}</th>
-              {weeks.slice(0, 8).map((w) => (
-                <th key={w}>{sortHeader(`GW${w}`, `gw${w}`)}</th>
-              ))}
-              <th className="total-col">{sortHeader("TOTAL", "total")}</th>
-              <th>{sortHeader("xP / £m", "value")}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.slice(page * 40, page * 40 + 40).map((p) => (
-              <tr key={p.id}>
-                <td>
-                  <button
-                    className={`icon-button ${watch.includes(p.id) ? "starred" : ""}`}
-                    onClick={() => onWatch(p.id)}
-                    aria-label={`Watch ${p.name}`}
-                  >
-                    <Star
-                      size={14}
-                      fill={watch.includes(p.id) ? "currentColor" : "none"}
-                    />
-                  </button>
-                </td>
-                <td>
-                  <PlayerName player={p} onClick={() => onDetail(p.id)} />
-                </td>
-                <td className="numeric">£{fmt(p.price)}</td>
-                <td className="muted numeric">{fmt(p.ownership)}%</td>
-                <td className="numeric">
-                  {fmt(p.xmins, 0)}
-                  {p.overridden && <i className="override-dot" />}
-                </td>
-                {weeks.slice(0, 8).map((w) => (
-                  <td key={w}>
-                    <button
-                      className={`forecast-cell points-level-${Math.min(4, Math.floor(xp(p, w) / 2))}`}
-                      onClick={() => onDetail(p.id)}
-                      title={
-                        p.gw[String(w)]?.prediction_source
-                          ? `${p.gw[String(w)].prediction_source!.name} · ${p.gw[String(w)].prediction_source!.kind} · ${(p.gw[String(w)].prediction_source!.weight * 100).toFixed(0)}% influence`
-                          : "Component model"
-                      }
-                    >
-                      <b>
-                        {fmt(xp(p, w))}
-                        {p.gw[String(w)]?.prediction_source && (
-                          <sup className="source-mark">
-                            {p.gw[String(w)].prediction_source!.kind ===
-                            "provider"
-                              ? "P"
-                              : "E"}
-                          </sup>
-                        )}
-                      </b>
-                      <small>
-                        {p.gw[String(w)]?.fixtures
-                          .map((f) => `${f.opponent}${f.home ? "" : " (A)"}`)
-                          .join(" + ") || "—"}
-                      </small>
-                    </button>
-                  </td>
-                ))}
-                <td className="total-col numeric">{fmt(total(p))}</td>
-                <td className="muted numeric">{fmt(total(p) / p.price)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {rows.length === 0 && (
-          <div className="inline-empty">No players match these filters.</div>
-        )}
-      </div>
-      <div className="table-footer">
-        <details className="compact-details">
-          <summary>Forecast notes</summary>
-          <p>
-            P: provider blend · E: extrapolated. Probabilities are uncalibrated.
-            Select a player for sources and components.
-          </p>
-        </details>
-        <div>
-          <span>
-            {Math.min(rows.length, page * 40 + 1)}–
-            {Math.min(rows.length, (page + 1) * 40)} of {rows.length}
-          </span>
-          <button
-            className="icon-button"
-            disabled={page === 0}
-            onClick={() => setPage(page - 1)}
-            aria-label="Previous page"
-          >
-            <ChevronLeft size={16} />
-          </button>
-          <button
-            className="icon-button"
-            disabled={(page + 1) * 40 >= rows.length}
-            onClick={() => setPage(page + 1)}
-            aria-label="Next page"
-          >
-            <ChevronRight size={16} />
-          </button>
-        </div>
-      </div>
-    </>
-  );
-}
+export { ProjectionsView } from "./ProjectionExplorer";
 
 export function FixturesView({ data, gw }: { data: Bootstrap; gw: number }) {
   const [metric, setMetric] = useState("difficulty"),
@@ -524,6 +207,10 @@ export type SolverSettings = {
   seconds: number;
   locked: number[];
   excluded: number[];
+  transfer_limits?: Record<string, number>;
+  locked_by_gw?: Record<string, number[]>;
+  excluded_by_gw?: Record<string, number[]>;
+  captain_locks?: Record<string, number>;
 };
 export function OptimiseView({
   data,
@@ -538,6 +225,8 @@ export function OptimiseView({
   onDetail,
   resultFresh,
   baselinePlan,
+  compact = false,
+  onPreviewGW,
 }: {
   data: Bootstrap;
   plan: Plan | null;
@@ -551,28 +240,53 @@ export function OptimiseView({
   onDetail: (id: number) => void;
   resultFresh?: boolean;
   baselinePlan?: Plan | null;
+  compact?: boolean;
+  onPreviewGW?: (gw: number) => void;
 }) {
   const [query, setQuery] = useState("");
+  const [preset, setPreset] = useState("Default");
+  const [constraintScope, setConstraintScope] = useState("all");
+  const [ruleGW, setRuleGW] = useState(gw);
   const [constraint, setConstraint] = useState<"locked" | "excluded">("locked");
   const [selectedGw, setSelectedGw] = useState(gw);
+  const [reviewing, setReviewing] = useState(Boolean(result));
+  const reviewHeading = useRef<HTMLDivElement>(null);
   useEffect(() => {
     setSelectedGw(result?.weeks[0]?.gw ?? gw);
   }, [result, gw]);
+  useEffect(() => {
+    setReviewing(Boolean(result));
+    if (result) reviewHeading.current?.scrollIntoView({ block: "start" });
+  }, [result]);
   const change = (key: keyof SolverSettings, value: number) =>
     onSettings({ ...settings, [key]: value });
   const lookup = new Map(data.players.map((p) => [p.id, p]));
-  const setConstraintPlayer = (id: number) =>
-    onSettings({
-      ...settings,
-      [constraint]: settings[constraint].includes(id)
-        ? settings[constraint].filter((v) => v !== id)
-        : [...settings[constraint], id],
-    });
+  const scopedKey = constraint === "locked" ? "locked_by_gw" : "excluded_by_gw";
+  const constraintIds = constraintScope === "all" ? settings[constraint] : settings[scopedKey]?.[constraintScope] ?? [];
+  const setConstraintPlayer = (id: number) => {
+    const ids = constraintIds.includes(id) ? constraintIds.filter(value => value !== id) : [...constraintIds, id];
+    if (constraintScope === "all") onSettings({...settings,[constraint]:ids});
+    else onSettings({...settings,[scopedKey]:{...settings[scopedKey],[constraintScope]:ids}});
+  };
+  const presets: Record<string, Partial<SolverSettings>> = {
+    Default: {max_transfers:2,decay:.9,ft_value:1.5,bench_weight:.08,risk:0},
+    "High Risk": {max_transfers:4,decay:.88,ft_value:.75,bench_weight:.04,risk:-.25},
+    "Low Risk": {max_transfers:1,decay:.93,ft_value:2,bench_weight:.15,risk:.25},
+    Optimistic: {max_transfers:3,decay:1,ft_value:1,bench_weight:.04,risk:0},
+    Safe: {max_transfers:1,decay:.95,ft_value:2.5,bench_weight:.2,risk:.2},
+  };
   const remainingGameweeks = data.gameweeks.filter((week) => week >= gw).length;
   const effectiveHorizon = Math.max(
     1,
     Math.min(settings.horizon, remainingGameweeks),
   );
+  useEffect(() => {
+    const solvedWeeks = data.gameweeks.filter((week) => week >= gw).slice(0, effectiveHorizon);
+    if (!solvedWeeks.includes(ruleGW)) setRuleGW(solvedWeeks[0] ?? gw);
+    if (constraintScope !== "all" && !solvedWeeks.includes(Number(constraintScope))) {
+      setConstraintScope("all");
+    }
+  }, [gw, effectiveHorizon, data.gameweeks, ruleGW, constraintScope]);
   const previewWeeks = result?.weeks.length
     ? result.weeks
     : (plan?.weeks.filter((week) => week.gw >= gw).slice(0, effectiveHorizon) ??
@@ -598,21 +312,20 @@ export function OptimiseView({
     baselinePoints === null ? null : resultPoints! - baselinePoints;
   return (
     <>
-      <div className="view-heading compact-view-heading">
+      <div className="view-heading compact-view-heading" ref={reviewHeading}>
         <div>
           <h2>Optimise</h2>
         </div>
+        {result && <div className="segmented"><button className={reviewing ? "active" : ""} onClick={() => setReviewing(true)}>Review draft</button><button className={!reviewing ? "active" : ""} onClick={() => setReviewing(false)}>Settings</button></div>}
         <span className="engine-label">
           <ShieldCheck size={16} />
           Squad rules checked
         </span>
       </div>
-      <div className="solver-layout solver-with-preview">
+      <div className={`solver-layout solver-with-preview ${reviewing && result ? "solver-reviewing" : ""}`}>
         <section className="panel solver-settings">
-          <div className="panel-heading">
-            <SlidersHorizontal size={16} />
-            <h3>Settings</h3>
-          </div>
+          <details className="solver-section" open><summary>PRESETS</summary><div className="solver-presets">{[...Object.keys(presets),"Custom"].map(name => <button key={name} className={preset===name?"active":""} onClick={()=>{setPreset(name);if(presets[name])onSettings({...settings,...presets[name]});}}>{name}</button>)}</div><small className="preset-caption">Ownership, transfer value and bench weighting</small></details>
+          <div className="panel-heading"><SlidersHorizontal size={16}/><h3>Horizon</h3></div>
           <div className="field-grid solver-primary-controls">
             <label>
               Horizon
@@ -620,7 +333,7 @@ export function OptimiseView({
                 value={effectiveHorizon}
                 onChange={(e) => change("horizon", +e.target.value)}
               >
-                {[...new Set([1, 2, 3, 4, 5, 6, 8, 10, 14, effectiveHorizon])]
+                {[...new Set([1,2,3,4,5,6,8,10,14,20,28,remainingGameweeks,effectiveHorizon])]
                   .filter((v) => v <= remainingGameweeks)
                   .sort((a, b) => a - b)
                   .map((v) => (
@@ -636,7 +349,7 @@ export function OptimiseView({
                 value={settings.max_transfers}
                 onChange={(e) => change("max_transfers", +e.target.value)}
               >
-                {[0, 1, 2, 3, 5].map((v) => (
+                {[0, 1, 2, 3, 4, 5].map((v) => (
                   <option value={v} key={v}>
                     {v} transfers
                   </option>
@@ -657,6 +370,7 @@ export function OptimiseView({
             <LockKeyhole size={15} />
             <h3>Players</h3>
           </div>
+          <label className="constraint-scope-label">Apply to<select aria-label="Player constraint gameweek" value={constraintScope} onChange={event=>setConstraintScope(event.target.value)}><option value="all">Every solved GW</option>{data.gameweeks.filter(week=>week>=gw).slice(0,effectiveHorizon).map(week=><option key={week} value={week}>GW{week}</option>)}</select></label>
           <div className="segmented">
             <button
               className={constraint === "locked" ? "active" : ""}
@@ -672,7 +386,7 @@ export function OptimiseView({
             </button>
           </div>
           <div className="constraint-tags">
-            {settings[constraint].map((id) => (
+            {constraintIds.map((id) => (
               <button key={id} onClick={() => setConstraintPlayer(id)}>
                 {lookup.get(id)?.name}
                 <X size={12} />
@@ -710,8 +424,9 @@ export function OptimiseView({
                 ))}
             </div>
           )}
+          <details className="solver-section week-rules" open><summary>GAMEWEEK RULES</summary><div className="field-grid"><label>Gameweek<select aria-label="Rule gameweek" value={ruleGW} onChange={event=>setRuleGW(+event.target.value)}>{data.gameweeks.filter(week=>week>=gw).slice(0,effectiveHorizon).map(week=><option key={week} value={week}>GW{week}</option>)}</select></label><label>Transfers used<select aria-label="Gameweek transfer limit" value={settings.transfer_limits?.[String(ruleGW)]??"auto"} onChange={event=>{const next={...settings.transfer_limits};if(event.target.value==="auto")delete next[String(ruleGW)];else next[String(ruleGW)]=+event.target.value;onSettings({...settings,transfer_limits:next});}}><option value="auto">Auto</option>{[0,1,2,3,4,5,10,15].map(value=><option key={value} value={value}>{value===0?"Roll (0)":`Max ${value}`}</option>)}</select></label><label className="rule-captain-label">Captain<select aria-label="Locked captain gameweek" value={settings.captain_locks?.[String(ruleGW)]??"auto"} onChange={event=>{const next={...settings.captain_locks};if(event.target.value==="auto")delete next[String(ruleGW)];else next[String(ruleGW)]=+event.target.value;onSettings({...settings,captain_locks:next});}}><option value="auto">Auto</option>{[...data.players].sort((a,b)=>xp(b,ruleGW)-xp(a,ruleGW)).filter(player=>xp(player,ruleGW)>0).map(player=><option value={player.id} key={player.id}>{player.name} · {player.team_short}</option>)}</select></label></div><div className="rule-receipts">{Object.entries(settings.transfer_limits??{}).map(([week,limit])=><span key={`t${week}`}>GW{week}: {limit===0?"roll":`${limit} max transfers`}</span>)}{Object.entries(settings.captain_locks??{}).map(([week,id])=><span key={`c${week}`}>GW{week}: captain {lookup.get(id)?.name}</span>)}</div><button className="button small" onClick={()=>onSettings({...settings,transfer_limits:{},locked_by_gw:{},excluded_by_gw:{},captain_locks:{}})}>Clear weekly rules</button></details>
           <details className="compact-details solver-advanced">
-            <summary>Advanced</summary>
+            <summary>OBJECTIVE</summary>
             <div className="field-grid">
               <label>
                 FT value
@@ -861,7 +576,7 @@ export function OptimiseView({
                     role="tab"
                     aria-selected={selectedWeek.gw === week.gw}
                     className={selectedWeek.gw === week.gw ? "active" : ""}
-                    onClick={() => setSelectedGw(week.gw)}
+                    onClick={() => {setSelectedGw(week.gw);onPreviewGW?.(week.gw);}}
                     title={
                       week.chip === "none"
                         ? `${fmt(week.net_points)} xP`
@@ -885,14 +600,14 @@ export function OptimiseView({
                     <small> xP</small>
                   </strong>
                 </div>
-                <Pitch
+                {result ? <Pitch
                   week={selectedWeek}
                   players={data.players}
                   selected={null}
                   onSelect={onDetail}
                   onDetail={onDetail}
                   onBenchSwap={onDetail}
-                />
+                /> : null}
                 <div className="result-transfers">
                   {selectedWeek.transfers_in.length ? (
                     selectedWeek.transfers_in.map((id, index) => (
@@ -932,7 +647,7 @@ export function OptimiseView({
                   <details className="assumptions compact-details">
                     <summary>Solver details</summary>
                     <p>
-                      {result.status} · gap {fmt(result.gap * 100, 1)}% ·{" "}
+                      {result.status} · gap {result.gap === null ? "unknown" : `${fmt(result.gap * 100, 1)}%`} ·{" "}
                       {result.candidate_count} candidates
                     </p>
                     <p>
@@ -980,6 +695,9 @@ export function AnalysisView({
   onSnapshot,
   prospective,
   onScore,
+  selectedGW,
+  onDetail,
+  onLock,
 }: {
   data: Bootstrap;
   plans: Plan[];
@@ -988,6 +706,9 @@ export function AnalysisView({
   onSnapshot: () => void;
   prospective: Prospective | null;
   onScore: () => void;
+  selectedGW: number;
+  onDetail: (id: number) => void;
+  onLock: (id: number) => void;
 }) {
   const [section, setSection] = useState<"overview" | "benchmarks" | "sources">(
     "overview",
@@ -1003,7 +724,7 @@ export function AnalysisView({
     <>
       <div className="view-heading compact-view-heading">
         <div>
-          <h2>Analysis</h2>
+          <h2>Plans</h2>
         </div>
         <div className="toolbar-actions">
           <button className="button" onClick={onSnapshot}>
@@ -1039,6 +760,7 @@ export function AnalysisView({
           </button>
         ))}
       </div>
+      {section === "overview" && active ? <PlanInsights data={data} plan={active} selectedGW={selectedGW} onDetail={onDetail} onLock={onLock}/> : null}
       {section === "overview" &&
         (comparison.gameweeks.length > 0 ? (
           <section className="panel analysis-plan">

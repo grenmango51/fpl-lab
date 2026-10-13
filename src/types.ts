@@ -29,8 +29,18 @@ export type Forecast = {
     availability: number;
     label: string;
   };
+  stat_scenario?: StatScenario & {
+    label: string;
+    source: string;
+    base: {
+      expected_points: number;
+      xg: number;
+      xa: number;
+      clean_sheet_probabilities: number[];
+    };
+  };
   prediction_source?: {
-    kind: "provider" | "extrapolated";
+    kind: "provider" | "extrapolated" | "user-scenario";
     name: string;
     weight: number;
     base_points: number;
@@ -45,6 +55,13 @@ export type MinutesScenario = {
   availability?: number;
 };
 export type MinutesSchedule = Record<string, Record<string, MinutesScenario>>;
+export type StatScenario = {
+  expected_points?: number;
+  xg?: number;
+  xa?: number;
+  clean_sheet_probability?: number;
+};
+export type StatSchedule = Record<string, Record<string, StatScenario>>;
 export type Player = {
   id: number;
   code: number;
@@ -216,6 +233,10 @@ export type Week = {
   vice_points?: number;
   transfers_in: number[];
   transfers_out: number[];
+  // Server receipts after this decision; Free Hit retains permanent holdings.
+  permanent_squad?: number[];
+  permanent_bank?: number;
+  purchase_prices?: Record<string, number>;
 };
 export type Plan = {
   id: string;
@@ -229,15 +250,26 @@ export type Plan = {
   entry_id?: number;
   created_at: string;
   used_chips?: { chip: Chip; gw: number }[];
+  history_weeks?: Week[];
 };
 export type SolveResult = {
   weeks: Week[];
   objective: number;
   status: string;
-  gap: number;
+  gap: number | null;
   candidate_count: number;
   pool_count: number;
   assumptions: string[];
+  actual_horizon?: number;
+  requested_horizon?: number;
+  solve_seconds?: number;
+  variable_count?: number;
+  constraint_count?: number;
+  engine?: string;
+  warm_start?: string;
+  warm_start_seconds?: number;
+  joint_solve_seconds?: number;
+  native_status?: string;
 };
 export type SensitivitySettings = {
   horizon: number;

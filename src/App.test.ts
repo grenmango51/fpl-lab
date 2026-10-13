@@ -86,6 +86,7 @@ describe("saved planning branches", () => {
       plans: [],
       activeId: "",
       gw: 6,
+      notices: ["Unavailable saved branches are archived; remaining branches were restored."],
     });
   });
 });

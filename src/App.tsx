@@ -50,6 +50,7 @@ import type {
   Prospective,
   SensitivityJob,
   MinutesSchedule,
+  StatSchedule,
 } from "./types";
 import {
   api,
@@ -87,15 +88,33 @@ import type { SolverSettings } from "./Views";
 import { SensitivityView } from "./SensitivityView";
 import { MinutesScenarioEditor } from "./MinutesScenarioEditor";
 import { ReferenceView } from "./ReferenceView";
+import { PlannerBoard } from "./PlannerBoard";
+import { PlanTree } from "./PlanTree";
+import { TeamOverview } from "./TeamOverview";
+import { StatScenarioEditor } from "./StatScenarioEditor";
+import { ChipPlanner } from "./ChipPlanner";
+import { FixtureMarkets } from "./FixtureMarkets";
+import { ChipStrategyView, type ChipStrategyJob } from "./ChipStrategyView";
+import { MarketMovement } from "./MarketMovement";
+import {
+  createPlanExport,
+  defaultSolverSettings,
+  loadPlanningState,
+  planValidationRequest,
+  preparePlanImport,
+  solverSettingsForHorizon,
+} from "./planningPersistence";
+import type { ForecastConfiguration } from "./planningPersistence";
+export { restorePlanningState } from "./planningPersistence";
 
 type Tab =
   "lineup" | "projections" | "optimise" | "fixtures" | "analysis" | "market";
 const tabs: { id: Tab; label: string; icon: typeof Users }[] = [
-  { id: "lineup", label: "Planner", icon: Users },
+  { id: "lineup", label: "Lineup", icon: Users },
   { id: "projections", label: "Projections", icon: LayoutGrid },
   { id: "optimise", label: "Optimise", icon: Sparkles },
   { id: "fixtures", label: "Fixtures", icon: CalendarDays },
-  { id: "analysis", label: "Analysis", icon: Activity },
+  { id: "analysis", label: "Plans", icon: Activity },
   { id: "market", label: "Market", icon: TrendingUp },
 ];
 const storageKey = "open-fpl-plans-v1";
@@ -116,38 +135,14 @@ type OptimiseContext = {
   prices: Record<string, number>;
 };
 
-export function restorePlanningState(
-  saved: Plan[],
-  activeId: string,
-  forecast: {
-    next_gw: number;
-    gameweeks: number[];
-    players: Pick<Player, "id">[];
-  },
-) {
-  const gameweeks = new Set(forecast.gameweeks);
-  const playerIds = new Set(forecast.players.map((player) => player.id));
-  const plans = saved.filter(
-    (plan) =>
-      plan.weeks.some((week) => gameweeks.has(week.gw)) &&
-      plan.base_squad.length === 15 &&
-      new Set(plan.base_squad).size === 15 &&
-      plan.base_squad.every((id) => playerIds.has(id)),
-  );
-  const active = plans.find((plan) => plan.id === activeId) ?? plans[0];
-  const selectedGW = active?.weeks.some((week) => week.gw === forecast.next_gw)
-    ? forecast.next_gw
-    : (active?.weeks.find((week) => gameweeks.has(week.gw))?.gw ??
-      forecast.next_gw);
-  return { plans, activeId: active?.id ?? "", gw: selectedGW };
-}
-
 export default function App() {
   const [data, setData] = useState<Bootstrap | null>(null),
     [loadError, setLoadError] = useState(""),
     [loading, setLoading] = useState(true),
     [tab, setTab] = useState<Tab>("lineup");
-  const [marketMode, setMarketMode] = useState("prices");
+  const [marketMode, setMarketMode] = useState("fixtures");
+  const [backupText, setBackupText] = useState("");
+  const [importText, setImportText] = useState("");
   const [plans, setPlans] = useState<Plan[]>(() =>
       stored<Plan[]>(storageKey, []),
     ),
@@ -159,7 +154,7 @@ export default function App() {
   const [overrides, setOverrides] = useState<Record<string, number>>(() =>
       stored("open-fpl-minutes", {}),
     ),
-    [useMarket, setUseMarket] = useState(true),
+    [useMarket, setUseMarket] = useState(() => stored("open-fpl-market", true)),
     [useProvider, setUseProvider] = useState(() =>
       stored("open-fpl-provider", true),
     ),
@@ -182,6 +177,10 @@ export default function App() {
   const [minutesSchedule, setMinutesSchedule] = useState<MinutesSchedule>(() =>
     stored("open-fpl-minutes-schedule", {}),
   );
+  const [statSchedule, setStatSchedule] = useState<StatSchedule>(() => stored("open-fpl-stat-schedule", {}));
+  const [detailTab, setDetailTab] = useState("edit");
+  const [previewingDraft, setPreviewingDraft] = useState(false);
+  const [draftGW, setDraftGW] = useState(0);
   const [modal, setModal] = useState<
       "team" | "settings" | "csv" | "help" | null
     >(null),
@@ -199,32 +198,24 @@ export default function App() {
     ),
     [evalData, setEvalData] = useState<Evaluation | null>(null),
     [prospective, setProspective] = useState<Prospective | null>(null);
-  const [teamId, setTeamId] = useState(""),
+  const [teamId, setTeamId] = useState("2200722"),
     [teamBank, setTeamBank] = useState(0),
     [teamFT, setTeamFT] = useState(1),
     [csvError, setCsvError] = useState(""),
     [csvWeight, setCsvWeight] = useState(50);
-  const [settings, setSettings] = useState<SolverSettings>({
-      horizon: 5,
-      max_transfers: 2,
-      decay: 0.9,
-      ft_value: 1.5,
-      bench_weight: 0.08,
-      risk: 0,
-      seconds: 15,
-      locked: [],
-      excluded: [],
-    }),
+  const [settings, setSettings] = useState<SolverSettings>(() => stored("open-fpl-solver", defaultSolverSettings)),
     [solveResult, setSolveResult] = useState<SolveResult | null>(null),
     [solveContext, setSolveContext] = useState<OptimiseContext | null>(null);
   const initRef = useRef(false),
     dataRequestRef = useRef(0),
+    loadedForecastArgsRef = useRef(""),
     solveRequestRef = useRef(0),
     fileRef = useRef<HTMLInputElement>(null);
   const notify = (text: string, error = false) => setToast({ text, error });
-  const forecastArgs = {
+  const forecastArgs: ForecastConfiguration = {
     overrides,
     minutes_schedule: minutesSchedule,
+    stat_schedule: statSchedule,
     use_market: useMarket,
     custom_points: customPoints,
     blend_weight: blendWeight,
@@ -244,17 +235,45 @@ export default function App() {
   const detailPlayer = detailId === null ? null : lookup.get(detailId);
   const currentHorizon = active?.weeks ?? [];
 
+  function applyForecastConfiguration(configuration: ForecastConfiguration) {
+    setOverrides(configuration.overrides);
+    setMinutesSchedule(configuration.minutes_schedule);
+    setStatSchedule(configuration.stat_schedule);
+    setUseMarket(configuration.use_market);
+    setCustomPoints(configuration.custom_points);
+    setBlendWeight(configuration.blend_weight);
+    setUseProvider(configuration.use_provider);
+    setProviderWeight(configuration.provider_weight);
+    setExtrapolate(configuration.extrapolate);
+    setAnchorHalfLife(configuration.anchor_half_life);
+    setCustomName(configuration.custom_name);
+  }
+  function archivePlanningInputs(savedPlans: unknown, configuration: unknown) {
+    const archives = stored<unknown[]>("open-fpl-archived-plans-v1", []);
+    localStorage.setItem("open-fpl-archived-plans-v1", JSON.stringify([
+      ...(Array.isArray(archives) ? archives : []),
+      { archived_at: new Date().toISOString(), plans: savedPlans, configuration },
+    ]));
+  }
+
   useEffect(() => {
     let alive = true;
-    api<Bootstrap>("/projections", forecastArgs)
-      .then((d) => {
+    loadPlanningState(plans, activeId, forecastArgs, settings,
+      configuration => configuration === undefined ? api<Bootstrap>("/bootstrap") : api<Bootstrap>("/projections", configuration))
+      .then((restored) => {
         if (!alive) return;
-        const restored = restorePlanningState(plans, activeId, d);
-        setData(d);
+        if (restored.notices.length || (Array.isArray(plans) && plans.some(plan => plan && Array.isArray(plan.weeks) && plan.weeks.some(week => week.gw < restored.forecast.next_gw)))) {
+          archivePlanningInputs(plans, forecastArgs);
+        }
+        loadedForecastArgsRef.current = JSON.stringify(restored.configuration);
+        applyForecastConfiguration(restored.configuration);
+        setSettings(restored.solver);
+        setData(restored.forecast);
         setGw(restored.gw);
         setActiveId(restored.activeId);
         setPlans(restored.plans);
         setLoading(false);
+        if (restored.notices.length) notify(restored.notices.join(" "));
       })
       .catch((e) => {
         if (alive) {
@@ -292,10 +311,12 @@ export default function App() {
       "open-fpl-minutes-schedule",
       JSON.stringify(minutesSchedule),
     );
+    localStorage.setItem("open-fpl-stat-schedule", JSON.stringify(statSchedule));
     localStorage.setItem("open-fpl-custom", JSON.stringify(customPoints));
     localStorage.setItem("open-fpl-blend", JSON.stringify(blendWeight));
     localStorage.setItem("open-fpl-custom-name", JSON.stringify(customName));
     localStorage.setItem("open-fpl-provider", JSON.stringify(useProvider));
+    localStorage.setItem("open-fpl-market", JSON.stringify(useMarket));
     localStorage.setItem(
       "open-fpl-provider-weight",
       JSON.stringify(providerWeight),
@@ -308,6 +329,8 @@ export default function App() {
   }, [
     overrides,
     minutesSchedule,
+    statSchedule,
+    useMarket,
     customPoints,
     blendWeight,
     customName,
@@ -316,6 +339,9 @@ export default function App() {
     extrapolate,
     anchorHalfLife,
   ]);
+  useEffect(() => {
+    localStorage.setItem("open-fpl-solver", JSON.stringify(settings));
+  }, [settings]);
   useEffect(() => {
     if (!toast) return;
     const t = setTimeout(() => setToast(null), toast.error ? 12000 : 5500);
@@ -372,15 +398,21 @@ export default function App() {
   }, [data, plans.length]);
   useEffect(() => {
     if (!data) return;
+    const serialized = JSON.stringify(forecastArgs);
+    if (loadedForecastArgsRef.current === serialized) return;
     const request = ++dataRequestRef.current;
     api<Bootstrap>("/projections", forecastArgs)
       .then((d) => {
-        if (request === dataRequestRef.current) setData(d);
+        if (request === dataRequestRef.current) {
+          loadedForecastArgsRef.current = serialized;
+          setData(d);
+        }
       })
       .catch((e) => notify(e.message, true));
   }, [
     overrides,
     minutesSchedule,
+    statSchedule,
     useMarket,
     customPoints,
     blendWeight,
@@ -397,6 +429,7 @@ export default function App() {
       ps.map((p) => ({
         ...p,
         weeks: p.weeks.map((w) => {
+          if (!data.gameweeks.includes(w.gw)) return w;
           const score = teamPoints(
             w.starters,
             w.bench,
@@ -418,7 +451,7 @@ export default function App() {
     }
     let alive = true;
     setDetailLoading(true);
-    api<PlayerDetail>(`/players/${detailId}?gw=${gw}`)
+    api<PlayerDetail>(`/players/${detailId}?gw=${gw}`, forecastArgs)
       .then((d) => {
         if (alive) setDetail(d);
       })
@@ -429,18 +462,10 @@ export default function App() {
     return () => {
       alive = false;
     };
-  }, [detailId, gw]);
+  }, [detailId, gw, overrides, minutesSchedule, statSchedule, useMarket, useProvider, providerWeight, customPoints, blendWeight, extrapolate, anchorHalfLife]);
 
   async function validatedPlan(p: Plan) {
-    const result = await api<{ weeks: Week[] }>("/plan/validate", {
-      ...forecastArgs,
-      base_squad: p.base_squad,
-      bank: p.base_bank,
-      free_transfers: p.free_transfers,
-      purchase_prices: p.purchase_prices,
-      weeks: p.weeks,
-      used_chips: p.used_chips ?? [],
-    });
+    const result = await api<{ weeks: Week[] }>("/plan/validate", planValidationRequest(p, forecastArgs));
     return { ...p, weeks: result.weeks };
   }
   async function updatePlan(p: Plan, message?: string) {
@@ -459,6 +484,10 @@ export default function App() {
   }
   function onWatch(id: number) {
     setWatch((v) => (v.includes(id) ? v.filter((i) => i !== id) : [...v, id]));
+  }
+  function togglePlayerConstraint(id: number, kind: "locked" | "excluded") {
+    setSettings(current => ({...current, [kind]: current[kind].includes(id) ? current[kind].filter(value => value !== id) : [...current[kind],id], [kind === "locked" ? "excluded" : "locked"]: current[kind === "locked" ? "excluded" : "locked"].filter(value => value !== id)}));
+    notify(`${lookup.get(id)?.name}: ${kind === "locked" ? "include" : "exclude"} rule toggled.`);
   }
   function choosePlan(id: string) {
     setActiveId(id);
@@ -554,7 +583,7 @@ export default function App() {
   function changeHorizon(count: number) {
     if (!active || !data) return;
     const p = structuredClone(active),
-      weeks = data.gameweeks.slice(0, count),
+      weeks = data.gameweeks.filter(w => w >= (p.weeks[0]?.gw ?? data.next_gw)).slice(0, count),
       permanentSquad =
         [...p.weeks].reverse().find((w) => w.chip !== "freehit")?.squad ??
         p.base_squad;
@@ -728,7 +757,7 @@ export default function App() {
       }
       const result = await api<SolveResult>("/optimise", {
         ...forecasts,
-        ...strategy,
+        ...solverSettingsForHorizon(strategy, startGW, horizon),
         horizon,
         squad,
         bank,
@@ -754,6 +783,8 @@ export default function App() {
       });
       if (request !== solveRequestRef.current) return;
       setSolveResult(result);
+      setPreviewingDraft(true);
+      setDraftGW(result.weeks[0]?.gw ?? startGW);
       setSolveContext({
         fresh,
         startGW,
@@ -859,10 +890,22 @@ export default function App() {
   async function refresh() {
     setBusy("Refreshing public feeds…");
     try {
-      await api<Bootstrap>("/refresh", {});
-      setData(await api<Bootstrap>("/projections", forecastArgs));
+      const baseline = await api<Bootstrap>("/refresh", {});
+      const restored = await loadPlanningState(plans, activeId, forecastArgs, settings,
+        configuration => configuration === undefined ? Promise.resolve(baseline) : api<Bootstrap>("/projections", configuration));
+      if (restored.notices.length || plans.some(plan => plan.weeks.some(week => week.gw < restored.forecast.next_gw))) archivePlanningInputs(plans, forecastArgs);
+      ++dataRequestRef.current;
+      loadedForecastArgsRef.current = JSON.stringify(restored.configuration);
+      applyForecastConfiguration(restored.configuration);
+      setSettings(restored.solver);
+      setData(restored.forecast);
+      setPlans(restored.plans);
+      setActiveId(restored.activeId);
+      if (!restored.forecast.gameweeks.includes(gw)) setGw(restored.gw);
+      setSolveResult(null);
+      setSolveContext(null);
       setEvalData(await api<Evaluation>("/evaluation"));
-      notify("Official data and provider projections refreshed.");
+      notify(`Feeds refreshed.${restored.notices.length ? ` ${restored.notices.join(" ")}` : ""}`);
     } catch (e) {
       notify((e as Error).message, true);
     } finally {
@@ -975,32 +1018,65 @@ export default function App() {
   }
   async function importPlans(file: File) {
     try {
+      if (!data) return;
       if (file.size > 5_000_000) throw new Error("Plan file is too large.");
       const value = JSON.parse(await file.text());
-      if (
-        !Array.isArray(value.plans) ||
-        !value.plans.length ||
-        value.plans.length > 30
-      )
-        throw new Error("Choose an Open FPL plan export.");
       setBusy("Checking imported planning branches…");
-      const checked: Plan[] = [];
-      for (const p of value.plans) {
-        if (
-          typeof p.name !== "string" ||
-          !Array.isArray(p.weeks) ||
-          !p.purchase_prices
-        )
-          throw new Error("Invalid plan structure.");
-        checked.push(
-          await validatedPlan({ ...p, id: uid(), name: p.name.slice(0, 100) }),
-        );
+      const prepared = await preparePlanImport(value, data, forecastArgs, settings, {
+        projections: configuration => api<Bootstrap>("/projections", configuration),
+        validate: body => api<{ weeks: Week[] }>("/plan/validate", body),
+      }, uid);
+      if (prepared.notices.length || value.plans.some((plan: Plan) => plan.weeks.some(week => week.gw < prepared.forecast.next_gw))) {
+        archivePlanningInputs(value.plans, value.configuration);
       }
-      setPlans((ps) => [...ps, ...checked]);
-      setActiveId(checked[0].id);
-      notify(`${checked.length} planning branches imported and validated.`);
+      ++dataRequestRef.current;
+      loadedForecastArgsRef.current = JSON.stringify(prepared.configuration);
+      applyForecastConfiguration(prepared.configuration);
+      setSettings(prepared.solver);
+      setData(prepared.forecast);
+      setPlans(ps => [...ps, ...prepared.plans]);
+      setActiveId(prepared.plans[0].id);
+      setGw(prepared.plans[0].weeks[0].gw);
+      setSolveResult(null);
+      setSolveContext(null);
+      notify(`${prepared.plans.length} branches and settings imported.${prepared.notices.length ? ` ${prepared.notices.join(" ")}` : ""}`);
     } catch (e) {
       notify((e as Error).message, true);
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function applyChipPlan(source: Plan, weeks: Week[]) {
+    if (busy) return;
+    setBusy("Checking chip branch…");
+    try {
+      const valid = await validatedPlan({ ...structuredClone(source), id: uid(), name: `${source.name} · chips`, weeks, created_at: new Date().toISOString() });
+      setPlans(current => [...current, valid]);
+      setActiveId(valid.id);
+      setGw(valid.weeks[0].gw);
+      notify("Chip branch saved.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function applyChipStrategy(source: Plan, weeks: Week[], job: ChipStrategyJob) {
+    if (busy) return;
+    setBusy("Checking strategy branch…");
+    try {
+      const valid = await validatedPlan({
+        ...structuredClone(source),
+        id: uid(),
+        name: `${source.name} · ${chipNames[job.settings.auto_chip]} timing`,
+        weeks: structuredClone(weeks),
+        created_at: new Date().toISOString(),
+      });
+      setPlans(current => [...current, valid]);
+      setActiveId(valid.id);
+      setGw(job.scope.gameweeks[0] ?? valid.weeks[0].gw);
+      setTab("lineup");
+      notify("Strategy branch saved and rescored with current forecasts.");
     } finally {
       setBusy("");
     }
@@ -1059,8 +1135,7 @@ export default function App() {
         ) : (
           <>
             <LoaderCircle className="spin" size={25} />
-            <p>Connecting fixtures, players and the bigger picture.</p>
-            <small>Loading real FPL data and historical records…</small>
+            <p>Loading forecasts…</p>
           </>
         )}
       </div>
@@ -1077,27 +1152,25 @@ export default function App() {
     minute: "2-digit",
   });
   return (
-    <div className="app-shell">
-      <header className="topbar">
-        <button
-          className="brand"
-          onClick={() => setTab("lineup")}
-          aria-label="Open FPL planner"
-        >
-          <Logo />
-          <span>
-            open<b>fpl</b>
-          </span>
-          <small>BETA</small>
-        </button>
-        <nav className="main-nav" aria-label="Main navigation">
+    <div className="app-shell solio-studio">
+      <aside className="app-rail" aria-label="App navigation">
+        <button className="rail-brand" onClick={() => setTab("lineup")} aria-label="Open FPL"><Logo/></button>
+        <button className={tab !== "market" ? "active" : ""} onClick={() => setTab("lineup")} title="Planner" aria-label="Planner"><GitBranch size={19}/></button>
+        <button onClick={() => setTab("projections")} title="Player data" aria-label="Player data"><Activity size={19}/></button>
+        <button className={tab === "market" ? "active" : ""} onClick={() => setTab("market")} title="Market data" aria-label="Market data"><TrendingUp size={19}/></button>
+        <div className="rail-bottom"><button onClick={refresh} disabled={Boolean(busy)} title="Refresh feeds" aria-label="Refresh data"><RefreshCw size={17}/></button><button onClick={() => setModal("help")} title="Help" aria-label="Help"><CircleHelp size={17}/></button><button onClick={() => setModal("settings")} title="Settings and sources" aria-label="Settings and data sources"><Settings2 size={19}/></button></div>
+      </aside>
+      <div className="workspace solio-workspace">
+        <PlanTree data={data} plans={plans} active={active} gw={gw} onPlan={choosePlan} onWeek={value=>{setGw(value);setSelected(null);setPreviewingDraft(false);}} onCreate={clonePlan} onDelete={deletePlan} onConfigure={()=>{setTeamBank(active?.base_bank??0);setTeamFT(active?.free_transfers??1);setModal("team");}} onHorizon={changeHorizon} onOptimise={()=>setTab("optimise")}/>
+        <main className="main-content solio-detail-panel">
+          <div className="detail-panel-heading"><span className="mini-brand">open<b>fpl</b></span><span>{data.season.replace("-","/")}</span><button className="icon-button" onClick={()=>setModal("team")} aria-label="Import team"><Users size={15}/></button></div>
+              <nav className="main-nav" aria-label="Main navigation">
           {tabs.map((t) => (
             <button
               key={t.id}
               className={tab === t.id ? "nav-active" : ""}
               onClick={() => {
                 setTab(t.id);
-                setSelected(null);
               }}
             >
               <t.icon size={16} />
@@ -1105,796 +1178,29 @@ export default function App() {
             </button>
           ))}
         </nav>
-        <div className="topbar-actions">
-          <span className="season-label">{data.season.replace("-", "/")}</span>
-          <button
-            className="icon-button"
-            aria-label="Help and methodology"
-            onClick={() => setModal("help")}
-          >
-            <CircleHelp size={19} />
-          </button>
-          <button
-            className="icon-button"
-            aria-label="Settings and data sources"
-            onClick={() => setModal("settings")}
-          >
-            <Settings2 size={18} />
-          </button>
-          <button
-            className="team-avatar"
-            onClick={() => {
-              setTeamBank(active?.base_bank ?? 0);
-              setTeamFT(active?.free_transfers ?? 1);
-              setModal("team");
-            }}
-            aria-label="Import or edit team"
-          >
-            <Users size={17} />
-          </button>
-        </div>
-      </header>
-      <div className="workspace">
-        <aside className="sidebar">
-          <div className="sidebar-top">
-            <button
-              className="team-switch"
-              onClick={() => {
-                setTeamBank(active?.base_bank ?? 0);
-                setTeamFT(active?.free_transfers ?? 1);
-                setModal("team");
-              }}
-            >
-              <span className="team-switch-icon">
-                <Users size={17} />
-              </span>
-              <span>
-                <b>{active?.team_name ?? "My FPL team"}</b>
-                <small>
-                  {active?.entry_id
-                    ? `Team ID ${active.entry_id}`
-                    : "Local team"}
-                </small>
-              </span>
-              <ChevronDown size={14} />
-            </button>
-          </div>
-          <div className="sidebar-section-title">
-            <span>PLANS</span>
-            <button
-              className="icon-button"
-              onClick={clonePlan}
-              disabled={!active}
-              aria-label="Create planning branch"
-            >
-              <Plus size={15} />
-            </button>
-          </div>
-          <div className="plan-list">
-            {plans.map((p) => (
-              <button
-                key={p.id}
-                className={`plan-item ${active?.id === p.id ? "plan-active" : ""}`}
-                onClick={() => choosePlan(p.id)}
-              >
-                <GitBranch size={16} />
-                <span>
-                  <b>{p.name}</b>
-                  <small>
-                    {fmt(
-                      p.weeks.reduce(
-                        (n, w) => n + (w.net_points ?? w.points),
-                        0,
-                      ),
-                    )}{" "}
-                    xP · {p.weeks.length} GWs
-                  </small>
-                </span>
-              </button>
-            ))}
-          </div>
-          <div className="branch-actions">
-            <button onClick={clonePlan} disabled={!active}>
-              <Copy size={14} />
-              Duplicate
-            </button>
-            <button onClick={deletePlan} disabled={plans.length <= 1}>
-              <Trash2 size={13} />
-              Delete
-            </button>
-          </div>
-          <div className="sidebar-divider" />
-          <div className="sidebar-section-title">
-            <span>WATCHLIST</span>
-            <span className="count-badge">{watch.length}</span>
-          </div>
-          <div className="sidebar-watch">
-            {watch.length ? (
-              watch.slice(0, 6).map((id) => {
-                const p = lookup.get(id);
-                return p ? (
-                  <button key={id} onClick={() => setDetailId(id)}>
-                    <Badge player={p} size={20} />
-                    <span>{p.name}</span>
-                    <b>{fmt(xp(p, gw))}</b>
-                  </button>
-                ) : null;
-              })
-            ) : (
-              <p>Star players to save them here.</p>
-            )}
-          </div>
-          <button
-            className="sidebar-link"
-            onClick={() => setTab("projections")}
-          >
-            <Star size={14} />
-            Players
-            <ArrowUpRight size={13} />
-          </button>
-          <div className="sidebar-bottom">
-            <div className="connection-status">
-              <i />
-              {Object.values(data.sources).some((s) => s.status === "stale")
-                ? "Cached feeds"
-                : "Feeds connected"}
-            </div>
-            <span>
-              Refreshed {pastRefresh}{" "}
-              <button
-                className="icon-button"
-                onClick={refresh}
-                disabled={!!busy}
-                aria-label="Refresh data"
-              >
-                <RefreshCw size={13} />
-              </button>
-            </span>
-          </div>
-        </aside>
-        <main
-          className={`main-content ${tab === "lineup" ? "planner-content" : ""}`}
-        >
-          <div className="page-context">
-            <span>{tabs.find((t) => t.id === tab)?.label}</span>
-            <div>
-              <Clock3Icon />
-              <span>
-                GW{data.next_gw} deadline ·{" "}
-                {nextEvent
-                  ? new Date(nextEvent.deadline_time).toLocaleDateString(
-                      "en-GB",
-                      {
-                        day: "numeric",
-                        month: "short",
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      },
-                    )
-                  : "—"}
-              </span>
-            </div>
-          </div>
-          {tab === "lineup" ? (
-            <>
-              <div className="planner-heading">
-                <div>
-                  <h1>{active?.team_name ?? "Planner"}</h1>
-                </div>
-                <div className="button-row">
-                  <button
-                    className="button"
-                    onClick={() => {
-                      setTeamBank(active?.base_bank ?? 0);
-                      setTeamFT(active?.free_transfers ?? 1);
-                      setModal("team");
-                    }}
-                  >
-                    <Link2 size={15} />
-                    Team
-                  </button>
-                  <button
-                    className="button primary"
-                    onClick={() => setTab("optimise")}
-                  >
-                    <Sparkles size={16} />
-                    Optimise
-                  </button>
-                </div>
+
+              <div className="analytics-body">
+                {tab === "lineup" ? <><div className="lineup-board-slot">{active && week ? <PlannerBoard
+                data={data} plan={active} week={week}
+                selected={selected} busy={Boolean(busy)}
+                onWeek={value => {setGw(value);setSelected(null);}}
+                onName={name => setPlans(ps => ps.map(p => p.id === active.id ? {...p,name} : p))}
+                onHorizon={changeHorizon} onClone={clonePlan} onSelect={setSelected} onDetail={setDetailId} onBenchSwap={swapBench} onCaptain={setCaptain} onBenchMove={moveBench} onChip={changeChip} onBestXI={autoLineup} onReset={resetWeek}
+                onTransfers={() => setTab("projections")} onTeam={() => {setTeamBank(active.base_bank);setTeamFT(active.free_transfers);setModal("team");}}
+                previewing={false}
+                onPreview={setPreviewingDraft}
+              /> : <Empty title="Your starting squad" text="Import a public FPL team or build a legal £100m squad."><button className="button primary" onClick={() => setModal("team")}>Import team</button><button className="button" disabled={Boolean(busy)} onClick={() => void runSolve(true)}>Build squad</button></Empty>}</div>{week ? <details className="lineup-details"><summary>Squad stats & captain comparison</summary><TeamOverview data={data} week={week} selected={selectedPlayer} targets={availableTargets} watch={watch} onWatch={onWatch} onDetail={setDetailId} onSelect={setSelected} onTransfer={id => void transferIn(id)} onPlayers={() => setTab("projections")} onCaptain={setCaptain}/></details> : null}</> : tab === "projections" ? <ProjectionsView data={data} gw={gw} onDetail={setDetailId} watch={watch} onWatch={onWatch} onCSV={() => setModal("csv")} onExport={exportCSV} selectedPlayer={selectedPlayer} squad={week?.squad ?? []} onTransfer={id => void transferIn(id)}/> : tab === "fixtures" ? <FixturesView data={data} gw={gw}/> : tab === "optimise" ? <>
+                  <OptimiseView data={data} plan={active} gw={gw} settings={settings} onSettings={setSettings} onSolve={runSolve} result={solveResult} busy={Boolean(busy)} resultFresh={solveContext?.fresh} baselinePlan={solveContext?.baselinePlan} onApply={() => void applySolve()} onDetail={setDetailId} onPreviewGW={value => {setDraftGW(value);setPreviewingDraft(true);}}/>
+                  <ChipPlanner plan={active} forecast={forecastArgs} busy={Boolean(busy)} onApply={applyChipPlan} onNotify={notify}/>
+                  <ChipStrategyView data={data} plan={active} gw={gw} strategy={settings} forecast={forecastArgs} busy={Boolean(busy)} onApply={applyChipStrategy}/>
+                  <SensitivityView data={data} plan={active} strategy={settings} forecast={forecastArgs} busy={Boolean(busy)} onApply={(job,weeks,label) => void applyStress(job,weeks,label)} onDetail={setDetailId}/>
+                </> : tab === "analysis" ? <AnalysisView data={data} plans={plans} active={active} evalData={evalData} onSnapshot={snapshot} prospective={prospective} onScore={scoreProspective} selectedGW={gw} onDetail={setDetailId} onLock={id=>togglePlayerConstraint(id,"locked")}/> : <>
+                  <div className="market-mode segmented" aria-label="Market view"><button className={marketMode === "fixtures" ? "active" : ""} onClick={() => setMarketMode("fixtures")}>Fixture markets</button><button className={marketMode === "movement" ? "active" : ""} onClick={() => setMarketMode("movement")}>Movement</button><button className={marketMode === "prices" ? "active" : ""} onClick={() => setMarketMode("prices")}>Prices</button><button className={marketMode === "references" ? "active" : ""} onClick={() => setMarketMode("references")}>Provider shortlists</button></div>
+                  {marketMode === "fixtures" ? <FixtureMarkets data={data} gw={gw}/> : marketMode === "movement" ? <MarketMovement gw={gw}/> : marketMode === "prices" ? <MarketView data={data} gw={gw} onDetail={setDetailId} watch={watch} onWatch={onWatch}/> : <ReferenceView data={data} gw={gw} onDetail={setDetailId} watch={watch} onWatch={onWatch}/>}
+                </>}
               </div>
-              {active && week ? (
-                <>
-                  <div className="mobile-plan-switch">
-                    <GitBranch size={14} />
-                    <select
-                      aria-label="Active planning branch"
-                      value={active.id}
-                      onChange={(e) => choosePlan(e.target.value)}
-                    >
-                      {plans.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      className="icon-button"
-                      onClick={clonePlan}
-                      aria-label="Duplicate current branch"
-                    >
-                      <Copy size={14} />
-                    </button>
-                    <button
-                      className="icon-button"
-                      onClick={deletePlan}
-                      disabled={plans.length <= 1}
-                      aria-label="Delete current branch"
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                  <div className="planner-metrics">
-                    <span
-                      title={`${week.next_free_transfers} free transfers next gameweek`}
-                    >
-                      FTs <b>{week.free_transfers}</b>
-                    </span>
-                    <span
-                      title={`${money(week.squad.reduce((n, id) => n + lookup.get(id)!.price, 0))} squad value`}
-                    >
-                      ITB <b>{money(week.bank)}</b>
-                    </span>
-                    <span
-                      title={`Includes captain, autosubs and vice fallback${week.hits ? `; −${week.hits} transfer hit` : ""}`}
-                    >
-                      GW{gw} <b>{fmt(week.net_points ?? week.points)} xP</b>
-                    </span>
-                    <span
-                      title={`GW${currentHorizon[0].gw}–${currentHorizon.at(-1)!.gw}; captain and hits included`}
-                    >
-                      Plan <b>{fmt(totalPlan)} xP</b>
-                    </span>
-                  </div>
-                  <div className="timeline-heading">
-                    <span>
-                      <GitBranch size={14} />
-                      <input
-                        aria-label="Plan name"
-                        value={active.name}
-                        onChange={(e) =>
-                          setPlans((ps) =>
-                            ps.map((p) =>
-                              p.id === active.id
-                                ? { ...p, name: e.target.value.slice(0, 70) }
-                                : p,
-                            ),
-                          )
-                        }
-                      />
-                    </span>
-                    <span>
-                      <select
-                        className="horizon-select"
-                        aria-label="Planner horizon"
-                        value={active.weeks.length}
-                        onChange={(e) => changeHorizon(+e.target.value)}
-                      >
-                        {[
-                          ...new Set([
-                            active.weeks.length,
-                            3,
-                            5,
-                            6,
-                            10,
-                            14,
-                            28,
-                            data.gameweeks.length,
-                          ]),
-                        ]
-                          .sort((a, b) => a - b)
-                          .filter((n) => n <= data.gameweeks.length)
-                          .map((n) => (
-                            <option key={n} value={n}>
-                              {n} GWs
-                            </option>
-                          ))}
-                      </select>
-                      <button onClick={clonePlan}>
-                        New
-                        <Plus size={12} />
-                      </button>
-                    </span>
-                  </div>
-                  <div
-                    className="week-timeline"
-                    style={
-                      { "--week-count": currentHorizon.length } as CSSProperties
-                    }
-                  >
-                    {currentHorizon.map((w) => (
-                      <button
-                        key={w.gw}
-                        className={`week-node ${gw === w.gw ? "week-active" : ""}`}
-                        title={`${w.next_free_transfers} FT next · ${money(w.bank)} ITB`}
-                        onClick={() => {
-                          setGw(w.gw);
-                          setSelected(null);
-                        }}
-                      >
-                        <span className="week-top">
-                          <b>GW{w.gw}</b>
-                          {w.chip !== "none" ? (
-                            <span className="chip-indicator">
-                              {w.chip === "wildcard"
-                                ? "WC"
-                                : w.chip === "freehit"
-                                  ? "FH"
-                                  : w.chip === "benchboost"
-                                    ? "BB"
-                                    : "TC"}
-                            </span>
-                          ) : w.transfers_in.length > 0 ? (
-                            <span className="transfer-indicator">
-                              {w.transfers_in.length} move
-                              {w.transfers_in.length > 1 ? "s" : ""}
-                            </span>
-                          ) : null}
-                        </span>
-                        <strong>
-                          {fmt(w.net_points ?? w.points)}
-                          <small> xP</small>
-                        </strong>
-                      </button>
-                    ))}
-                  </div>
-                  <div className="planner-grid">
-                    <section className="lineup-panel panel">
-                      <div className="lineup-header">
-                        <div>
-                          <h3>
-                            <button
-                              className="icon-button"
-                              aria-label="Previous gameweek"
-                              disabled={currentHorizon[0].gw === gw}
-                              onClick={() => {
-                                setGw(gw - 1);
-                                setSelected(null);
-                              }}
-                            >
-                              <ChevronLeft size={16} />
-                            </button>
-                            GW{gw}
-                            <button
-                              className="icon-button"
-                              aria-label="Next gameweek"
-                              disabled={currentHorizon.at(-1)!.gw === gw}
-                              onClick={() => {
-                                setGw(gw + 1);
-                                setSelected(null);
-                              }}
-                            >
-                              <ChevronRight size={16} />
-                            </button>
-                            <span>
-                              {[2, 3, 4]
-                                .map(
-                                  (pos) =>
-                                    week.starters.filter(
-                                      (id) =>
-                                        lookup.get(id)?.position_id === pos,
-                                    ).length,
-                                )
-                                .join("–")}
-                            </span>
-                          </h3>
-                        </div>
-                        <select
-                          aria-label="Select chip"
-                          className="chip-select"
-                          value={week.chip}
-                          onChange={(e) => changeChip(e.target.value as Chip)}
-                        >
-                          {Object.entries(chipNames).map(([key, label]) => (
-                            <option
-                              key={key}
-                              value={key}
-                              disabled={
-                                key !== "none" &&
-                                active.used_chips?.some(
-                                  (c) =>
-                                    c.chip === key && c.gw <= 19 === gw <= 19,
-                                )
-                              }
-                            >
-                              {label}
-                            </option>
-                          ))}
-                        </select>
-                        <button
-                          className="icon-button"
-                          onClick={resetWeek}
-                          disabled={!!busy}
-                          aria-label="Reset this gameweek"
-                        >
-                          <RefreshCw size={15} />
-                        </button>
-                      </div>
-                      <Pitch
-                        week={week}
-                        players={data.players}
-                        selected={selected}
-                        onSelect={(id) =>
-                          setSelected(selected === id ? null : id)
-                        }
-                        onDetail={setDetailId}
-                        onBenchSwap={swapBench}
-                      />
-                      <div className="pitch-foot">
-                        <button onClick={autoLineup} disabled={!!busy}>
-                          <Sparkles size={13} />
-                          Best XI
-                        </button>
-                      </div>
-                    </section>
-                    <div className="planner-right">
-                      {selectedPlayer ? (
-                        <section className="panel selected-panel">
-                          <div className="panel-heading">
-                            <h3>Player</h3>
-                            <button
-                              className="icon-button"
-                              onClick={() => setSelected(null)}
-                              aria-label="Clear player selection"
-                            >
-                              <X size={15} />
-                            </button>
-                          </div>
-                          <div className="selected-player">
-                            <Shirt player={selectedPlayer} />
-                            <div>
-                              <h3>{selectedPlayer.name}</h3>
-                              <p>
-                                {selectedPlayer.team_name} ·{" "}
-                                {selectedPlayer.position}
-                              </p>
-                              <span>
-                                {money(selectedPlayer.price)}{" "}
-                                <b>{fmt(xp(selectedPlayer, gw))} xP</b>
-                              </span>
-                            </div>
-                          </div>
-                          <div className="selected-actions">
-                            <button
-                              className="button small"
-                              disabled={
-                                !week.starters.includes(selectedPlayer.id)
-                              }
-                              onClick={() => setCaptain(selectedPlayer.id)}
-                            >
-                              Captain
-                            </button>
-                            <button
-                              className="button small"
-                              disabled={
-                                !week.starters.includes(selectedPlayer.id)
-                              }
-                              onClick={() =>
-                                setCaptain(selectedPlayer.id, true)
-                              }
-                            >
-                              Vice
-                            </button>
-                            <button
-                              className="button small"
-                              onClick={() => setDetailId(selectedPlayer.id)}
-                            >
-                              <Info size={13} />
-                              Details
-                            </button>
-                          </div>
-                          {week.bench.includes(selectedPlayer.id) &&
-                            selectedPlayer.position_id !== 1 && (
-                              <div className="selected-actions bench-order-actions">
-                                <button
-                                  className="button small"
-                                  disabled={
-                                    week.bench.indexOf(selectedPlayer.id) <= 1
-                                  }
-                                  onClick={() => moveBench(-1)}
-                                >
-                                  Bench up
-                                </button>
-                                <button
-                                  className="button small"
-                                  disabled={
-                                    week.bench.indexOf(selectedPlayer.id) >= 3
-                                  }
-                                  onClick={() => moveBench(1)}
-                                >
-                                  Bench down
-                                </button>
-                              </div>
-                            )}
-                          <details className="compact-details player-help">
-                            <summary>Controls</summary>
-                            Pick a replacement below. To substitute, select a
-                            starting shirt then choose a bench player.
-                          </details>
-                          {selectedPlayer.news && (
-                            <p className="news-alert">{selectedPlayer.news}</p>
-                          )}
-                        </section>
-                      ) : (
-                        <section className="panel captain-panel">
-                          <div className="panel-heading">
-                            <h3>Captain</h3>
-                            <span className="subtle-tag">GW{gw}</span>
-                          </div>
-                          <div className="captain-highlight">
-                            <div className="captain-highlight-shirt">
-                              {captain && <Shirt player={captain} />}
-                              <span>C</span>
-                            </div>
-                            <div>
-                              <h3>{captain?.name}</h3>
-                              <p>
-                                {captain?.gw[String(gw)]?.fixtures
-                                  .map(
-                                    (f) =>
-                                      `${f.opponent} (${f.home ? "H" : "A"})`,
-                                  )
-                                  .join(" + ") || "Blank gameweek"}
-                              </p>
-                            </div>
-                            <strong>
-                              {captain
-                                ? fmt(
-                                    xp(captain, gw) *
-                                      (week.chip === "triplecaptain" ? 3 : 2),
-                                  )
-                                : "—"}
-                              <small>captain xP</small>
-                            </strong>
-                          </div>
-                          <div className="captain-alternatives">
-                            {week.starters
-                              .filter((id) => id !== week.captain)
-                              .sort(
-                                (a, b) =>
-                                  xp(lookup.get(b)!, gw) -
-                                  xp(lookup.get(a)!, gw),
-                              )
-                              .slice(0, 2)
-                              .map((id) => (
-                                <button key={id} onClick={() => setCaptain(id)}>
-                                  <Badge player={lookup.get(id)!} size={19} />
-                                  <span>{lookup.get(id)!.name}</span>
-                                  <b>{fmt(xp(lookup.get(id)!, gw) * 2)}</b>
-                                  <ArrowUpRight size={13} />
-                                </button>
-                              ))}
-                          </div>
-                        </section>
-                      )}
-                      <section className="panel targets-panel">
-                        <div className="panel-heading">
-                          <h3>
-                            {selectedPlayer
-                              ? `Replace ${selectedPlayer.name}`
-                              : "Players"}
-                          </h3>
-                          <button
-                            className="icon-button"
-                            onClick={() => setTab("projections")}
-                            aria-label="Open all projections"
-                          >
-                            <ArrowUpRight size={16} />
-                          </button>
-                        </div>
-                        <div className="radar-tabs">
-                          {[
-                            ["targets", "Transfers"],
-                            ["captains", "Captains"],
-                            ["watch", "Watchlist"],
-                          ].map(([key, label]) => (
-                            <button
-                              key={key}
-                              className={listMode === key ? "active" : ""}
-                              onClick={() =>
-                                setListMode(key as typeof listMode)
-                              }
-                            >
-                              {label}
-                            </button>
-                          ))}
-                        </div>
-                        <div className="search-box compact">
-                          <Search size={14} />
-                          <input
-                            aria-label="Search transfer targets"
-                            placeholder="Find a player…"
-                            value={playerQuery}
-                            onChange={(e) => setPlayerQuery(e.target.value)}
-                          />
-                        </div>
-                        <div className="compact-table-label">
-                          <span>PLAYER</span>
-                          <span>PRICE</span>
-                          <span>GW{gw} xP</span>
-                        </div>
-                        {availableTargets.map((p) => (
-                          <PlayerRow
-                            key={p.id}
-                            player={p}
-                            gw={gw}
-                            action={
-                              selectedPlayer
-                                ? () => void transferIn(p.id)
-                                : undefined
-                            }
-                            onDetail={setDetailId}
-                            onWatch={onWatch}
-                            watched={watch.includes(p.id)}
-                          />
-                        ))}
-                        {!availableTargets.length && (
-                          <p className="inline-empty">
-                            {listMode === "watch"
-                              ? "Star players in Projections to add them here."
-                              : "No matching players."}
-                          </p>
-                        )}
-                        <button
-                          className="view-all"
-                          onClick={() => setTab("projections")}
-                        >
-                          All players
-                          <ArrowRight size={14} />
-                        </button>
-                      </section>
-                      <section className="transfer-summary">
-                        <div>
-                          <ArrowDownUp size={14} />
-                          <h4>Transfers</h4>
-                          <span>
-                            {week.hits ? `−${week.hits} pts` : "No hit"}
-                          </span>
-                        </div>
-                        {week.transfers_in.length ? (
-                          week.transfers_in.map((id, i) => (
-                            <p key={id}>
-                              <span>
-                                {lookup.get(week.transfers_out[i])?.name}
-                              </span>
-                              <ArrowRight size={12} />
-                              <b>{lookup.get(id)?.name}</b>
-                            </p>
-                          ))
-                        ) : (
-                          <p>
-                            <Check size={14} />
-                            {week.chip === "wildcard"
-                              ? "Wildcard"
-                              : "No transfers"}
-                          </p>
-                        )}
-                      </section>
-                    </div>
-                  </div>
-                  <footer className="planner-note">
-                    <p>Updated {pastRefresh}</p>
-                    <button onClick={() => setModal("settings")}>
-                      Sources & model
-                      <Info size={13} />
-                    </button>
-                  </footer>
-                </>
-              ) : (
-                <Empty
-                  title="Building your starting point."
-                  text="We're finding a legal, budget-constrained squad using the current player pool."
-                >
-                  {busy ? (
-                    <Busy text={busy} />
-                  ) : (
-                    <button
-                      className="button primary"
-                      onClick={() => {
-                        setTab("optimise");
-                        void runSolve(true);
-                      }}
-                    >
-                      Build a squad
-                    </button>
-                  )}
-                </Empty>
-              )}
-            </>
-          ) : tab === "projections" ? (
-            <ProjectionsView
-              data={data}
-              gw={gw}
-              onDetail={setDetailId}
-              watch={watch}
-              onWatch={onWatch}
-              onCSV={() => setModal("csv")}
-              onExport={exportCSV}
-            />
-          ) : tab === "fixtures" ? (
-            <FixturesView data={data} gw={gw} />
-          ) : tab === "optimise" ? (
-            <>
-              <OptimiseView
-                data={data}
-                plan={active}
-                gw={gw}
-                settings={settings}
-                onSettings={setSettings}
-                onSolve={runSolve}
-                result={solveResult}
-                busy={Boolean(busy)}
-                resultFresh={solveContext?.fresh}
-                baselinePlan={solveContext?.baselinePlan}
-                onApply={() => void applySolve()}
-                onDetail={setDetailId}
-              />
-              <SensitivityView
-                data={data}
-                plan={active}
-                strategy={settings}
-                forecast={forecastArgs}
-                busy={Boolean(busy)}
-                onApply={(job, weeks, label) =>
-                  void applyStress(job, weeks, label)
-                }
-                onDetail={setDetailId}
-              />
-            </>
-          ) : tab === "analysis" ? (
-            <AnalysisView
-              data={data}
-              plans={plans}
-              active={active}
-              evalData={evalData}
-              onSnapshot={snapshot}
-              prospective={prospective}
-              onScore={scoreProspective}
-            />
-          ) : (
-            <>
-              <div className="market-mode segmented" aria-label="Market view">
-                <button
-                  className={marketMode === "prices" ? "active" : ""}
-                  onClick={() => setMarketMode("prices")}
-                >
-                  Price movement
-                </button>
-                <button
-                  className={marketMode === "references" ? "active" : ""}
-                  onClick={() => setMarketMode("references")}
-                >
-                  Provider shortlists
-                </button>
-              </div>
-              {marketMode === "prices" ? (
-                <MarketView
-                  data={data}
-                  gw={gw}
-                  onDetail={setDetailId}
-                  watch={watch}
-                  onWatch={onWatch}
-                />
-              ) : (
-                <ReferenceView
-                  data={data}
-                  gw={gw}
-                  onDetail={setDetailId}
-                  watch={watch}
-                  onWatch={onWatch}
-                />
-              )}
-            </>
-          )}
+
+          <footer className="studio-feed-footer"><button onClick={()=>setModal("settings")}><i className={Object.values(data.sources).some(source=>source.status==="stale")?"stale":""}/>Sources · {pastRefresh}<Info size={11}/></button><span>{data.players.length} players · GW{data.gameweeks[0]}–{data.gameweeks.at(-1)}</span></footer>
         </main>
       </div>
 
@@ -1922,8 +1228,8 @@ export default function App() {
       )}
       {modal === "team" && (
         <Modal
-          title="Make this your team."
-          subtitle="Import with your public FPL ID. Your FPL login is never needed."
+          title="Import team"
+          subtitle="Public FPL team ID"
           onClose={() => setModal(null)}
         >
           <div className="modal-body">
@@ -2211,11 +1517,7 @@ export default function App() {
                     download(
                       "open-fpl-plans.json",
                       JSON.stringify(
-                        {
-                          version: 1,
-                          exported_at: new Date().toISOString(),
-                          plans,
-                        },
+                        createPlanExport(plans, forecastArgs, settings),
                         null,
                         2,
                       ),
@@ -2225,6 +1527,7 @@ export default function App() {
                   <Download size={15} />
                   Export plans
                 </button>
+                <button className="button" onClick={() => setBackupText(JSON.stringify(createPlanExport(plans, forecastArgs, settings), null, 2))}><Copy size={15}/>Backup text</button>
                 <button
                   className="button"
                   onClick={() => fileRef.current?.click()}
@@ -2244,6 +1547,11 @@ export default function App() {
                   }}
                 />
               </div>
+              {backupText && <label>Plan backup<textarea aria-label="Plan backup JSON" readOnly rows={4} value={backupText} onFocus={event => event.currentTarget.select()}/></label>}
+              <details className="compact-details"><summary>Paste a backup</summary>
+                <textarea aria-label="Import backup JSON" rows={4} value={importText} onChange={event => setImportText(event.target.value)} placeholder="Paste Open FPL backup JSON"/>
+                <button className="button small" disabled={!importText.trim() || Boolean(busy)} onClick={() => void importPlans(new File([importText], "pasted-plan-backup.json", {type:"application/json"}))}><Upload size={14}/>Import backup</button>
+              </details>
               <p className="help-text">
                 Plan files are checked against current FPL rules before being
                 loaded. Browser storage stays on this device.
@@ -2420,7 +1728,7 @@ export default function App() {
           onClose={() => setDetailId(null)}
           wide
         >
-          <div className="modal-body player-detail">
+          <div className={`modal-body player-detail detail-tab-${detailTab}`}>
             <div className="player-detail-top">
               <Shirt player={detailPlayer} />
               <Stat
@@ -2430,7 +1738,7 @@ export default function App() {
               />
               <Stat
                 label="EXPECTED MINUTES"
-                value={fmt(detailPlayer.xmins, 0)}
+                value={fmt(detailPlayer.gw[String(gw)]?.xmins ?? 0, 0)}
                 note={`${fmt(detailPlayer.p60 * 100, 0)}% modelled 60+ minutes`}
               />
               <Stat
@@ -2446,6 +1754,14 @@ export default function App() {
                 {watch.includes(detailId) ? "Watching" : "Watch"}
               </button>
             </div>
+            <div className="player-dialog-actions">
+              <button className="button small" disabled={!week?.starters.includes(detailId)} onClick={()=>setCaptain(detailId)}>C</button>
+              <button className="button small" disabled={!week?.starters.includes(detailId)} onClick={()=>setCaptain(detailId,true)}>VC</button>
+              <button className={`button small ${settings.locked.includes(detailId)?"selected":""}`} onClick={()=>togglePlayerConstraint(detailId,"locked")}>Lock</button>
+              <button className={`button small ${settings.excluded.includes(detailId)?"selected":""}`} onClick={()=>togglePlayerConstraint(detailId,"excluded")}>Ban</button>
+              {week?.squad.includes(detailId)?<button className="button small primary" onClick={()=>{setSelected(detailId);setTab("projections");setDetailId(null);}}>Transfer out</button>:selectedPlayer&&selectedPlayer.position_id===detailPlayer.position_id?<button className="button small primary" onClick={()=>{void transferIn(detailId);setDetailId(null);}}>Transfer in</button>:null}
+            </div>
+            <div className="segmented player-detail-tabs">{["overview","edit","history"].map(value=><button className={detailTab===value?"active":""} key={value} onClick={()=>setDetailTab(value)}>{value==="overview"?"Breakdown":value==="edit"?"Edit stats":"History & outcomes"}</button>)}</div>
             {detailPlayer.news && (
               <p className="news-alert">
                 Official team news: {detailPlayer.news}
@@ -2485,6 +1801,7 @@ export default function App() {
                 </p>
               </section>
               <section>
+                <StatScenarioEditor player={detailPlayer} weeks={data.gameweeks} gw={gw} schedule={statSchedule[String(detailId)] ?? {}} onSchedule={schedule => setStatSchedule(current => {const next = {...current}; if(Object.keys(schedule).length) next[String(detailId)]=schedule; else delete next[String(detailId)]; return next;})} onNotify={notify}/>
                 <MinutesScenarioEditor
                   key={detailId}
                   player={detailPlayer}
@@ -2564,7 +1881,7 @@ export default function App() {
                 labels={data.gameweeks.map((w) => `GW${w}`)}
               />
             </section>
-            {detailLoading ? (
+            {detailTab === "history" && (detailLoading ? (
               <Busy text="Loading match history and scenario simulation…" />
             ) : (
               detail && (
@@ -2640,7 +1957,7 @@ export default function App() {
                   </div>
                 </>
               )
-            )}
+            ))}
           </div>
         </Modal>
       )}

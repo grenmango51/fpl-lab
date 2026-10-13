@@ -1,0 +1,14 @@
+.solio-detail-panel .solver-reviewing > .solver-settings { display: none; }
+.solio-detail-panel .solver-reviewing > .solver-preview { order: 0; }
+.solver-reviewing .result-summary { position: sticky; top: 0; z-index: 3; background: #0b1423; }
+.solver-reviewing .solver-selected-week .pitch-wrap { padding: 0; }
+.solver-reviewing .solver-selected-week .pitch { height: 390px; }
+.solver-reviewing .solver-selected-week .pitch-row { height: 23%; }
+.solver-reviewing .solver-selected-week .player-shirt,
+.solver-reviewing .solver-selected-week .shirt { width: 58px; height: 58px; }
+.solver-reviewing .solver-selected-week .pitch-name { font-size: 10px; }
+@media (max-width: 700px) {
+  .solver-reviewing .solver-selected-week .player-shirt,
+  .solver-reviewing .solver-selected-week .shirt { width: 47px; height: 47px; }
+  .solver-reviewing .solver-selected-week .pitch { height: 360px; }
+}

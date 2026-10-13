@@ -720,6 +720,12 @@ def simulate_player(player, gw, trials=10000):
                     * plays
                 )
             scores += f["components"]["deductions"] / f["pplay"] * plays
+            if player["gw"][str(gw)].get("stat_scenario"):
+                residual = sum(
+                    f["components"].get(key, 0)
+                    for key in ("provider_adjustment", "imported_adjustment", "user_points_adjustment")
+                )
+                scores += residual / f["pplay"] * plays
     histogram = [
         {"points": int(v), "probability": float(np.mean(np.rint(scores) == v))}
         for v in range(-3, 26)
@@ -733,7 +739,9 @@ def simulate_player(player, gw, trials=10000):
         "blank_probability": float(np.mean(scores <= 2)),
         "haul_probability": float(np.mean(scores >= 10)),
         "trials": trials,
-        "label": "Independent-event model simulation; uncalibrated",
+        "label": "User-scenario independent-event simulation; uncalibrated"
+        if player["gw"].get(str(gw), {}).get("stat_scenario")
+        else "Independent-event model simulation; uncalibrated",
         "tail_probability": float(
             np.mean(np.rint(scores) > 25) + np.mean(np.rint(scores) < -3)
         ),

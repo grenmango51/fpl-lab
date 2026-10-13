@@ -7,22 +7,27 @@ import gzip
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import FastAPI, HTTPException
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator, model_validator
 
 from .data import ROOT, FPL, fetch, get_data
 from .model import projections, player_history, simulate_player
-from .solver import optimise, best_lineup, validate_squad, sale_price
+from .solver import optimise, best_lineup, validate_squad, sale_price, validate_chip_history
 from .scoring import team_points
 from .ensemble import blend_forecasts
 from .sensitivity import jobs as sensitivity_jobs
 from .capture import capture_receipt, latest_capture_receipts
+from .scenarios import apply_stat_schedule, canonical_stat_schedule
+from .chip_planner import recommend_chips
+from .chip_strategy import jobs as chip_strategy_jobs, ChipStrategyConflict
+from .market_history import market_history, capture_market_history
 
 app = FastAPI(title="Open FPL", version="0.1.0")
 app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=3)
@@ -33,6 +38,17 @@ app.add_middleware(
     allow_headers=["Content-Type"],
 )
 log = logging.getLogger(__name__)
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_error(_request, exc):
+    # NaN/Infinity are accepted by Python's JSON decoder, then rejected by
+    # field validation. The default error response echoes that invalid number
+    # and itself fails JSON serialization. Return only safe error metadata.
+    return JSONResponse(status_code=422, content={"detail": [
+        {key: error[key] for key in ("type", "loc", "msg") if key in error}
+        for error in exc.errors()
+    ]})
 
 
 class MinutesScenario(BaseModel):
@@ -46,11 +62,33 @@ class MinutesScenario(BaseModel):
         return self
 
 
+class StatScenario(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    expected_points: float | None = Field(default=None, ge=-5, le=60)
+    xg: float | None = Field(default=None, ge=0, le=10)
+    xa: float | None = Field(default=None, ge=0, le=10)
+    clean_sheet_probability: float | None = Field(default=None, ge=0, le=1)
+
+    @field_validator("expected_points", "xg", "xa", "clean_sheet_probability", mode="before")
+    @classmethod
+    def numeric(cls, value):
+        if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float))):
+            raise ValueError("Stat edits must be finite numeric values.")
+        return value
+
+    @model_validator(mode="after")
+    def nonempty(self):
+        if not self.model_dump(exclude_none=True):
+            raise ValueError("A stat scenario needs an editable field.")
+        return self
+
+
 class ForecastRequest(BaseModel):
     overrides: dict[str, float] = Field(default_factory=dict)
     minutes_schedule: dict[str, dict[str, MinutesScenario]] = Field(
         default_factory=dict
     )
+    stat_schedule: dict[str, dict[str, StatScenario]] = Field(default_factory=dict)
     use_market: bool = True
     custom_points: dict[str, dict[str, float]] = Field(default_factory=dict)
     blend_weight: float = Field(default=0, ge=0, le=1)
@@ -93,10 +131,20 @@ class ForecastRequest(BaseModel):
             )
         return self.model_dump(exclude_none=True)["minutes_schedule"]
 
+    def validated_stats(self, dataset):
+        try:
+            return canonical_stat_schedule(
+                self.model_dump(exclude_none=True)["stat_schedule"],
+                dataset["players"], range(dataset["next_gw"], 39),
+            )
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+
 
 def forecast_for(request: ForecastRequest, *, dataset=None):
     dataset = dataset if dataset is not None else get_data()
     schedule = request.validated_schedule(dataset)
+    stats = request.validated_stats(dataset)
     overrides = request.validated_overrides()
     payload = {**projections(overrides, request.use_market, schedule, dataset=dataset)}
     calibration = (
@@ -144,8 +192,6 @@ def forecast_for(request: ForecastRequest, *, dataset=None):
             probabilities,
             source.get("source_at"),
         )
-    if not request.custom_points or request.blend_weight == 0:
-        return payload
     if len(request.custom_points) > 700:
         raise HTTPException(422, "Custom forecasts exceed the current player pool.")
     lookup = {str(p["id"]): p for p in payload["players"]}
@@ -164,17 +210,24 @@ def forecast_for(request: ForecastRequest, *, dataset=None):
                 422,
                 "Custom forecasts must use current player IDs, available gameweeks and finite points between -5 and 60.",
             )
-    apply_layer(
-        request.custom_points,
-        request.blend_weight,
-        request.custom_name or "Imported CSV",
-    )
-    return payload
+    if request.custom_points and request.blend_weight > 0:
+        apply_layer(
+            request.custom_points,
+            request.blend_weight,
+            request.custom_name or "Imported CSV",
+        )
+    try:
+        return apply_stat_schedule(
+            payload, stats,
+            dataset["bootstrap"].get("game_config", {}).get("scoring"),
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 class ChipUsage(BaseModel):
     chip: Literal["wildcard", "freehit", "benchboost", "triplecaptain"]
-    gw: int = Field(ge=1, le=38)
+    gw: StrictInt = Field(ge=1, le=38)
 
 
 class SolveRequest(ForecastRequest):
@@ -182,7 +235,7 @@ class SolveRequest(ForecastRequest):
     bank: float = Field(default=0, ge=0, le=200)
     budget: float = Field(default=100, ge=60, le=200)
     start_gw: int = Field(default=6, ge=1, le=38)
-    horizon: int = Field(default=4, ge=1, le=14)
+    horizon: int = Field(default=4, ge=1, le=38)
     free_transfers: int = Field(default=1, ge=0, le=5)
     max_transfers: int = Field(default=2, ge=0, le=15)
     decay: float = Field(default=0.9, ge=0.5, le=1)
@@ -191,8 +244,12 @@ class SolveRequest(ForecastRequest):
     risk: float = Field(default=0, ge=-0.5, le=0.5)
     locked: list[int] = Field(default_factory=list, max_length=15)
     excluded: list[int] = Field(default_factory=list, max_length=700)
+    transfer_limits: dict[str, StrictInt] = Field(default_factory=dict)
+    locked_by_gw: dict[str, list[StrictInt]] = Field(default_factory=dict)
+    excluded_by_gw: dict[str, list[StrictInt]] = Field(default_factory=dict)
+    captain_locks: dict[str, StrictInt] = Field(default_factory=dict)
     chips: dict[str, str] = Field(default_factory=dict)
-    purchase_prices: dict[str, float] = Field(default_factory=dict)
+    purchase_prices: dict[str, Annotated[float, Field(gt=0, le=200, allow_inf_nan=False)]] = Field(default_factory=dict)
     seconds: int = Field(default=15, ge=2, le=45)
     used_chips: list[ChipUsage] = Field(default_factory=list, max_length=8)
 
@@ -221,9 +278,21 @@ class PlanRequest(ForecastRequest):
     base_squad: list[int] = Field(min_length=15, max_length=15)
     bank: float = Field(default=0, ge=0, le=200)
     free_transfers: int = Field(default=1, ge=0, le=5)
-    purchase_prices: dict[str, float] = Field(default_factory=dict)
+    purchase_prices: dict[str, Annotated[float, Field(gt=0, le=200, allow_inf_nan=False)]] = Field(default_factory=dict)
     weeks: list[Week] = Field(min_length=1, max_length=38)
     used_chips: list[ChipUsage] = Field(default_factory=list, max_length=8)
+
+
+class ChipStrategyRequest(SolveRequest):
+    squad: list[int] = Field(default_factory=list, max_length=15)
+    auto_chip: Literal["wildcard", "freehit"]
+    chip_half: StrictInt = Field(default=1, ge=1, le=2)
+    candidate_gws: list[StrictInt] = Field(default_factory=list, max_length=38)
+    max_candidates: int = Field(default=4, ge=1, le=8)
+    budget_seconds: int = Field(default=120, ge=30, le=240)
+    seconds: int = Field(default=6, ge=2, le=12)
+    name: str = Field(default="Chip timing", max_length=120)
+    source_plan: PlanRequest | None = None
 
 
 @app.get("/api/health")
@@ -261,7 +330,15 @@ def refresh():
 
 @app.get("/api/players/{player_id}")
 def detail(player_id: int, gw: int | None = None):
-    payload = forecast_for(ForecastRequest())
+    return player_detail(player_id, gw, forecast_for(ForecastRequest()))
+
+
+@app.post("/api/players/{player_id}")
+def scenario_detail(player_id: int, request: ForecastRequest, gw: int | None = None):
+    return player_detail(player_id, gw, forecast_for(request))
+
+
+def player_detail(player_id, gw, payload):
     player = next((p for p in payload["players"] if p["id"] == player_id), None)
     if player is None:
         raise HTTPException(404, "Player not found.")
@@ -275,12 +352,9 @@ def detail(player_id: int, gw: int | None = None):
 @app.post("/api/optimise")
 def solve(request: SolveRequest):
     payload = forecast_for(request)
-    if (
-        request.start_gw not in payload["gameweeks"]
-        or request.start_gw + request.horizon - 1 > payload["gameweeks"][-1]
-    ):
+    if request.start_gw not in payload["gameweeks"]:
         raise HTTPException(
-            422, "The requested horizon exceeds the available forecast window."
+            422, "The start gameweek is outside the available forecast window."
         )
     args = request.model_dump(exclude=set(ForecastRequest.model_fields))
     try:
@@ -306,10 +380,7 @@ def lineup(request: SolveRequest):
 @app.post("/api/sensitivity")
 def start_sensitivity(request: SensitivityRequest):
     payload = forecast_for(request)
-    if (
-        request.start_gw not in payload["gameweeks"]
-        or request.start_gw + request.horizon - 1 > payload["gameweeks"][-1]
-    ):
+    if request.start_gw not in payload["gameweeks"]:
         raise HTTPException(
             422, "The requested horizon exceeds the available forecast window."
         )
@@ -320,6 +391,7 @@ def start_sensitivity(request: SensitivityRequest):
         "name",
     }
     args = request.model_dump(exclude=extra_fields)
+    args["horizon"] = min(args["horizon"], 39 - request.start_gw)
     try:
         return sensitivity_jobs.start(
             payload,
@@ -356,7 +428,10 @@ def cancel_sensitivity(job_id: str):
 
 @app.post("/api/plan/validate")
 def validate_plan(request: PlanRequest):
-    payload = forecast_for(request)
+    return validate_plan_payload(request, forecast_for(request))
+
+
+def validate_plan_payload(request: PlanRequest, payload):
     players = payload["players"]
     lookup = {p["id"]: p for p in players}
     errors = validate_squad(request.base_squad, players)
@@ -369,7 +444,13 @@ def validate_plan(request: PlanRequest):
         i: round(request.purchase_prices.get(str(i), lookup[i]["price"]) * 10)
         for i in squad
     }
-    used = {(c.chip, 1 if c.gw <= 19 else 2) for c in request.used_chips}
+    try:
+        used = validate_chip_history(
+            [c.model_dump() for c in request.used_chips],
+            min(week.gw for week in request.weeks),
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     output = []
     previous_gw = None
     for week in sorted(request.weeks, key=lambda w: w.gw):
@@ -392,7 +473,7 @@ def validate_plan(request: PlanRequest):
             or len(set(week.bench)) != 4
         ):
             errors.append("Bench must contain the four remaining squad players.")
-        elif lookup[week.bench[0]]["position_id"] != 1:
+        elif week.bench[0] not in lookup or lookup[week.bench[0]]["position_id"] != 1:
             errors.append("The reserve goalkeeper must occupy the first bench slot.")
         if week.chip != "none":
             # FPL grants chips in each half; allow one of each per half.
@@ -402,6 +483,8 @@ def validate_plan(request: PlanRequest):
                     "The same chip cannot be used twice in one half of the season."
                 )
             used.add(key)
+        if errors:
+            raise HTTPException(422, {"gw": week.gw, "errors": errors})
         ins = [i for i in week.squad if i not in squad]
         outs = [i for i in squad if i not in week.squad]
         if len(ins) != len(outs):
@@ -459,6 +542,13 @@ def validate_plan(request: PlanRequest):
                 purchases[i] = round(lookup[i]["price"] * 10)
             squad = week.squad[:]
             bank = nextbank
+        # These are the holdings entering the following GW. A Free Hit's
+        # temporary bank/squad must never become the next branch's baseline.
+        output[-1].update({
+            "permanent_squad": squad[:],
+            "permanent_bank": bank / 10,
+            "purchase_prices": {str(i): price / 10 for i, price in purchases.items()},
+        })
         ft = nextft
     return {
         "valid": True,
@@ -469,6 +559,73 @@ def validate_plan(request: PlanRequest):
             "Expected autosubs respect bench order and formation; vice fallback is included. Player and fixture appearance events are assumed independent, and these probabilities are uncalibrated.",
         ],
     }
+
+
+@app.post("/api/chips/recommend")
+def chip_recommendations(request: PlanRequest):
+    # One frozen payload for initial validation, marginal scoring and final
+    # independent validation. Repeated provider reads cannot shift the totals.
+    payload = forecast_for(request)
+    baseline = validate_plan_payload(request, payload)
+    try:
+        result = recommend_chips(
+            baseline["weeks"], payload["players"],
+            [usage.model_dump() for usage in request.used_chips],
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    proposed = request.model_copy(update={"weeks": [Week.model_validate(week) for week in result["weeks"]]})
+    validated = validate_plan_payload(proposed, payload)
+    before = sum(week["net_points"] for week in baseline["weeks"])
+    after = sum(week["net_points"] for week in validated["weeks"])
+    return {
+        **result, "weeks": validated["weeks"], "baseline_net_points": before,
+        "recommended_net_points": after, "improvement": after - before,
+    }
+
+
+@app.post("/api/chip-strategy")
+def start_chip_strategy(request: ChipStrategyRequest):
+    # Acquire every requested point/minutes/stat layer once. Worker inputs are
+    # then deep-copied; a later refresh or settings edit cannot change a job.
+    payload = forecast_for(request)
+    if request.start_gw not in payload["gameweeks"]:
+        raise HTTPException(422, "The start gameweek is outside the forecast window.")
+    fields = set(ForecastRequest.model_fields) | {
+        "auto_chip", "chip_half", "candidate_gws", "max_candidates",
+        "budget_seconds", "name", "source_plan",
+    }
+    args = request.model_dump(exclude=fields)
+    args["horizon"] = min(args["horizon"], 39 - request.start_gw)
+    settings = {"auto_chip": request.auto_chip, "chip_half": request.chip_half,
+                "candidate_gws": request.candidate_gws, "max_candidates": request.max_candidates,
+                "budget_seconds": request.budget_seconds, "name": request.name}
+    source = request.source_plan.model_dump(exclude=set(ForecastRequest.model_fields)) if request.source_plan else None
+    try:
+        return chip_strategy_jobs.start(
+            payload, args, settings, source=source,
+            configuration=request.model_dump(include=set(ForecastRequest.model_fields)),
+        )
+    except ChipStrategyConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.get("/api/chip-strategy/{job_id}")
+def get_chip_strategy(job_id: str):
+    try:
+        return chip_strategy_jobs.get(job_id)
+    except KeyError as exc:
+        raise HTTPException(404, "This chip search is no longer on the server. It may have restarted; start a new search.") from exc
+
+
+@app.post("/api/chip-strategy/{job_id}/cancel")
+def cancel_chip_strategy(job_id: str):
+    try:
+        return chip_strategy_jobs.cancel(job_id)
+    except KeyError as exc:
+        raise HTTPException(404, "This chip search is no longer on the server.") from exc
 
 
 @app.get("/api/teams/{entry_id}")
@@ -619,6 +776,24 @@ def evaluation():
     return {"available": True, **json.loads(path.read_text(encoding="utf-8"))}
 
 
+@app.get("/api/market-history")
+def get_market_history(
+    gameweek: int | None = None, fixture_id: int | None = None,
+    team: str | None = None, source: str | None = None,
+    since: str | None = None, until: str | None = None,
+):
+    try:
+        return market_history(gameweek=gameweek, fixture_id=fixture_id, team=team,
+                              source=source, since=since, until=until)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.post("/api/market-history/capture")
+def capture_cached_market_history():
+    return capture_market_history()
+
+
 @app.get("/api/prospective")
 def prospective_report():
     path = ROOT / "data" / "prospective.json"
@@ -665,7 +840,15 @@ def score_lead_times():
 
 @app.get("/api/export/projections.csv")
 def export_projections():
-    payload = forecast_for(ForecastRequest())
+    return projections_csv(forecast_for(ForecastRequest()))
+
+
+@app.post("/api/export/projections.csv")
+def export_scenario_projections(request: ForecastRequest):
+    return projections_csv(forecast_for(request))
+
+
+def projections_csv(payload):
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow(
@@ -682,6 +865,7 @@ def export_projections():
             "xg",
             "xa",
             "source",
+            "scenario",
             "model_version",
             "generated_at",
         ]
@@ -702,6 +886,7 @@ def export_projections():
                     round(sum(f["xg"] for f in v["fixtures"]), 4),
                     round(sum(f["xa"] for f in v["fixtures"]), 4),
                     "; ".join(sorted({f["source"] for f in v["fixtures"]})),
+                    json.dumps(v.get("stat_scenario") or v.get("minutes_scenario") or {}, ensure_ascii=False),
                     payload["model_version"],
                     payload["loaded_at"],
                 ]
@@ -816,6 +1001,7 @@ def save_snapshot(request: ForecastRequest, refresh_inputs: bool = True):
                     "models": models,
                     "prediction_source": forecast.get("prediction_source"),
                     "minutes_scenario": forecast.get("minutes_scenario"),
+                    "stat_scenario": forecast.get("stat_scenario"),
                     "fixture_ids": [fixture["id"] for fixture in forecast["fixtures"]],
                 }
             )

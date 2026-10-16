@@ -7,7 +7,13 @@ import {
   LoaderCircle,
   AlertTriangle,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import type { Player, Week } from "./types";
 import { clubColors, fmt, money, xp } from "./lib";
 
@@ -105,6 +111,11 @@ export function Pitch({
   onSelect,
   onDetail,
   onBenchSwap,
+  value,
+  swapTargets,
+  onSwap,
+  interactionMode = "inspect",
+  disabled = false,
 }: {
   week: Week;
   players: Player[];
@@ -112,7 +123,13 @@ export function Pitch({
   onSelect: (id: number) => void;
   onDetail: (id: number) => void;
   onBenchSwap: (id: number) => void;
+  value?: (player: Player) => string;
+  swapTargets?: number[];
+  onSwap?: (from: number, to: number) => void;
+  interactionMode?: "inspect" | "substitute";
+  disabled?: boolean;
 }) {
+  const [dragged, setDragged] = useState<number | null>(null);
   const lookup = new Map(players.map((p) => [p.id, p]));
   const tile = (id: number, bench = false) => {
     const p = lookup.get(id);
@@ -120,24 +137,50 @@ export function Pitch({
     const f = p.gw[String(week.gw)];
     return (
       <div
-        className={`player-tile ${selected === id ? "player-selected" : ""} ${bench ? "bench-player" : ""}`}
+        className={`player-tile ${selected === id ? "player-selected" : ""} ${bench ? "bench-player" : ""} ${swapTargets?.includes(id) ? "swap-target" : ""}`}
         key={id}
+        onDragOver={(event) => {
+          if (!disabled && onSwap && dragged !== null) event.preventDefault();
+        }}
+        onDrop={(event) => {
+          event.preventDefault();
+          if (!disabled && onSwap && dragged !== null) onSwap(dragged, id);
+          setDragged(null);
+        }}
       >
         <button
-          className="player-info"
-          aria-label={`Details for ${p.name}`}
-          onClick={() => onDetail(id)}
-        >
-          <Info size={12} />
-        </button>
-        <button
           className="player-select"
-          onClick={() =>
-            bench && selected !== null && week.starters.includes(selected)
-              ? onBenchSwap(id)
-              : onSelect(id)
+          disabled={disabled}
+          draggable={!disabled && Boolean(onSwap)}
+          onDragStart={(event) => {
+            if (disabled || !onSwap) {
+              event.preventDefault();
+              return;
+            }
+            setDragged(id);
+            event.dataTransfer.setData("text/plain", String(id));
+            event.dataTransfer.effectAllowed = "move";
+          }}
+          onDragEnd={() => setDragged(null)}
+          onClick={() => {
+            if (disabled) return;
+            if (selected !== null && swapTargets?.includes(id)) onBenchSwap(id);
+            else onSelect(id);
+          }}
+          onDoubleClick={
+            interactionMode === "inspect" ? () => onDetail(id) : undefined
           }
-          aria-label={`Select ${p.name}`}
+          aria-label={
+            swapTargets?.includes(id)
+              ? `Substitute ${p.name}`
+              : interactionMode === "substitute"
+                ? `${selected === id ? "Deselect" : "Select"} ${p.name}`
+                : `Open ${p.name}`
+          }
+          aria-pressed={
+            interactionMode === "substitute" ? selected === id : undefined
+          }
+          aria-haspopup={interactionMode === "inspect" ? "dialog" : undefined}
         >
           <div className="player-shirt">
             <Shirt player={p} />
@@ -156,14 +199,27 @@ export function Pitch({
                 .map((v) => `${v.opponent} (${v.home ? "H" : "A"})`)
                 .join(" + ") || "Blank"}
             </span>
-            <b>{fmt(xp(p, week.gw))}</b>
+            <b>{value ? value(p) : fmt(xp(p, week.gw))}</b>
           </div>
         </button>
+        {interactionMode === "substitute" ? (
+          <button
+            className="player-info"
+            onClick={() => onDetail(id)}
+            aria-label={`Info for ${p.name}`}
+            title={`Info for ${p.name}`}
+            aria-haspopup="dialog"
+          >
+            <Info size={14} />
+          </button>
+        ) : null}
       </div>
     );
   };
   return (
-    <div className="pitch-wrap">
+    <div
+      className={`pitch-wrap ${interactionMode === "substitute" ? "pitch-select-mode" : ""}`}
+    >
       <div className="pitch">
         <svg
           className="pitch-lines"
@@ -210,28 +266,133 @@ export function Modal({
   children,
   onClose,
   wide = false,
+  className = "",
+  anchor,
 }: {
   title: string;
   subtitle?: string;
   children: ReactNode;
   onClose: () => void;
   wide?: boolean;
+  className?: string;
+  anchor?: { left: number; right: number; top: number; bottom: number } | null;
 }) {
+  const dialog = useRef<HTMLElement>(null);
+  const [position, setPosition] = useState<{
+    left: number;
+    top: number;
+  } | null>(null);
+  const close = useRef(onClose);
+  close.current = onClose;
+  useLayoutEffect(() => {
+    const place = () => {
+      if (!anchor || window.innerWidth <= 700) {
+        setPosition(null);
+        return;
+      }
+      const width = Math.min(480, window.innerWidth - 24),
+        height = Math.min(660, window.innerHeight - 24);
+      const left =
+        anchor.left - width - 12 >= 12
+          ? anchor.left - width - 12
+          : anchor.right + width + 12 <= window.innerWidth
+            ? anchor.right + 12
+            : window.innerWidth - width - 12;
+      setPosition({
+        left: Math.max(12, left),
+        top: Math.max(
+          12,
+          Math.min(window.innerHeight - height - 12, anchor.top - 100),
+        ),
+      });
+    };
+    place();
+    window.addEventListener("resize", place);
+    return () => window.removeEventListener("resize", place);
+  }, [anchor]);
+  useEffect(() => {
+    if (!position) return;
+    const outside = (event: PointerEvent) => {
+      if (
+        !dialog.current?.contains(event.target as Node) &&
+        !(event.target as HTMLElement).closest(
+          ".player-select,.projection-value",
+        )
+      )
+        close.current();
+    };
+    document.addEventListener("pointerdown", outside);
+    return () => document.removeEventListener("pointerdown", outside);
+  }, [Boolean(position)]);
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    const node = dialog.current!;
+    const focusable = () =>
+      [
+        ...node.querySelectorAll<HTMLElement>(
+          'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], summary, [tabindex="0"]',
+        ),
+      ].filter(
+        (item) => item.tabIndex >= 0 && item.getClientRects().length > 0,
+      );
+    (node.querySelector<HTMLElement>("[autofocus]") ?? node).focus();
+    const keyboard = (event: KeyboardEvent) => {
+      if ([...document.querySelectorAll('[aria-modal="true"]')].at(-1) !== node)
+        return;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        close.current();
+      }
+      if (event.key === "Tab") {
+        const items = focusable(),
+          first = items[0],
+          last = items.at(-1);
+        if (!first) {
+          event.preventDefault();
+          node.focus();
+          return;
+        }
+        const entering =
+          !node.contains(document.activeElement) ||
+          document.activeElement === node;
+        if (event.shiftKey && (document.activeElement === first || entering)) {
+          event.preventDefault();
+          last!.focus();
+        } else if (
+          !event.shiftKey &&
+          (document.activeElement === last || entering)
+        ) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+    };
+    document.addEventListener("keydown", keyboard, true);
+    return () => {
+      document.removeEventListener("keydown", keyboard, true);
+      if (previous?.isConnected) previous.focus({ preventScroll: true });
+    };
+  }, []);
   return (
     <div
-      className="modal-backdrop"
+      className={`modal-backdrop ${position ? "floating-backdrop" : ""}`}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
       <section
-        className={`modal ${wide ? "modal-wide" : ""}`}
+        ref={dialog}
+        tabIndex={-1}
+        className={`modal ${wide ? "modal-wide" : ""} ${className} ${position ? "floating-player-window" : ""}`}
+        style={
+          position
+            ? { position: "fixed", left: position.left, top: position.top }
+            : undefined
+        }
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        onKeyDown={(e) => {
-          if (e.key === "Escape") onClose();
-        }}
       >
         <header className="modal-header">
           <div>
@@ -248,6 +409,60 @@ export function Modal({
         </header>
         {children}
       </section>
+    </div>
+  );
+}
+
+export function ActionMenu({
+  label,
+  children,
+}: {
+  label: ReactNode;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const outside = (event: PointerEvent) => {
+      if (!root.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.stopPropagation();
+        setOpen(false);
+        root.current?.querySelector("button")?.focus();
+      }
+    };
+    document.addEventListener("pointerdown", outside);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("pointerdown", outside);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [open]);
+  return (
+    <div className="action-menu" ref={root}>
+      <button
+        className="button small"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+      >
+        {label}
+      </button>
+      {open ? (
+        <div
+          className="action-menu-items"
+          role="menu"
+          onClick={(event) => {
+            if ((event.target as HTMLElement).closest("button:not(:disabled)"))
+              setOpen(false);
+          }}
+        >
+          {children}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -386,7 +601,11 @@ export function LineChart({
     right = 15;
   const plotHeight = height - top - bottom,
     plotWidth = width - left - right;
-  const values = series.flatMap((s) => s.values.filter((value): value is number => value !== null && Number.isFinite(value)));
+  const values = series.flatMap((s) =>
+    s.values.filter(
+      (value): value is number => value !== null && Number.isFinite(value),
+    ),
+  );
   const max = Math.max(1, ...values) * 1.1;
   const min = Math.min(0, ...values);
   const range = max - min;
@@ -420,24 +639,34 @@ export function LineChart({
         ))}
         {series.map((s, index) => (
           <g key={s.name}>
-          <path
-            d={s.values
-              .map(
-                (v, i) =>
-                  v === null || !Number.isFinite(v) ? "" :
-                  `${i === 0 || s.values[i - 1] === null || !Number.isFinite(s.values[i - 1]) ? "M" : "L"}${left + (i * plotWidth) / Math.max(1, s.values.length - 1)},${top + ((max - v) / range) * plotHeight}`,
-              )
-              .join(" ")}
-            fill="none"
-            stroke={colors[index % colors.length]}
-            strokeWidth="2.4"
-            strokeLinejoin="round"
-          />
-          {s.values.map((value, i) => value === null || !Number.isFinite(value) ? null : (
-            <circle key={i} cx={left + (i * plotWidth) / Math.max(1, s.values.length - 1)} cy={top + ((max - value) / range) * plotHeight} r="2.7" fill={colors[index % colors.length]}>
-              <title>{s.name} · {labels[i]}: {fmt(value, 2)}</title>
-            </circle>
-          ))}
+            <path
+              d={s.values
+                .map((v, i) =>
+                  v === null || !Number.isFinite(v)
+                    ? ""
+                    : `${i === 0 || s.values[i - 1] === null || !Number.isFinite(s.values[i - 1]) ? "M" : "L"}${left + (i * plotWidth) / Math.max(1, s.values.length - 1)},${top + ((max - v) / range) * plotHeight}`,
+                )
+                .join(" ")}
+              fill="none"
+              stroke={colors[index % colors.length]}
+              strokeWidth="2.4"
+              strokeLinejoin="round"
+            />
+            {s.values.map((value, i) =>
+              value === null || !Number.isFinite(value) ? null : (
+                <circle
+                  key={i}
+                  cx={left + (i * plotWidth) / Math.max(1, s.values.length - 1)}
+                  cy={top + ((max - value) / range) * plotHeight}
+                  r="2.7"
+                  fill={colors[index % colors.length]}
+                >
+                  <title>
+                    {s.name} · {labels[i]}: {fmt(value, 2)}
+                  </title>
+                </circle>
+              ),
+            )}
           </g>
         ))}
         {labels.map(

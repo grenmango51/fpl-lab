@@ -1,0 +1,270 @@
+.team-strengths {
+  container-type: inline-size;
+  color: #dce5f3;
+  padding: 14px 0;
+}
+.ts-heading,
+.ts-heading > div,
+.ts-team-heading,
+.ts-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.ts-heading {
+  justify-content: space-between;
+}
+.ts-heading h3 {
+  margin: 0;
+  font-size: 15px;
+}
+.ts-assumption {
+  color: #ffc09e;
+  background: #ff875516;
+  border: 1px solid #ff875536;
+  padding: 4px 7px;
+  border-radius: 4px;
+  font-size: 10px;
+}
+.ts-search input {
+  max-width: 180px;
+  min-height: 34px;
+  font-size: 12px;
+}
+.team-strengths .ts-caption {
+  font-size: 11px;
+  color: #94a6c1;
+  line-height: 1.5;
+  margin: 8px 0;
+}
+.ts-plot {
+  position: relative;
+  border: 1px solid #29374d;
+  border-radius: 8px;
+  background:
+    radial-gradient(ellipse at 75% 20%, #192c4140, transparent), #0a1424;
+  overflow: hidden;
+  padding: 8px 0 20px;
+}
+.ts-plot svg {
+  width: 100%;
+  height: 300px;
+  display: block;
+  overflow: visible;
+}
+.ts-grid line {
+  stroke: #26354c;
+  stroke-width: 1;
+  stroke-dasharray: 3 5;
+  vector-effect: non-scaling-stroke;
+}
+.ts-grid text {
+  fill: #8295b2;
+  font-size: 10px;
+}
+.ts-grid.ts-base line {
+  stroke: #6b7b92;
+  stroke-dasharray: 4 4;
+}
+.ts-direction {
+  fill: #b2c0d5;
+  font-size: 11px;
+}
+.ts-defence-direction {
+  position: absolute;
+  right: 18px;
+  bottom: 6px;
+  color: #b2c0d5;
+  font-size: 11px;
+}
+.ts-point {
+  cursor: grab;
+  touch-action: none;
+  outline: none;
+}
+.ts-point:active {
+  cursor: grabbing;
+}
+.ts-point circle {
+  fill: #8da9cd;
+}
+.ts-point rect {
+  fill: #18283e;
+  stroke: #455e80;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+.ts-point text {
+  fill: #e0e9f6;
+  font-size: 11px;
+  font-weight: 650;
+  user-select: none;
+}
+.ts-point .ts-leader {
+  stroke: #567193;
+  stroke-width: 0.8;
+  opacity: 0.65;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+.ts-point:hover rect,
+.ts-point:focus-visible rect,
+.ts-point.is-selected rect {
+  fill: #553428;
+  stroke: #ff9a6b;
+  stroke-width: 2;
+}
+.ts-point.is-selected circle {
+  fill: #ff9a6b;
+  r: 5;
+}
+.ts-point:focus-visible rect {
+  stroke: white;
+}
+.ts-editor {
+  border: 1px solid #2d3c53;
+  border-radius: 7px;
+  background: #101c2e;
+  padding: 12px;
+}
+.ts-team-heading {
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.ts-team-heading select {
+  max-width: 100%;
+  min-height: 36px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.ts-team-heading button {
+  font-size: 11px;
+  color: #ffb28c;
+}
+.ts-source {
+  display: grid;
+  gap: 5px;
+  padding: 9px 0 12px;
+  border-bottom: 1px solid #2b3a51;
+  margin-bottom: 12px;
+}
+.ts-source strong {
+  font-size: 11px;
+  color: #91a4bf;
+  font-weight: 500;
+}
+.ts-source span {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.ts-source small {
+  font-size: 10px;
+  color: #8599b5;
+  overflow-wrap: anywhere;
+}
+.ts-factors {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.ts-factors label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  font-size: 11px;
+  color: #afbed2;
+}
+.ts-factors label > div {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.ts-factors input {
+  width: 100%;
+  min-width: 0;
+  min-height: 36px;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.ts-factors input[aria-invalid="true"] {
+  border-color: #f28e8e;
+}
+.ts-actions {
+  gap: 7px;
+  margin-top: 12px;
+}
+.ts-actions button {
+  font-size: 11px;
+  min-height: 34px;
+  border: 1px solid #3b4d68;
+  border-radius: 5px;
+  padding: 7px 10px;
+}
+.ts-actions .ts-apply {
+  background: #e87848;
+  border-color: #e87848;
+  color: #121923;
+  font-weight: 700;
+}
+.ts-actions button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.ts-error {
+  color: #ffa3a3;
+  font-size: 12px;
+}
+.ts-notice {
+  display: block;
+  min-height: 15px;
+  color: #ffc09e;
+  font-size: 11px;
+}
+@container (max-width: 400px) {
+  .ts-heading {
+    align-items: flex-start;
+  }
+  .ts-heading > div {
+    gap: 6px;
+  }
+  .ts-search {
+    width: 100%;
+  }
+  .ts-search input {
+    max-width: none;
+    width: 100%;
+  }
+  .ts-plot svg {
+    height: 270px;
+  }
+  .ts-point text {
+    font-size: 12px;
+  }
+  .ts-team-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .ts-actions button {
+    min-height: 40px;
+  }
+}
+
+.ts-unavailable {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 8px 0;
+  font-size: 11px;
+  color: #94a6c1;
+}
+.ts-unavailable button {
+  border: 1px solid #455e80;
+  border-radius: 4px;
+  padding: 5px 7px;
+}
+.ts-unavailable button[aria-pressed="true"] {
+  border-color: #ff9a6b;
+  color: #ffb28c;
+}

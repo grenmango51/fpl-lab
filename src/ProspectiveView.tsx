@@ -285,10 +285,17 @@ export function ProspectiveView({
         {report?.method && <p className="help-text">{report.method}</p>}
         {data.forecast_layers?.map((layer) => (
           <p className="help-text" key={layer.name}>
-            {layer.name} · {fmt(layer.weight * 100, 0)}% weight ·{" "}
-            {layer.direct_forecasts.toLocaleString()} direct /{" "}
-            {layer.extrapolated_forecasts.toLocaleString()} extrapolated ·{" "}
-            {layer.half_life}-GW influence half-life.
+            {layer.kind === "user-scenario" ? (
+              `${layer.name} · your assumptions; exploratory evaluation.`
+            ) : (
+              <>
+                {layer.name} · {fmt((layer.weight ?? 0) * 100, 0)}% weight ·{" "}
+                {layer.direct_forecasts?.toLocaleString() ?? "Unknown"} direct /{" "}
+                {layer.extrapolated_forecasts?.toLocaleString() ?? "Unknown"}{" "}
+                extrapolated · {layer.half_life ?? "Unknown"}-GW influence
+                half-life.
+              </>
+            )}
           </p>
         ))}
       </details>

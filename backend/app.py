@@ -25,11 +25,17 @@ from .ensemble import blend_forecasts
 from .sensitivity import jobs as sensitivity_jobs
 from .capture import capture_receipt, latest_capture_receipts
 from .scenarios import apply_stat_schedule, canonical_stat_schedule
+from .team_scenarios import apply_team_strengths, canonical_team_strengths
+from .fixture_scenarios import apply_fixture_moves, canonical_fixture_moves
 from .chip_planner import recommend_chips
 from .chip_strategy import jobs as chip_strategy_jobs, ChipStrategyConflict
 from .market_history import market_history, capture_market_history
+from .season_data import router as season_data_router
+from .fixture_catalog import router as fixture_catalog_router
 
 app = FastAPI(title="Open FPL", version="0.1.0")
+app.include_router(season_data_router)
+app.include_router(fixture_catalog_router)
 app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=3)
 app.add_middleware(
     CORSMiddleware,
@@ -83,7 +89,22 @@ class StatScenario(BaseModel):
         return self
 
 
+class TeamStrength(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    attack: float = Field(default=1, ge=0.5, le=2)
+    defence: float = Field(default=1, ge=0.5, le=2)
+
+    @field_validator("attack", "defence", mode="before")
+    @classmethod
+    def numeric(cls, value):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError("Team strengths must be finite numeric factors.")
+        return value
+
+
 class ForecastRequest(BaseModel):
+    fixture_moves: dict[str, StrictInt | None] = Field(default_factory=dict)
+    team_strengths: dict[str, TeamStrength] = Field(default_factory=dict, max_length=20)
     overrides: dict[str, float] = Field(default_factory=dict)
     minutes_schedule: dict[str, dict[str, MinutesScenario]] = Field(
         default_factory=dict
@@ -143,6 +164,13 @@ class ForecastRequest(BaseModel):
 
 def forecast_for(request: ForecastRequest, *, dataset=None):
     dataset = dataset if dataset is not None else get_data()
+    try:
+        moves = canonical_fixture_moves(request.fixture_moves, dataset)
+        strengths = canonical_team_strengths(
+            request.model_dump()["team_strengths"], dataset["teams"].values()
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     schedule = request.validated_schedule(dataset)
     stats = request.validated_stats(dataset)
     overrides = request.validated_overrides()
@@ -217,6 +245,10 @@ def forecast_for(request: ForecastRequest, *, dataset=None):
             request.custom_name or "Imported CSV",
         )
     try:
+        payload = apply_fixture_moves(
+            payload, moves, dataset, overrides, request.use_market, schedule,
+        )
+        payload = apply_team_strengths(payload, strengths, dataset)
         return apply_stat_schedule(
             payload, stats,
             dataset["bootstrap"].get("game_config", {}).get("scoring"),
@@ -342,10 +374,18 @@ def player_detail(player_id, gw, payload):
     player = next((p for p in payload["players"] if p["id"] == player_id), None)
     if player is None:
         raise HTTPException(404, "Player not found.")
+    selected_gw = gw or payload["next_gw"]
+    simulation = simulate_player(player, selected_gw)
+    if (player["gw"].get(str(selected_gw), {}).get("team_strength_scenario")
+            or player["gw"].get(str(selected_gw), {}).get("fixture_scenario")):
+        simulation = {**simulation,
+            "label": "HUMAN scenario component-event simulation; uncalibrated",
+            "limitations": ["Uses scenario event components. The existing component simulation excludes provider/imported point anchors unless an individual stat scenario is also present, and uses default scoring."],
+        }
     return {
         "player": player,
         "history": player_history(player_id),
-        "simulation": simulate_player(player, gw or payload["next_gw"]),
+        "simulation": simulation,
     }
 
 
@@ -886,7 +926,16 @@ def projections_csv(payload):
                     round(sum(f["xg"] for f in v["fixtures"]), 4),
                     round(sum(f["xa"] for f in v["fixtures"]), 4),
                     "; ".join(sorted({f["source"] for f in v["fixtures"]})),
-                    json.dumps(v.get("stat_scenario") or v.get("minutes_scenario") or {}, ensure_ascii=False),
+                    json.dumps({
+                        **(v.get("stat_scenario") or v.get("minutes_scenario") or {}),
+                        **({"fixture_scenario": v["fixture_scenario"]}
+                           if "fixture_scenario" in v else {}),
+                        **({"team_strength_scenario": {
+                            **v["team_strength_scenario"],
+                            "adjustments": payload["team_strength_scenario"]["adjustments"],
+                        }}
+                           if "team_strength_scenario" in v else {}),
+                    }, ensure_ascii=False),
                     payload["model_version"],
                     payload["loaded_at"],
                 ]
@@ -898,6 +947,20 @@ def projections_csv(payload):
             "Content-Disposition": "attachment; filename=open-fpl-projections.csv"
         },
     )
+
+
+def mark_team_scenario_receipt(receipt, payload, gw):
+    if any("fixture_scenario" in p["gw"][str(gw)] for p in payload["players"]):
+        receipt["eligible_primary"]["Live ensemble"] = False
+        receipt["eligibility_reasons"]["Live ensemble"].append(
+            "HUMAN fixture permutations are exploratory; official source events and schedule remain separate."
+        )
+        receipt["fixture_scenario"] = payload["fixture_scenario"]
+    if any("team_strength_scenario" in p["gw"][str(gw)] for p in payload["players"]):
+        receipt["eligible_primary"]["Live ensemble"] = False
+        receipt["eligibility_reasons"]["Live ensemble"].append(
+            "HUMAN team strengths are a planning scenario, not an independently sourced forecast."
+        )
 
 
 @app.post("/api/snapshot")
@@ -941,6 +1004,7 @@ def save_snapshot(request: ForecastRequest, refresh_inputs: bool = True):
     receipt = capture_receipt(
         before, dataset, payload, component, request, started, now
     )
+    mark_team_scenario_receipt(receipt, payload, dataset["next_gw"])
     receipt["refresh_requested"] = refresh_inputs
     snapshot = {
         "season": dataset["season"],
@@ -956,6 +1020,9 @@ def save_snapshot(request: ForecastRequest, refresh_inputs: bool = True):
             ).encode()
         ).hexdigest(),
         "sources": payload["sources"],
+        **({"fixture_scenario": payload["fixture_scenario"],
+            "fixture_schedule": payload["fixture_schedule"]}
+           if "fixture_scenario" in payload else {}),
         "players": [
             {
                 "id": p["id"],
@@ -980,6 +1047,7 @@ def save_snapshot(request: ForecastRequest, refresh_inputs: bool = True):
         target_receipt = capture_receipt(
             before, dataset, payload, component, request, started, now, target_gw=gw
         )
+        mark_team_scenario_receipt(target_receipt, payload, gw)
         target_receipt["refresh_requested"] = refresh_inputs
         target_players = []
         for player in payload["players"]:
@@ -1002,6 +1070,14 @@ def save_snapshot(request: ForecastRequest, refresh_inputs: bool = True):
                     "prediction_source": forecast.get("prediction_source"),
                     "minutes_scenario": forecast.get("minutes_scenario"),
                     "stat_scenario": forecast.get("stat_scenario"),
+                    "team_strength_scenario": forecast.get("team_strength_scenario"),
+                    **({"fixture_scenario": forecast["fixture_scenario"],
+                        "fixture_context": [{k: fixture.get(k) for k in (
+                        "id", "source", "source_at", "source_at_scope", "source_extracted_at",
+                        "source_event", "original_event",
+                        "target_event", "original_kickoff", "kickoff")}
+                        for fixture in forecast["fixtures"]]}
+                       if "fixture_scenario" in forecast else {}),
                     "fixture_ids": [fixture["id"] for fixture in forecast["fixtures"]],
                 }
             )
@@ -1010,8 +1086,10 @@ def save_snapshot(request: ForecastRequest, refresh_inputs: bool = True):
             "deadline": target_event["deadline_time"],
             "capture_receipt": target_receipt,
             "fixtures": [
-                {k: fixture.get(k) for k in ("id", "team_h", "team_a", "kickoff_time")}
-                for fixture in dataset["fixtures"]
+                {k: fixture.get(k) for k in ("id", "team_h", "team_a", "kickoff_time",
+                    *(("source_event", "original_event", "original_kickoff")
+                      if "fixture_scenario" in payload else ()))}
+                for fixture in payload.get("fixture_schedule", dataset["fixtures"])
                 if fixture.get("event") == gw
             ],
             "players": target_players,

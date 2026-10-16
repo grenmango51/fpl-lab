@@ -316,12 +316,12 @@ def fixture_projection(
     opp = teams[fixture["team_a"] if home else fixture["team_h"]]["short_name"]
     gw = fixture["event"]
     if use_market:
-        for row in (
+        period = (
             data["joe"]
             .get("projectionsByPeriod", {})
             .get(str(gw), {})
-            .get("fixtures", [])
-        ):
+        )
+        for row in period.get("fixtures", []):
             if (
                 row.get("homeTeamCode") == teams[fixture["team_h"]]["short_name"]
                 and row.get("awayTeamCode") == teams[fixture["team_a"]]["short_name"]
@@ -335,7 +335,9 @@ def fixture_projection(
                         "ga": ga,
                         "cs": cs,
                         "source": "FPL Joe · market",
-                        "source_at": row.get("snapshotTsUtc"),
+                        "source_at": row.get("snapshotTsUtc") or period.get("latestSnapshotTs"),
+                        "source_at_scope": "fixture" if row.get("snapshotTsUtc") else "gameweek latest snapshot",
+                        "source_extracted_at": data.get("sources", {}).get("fpljoe", {}).get("fetched_at"),
                     }
         direct = data.get("elevenify", {})
         # Season sheets are GW aggregates. Do not duplicate them across doubles.
@@ -453,16 +455,16 @@ def canonical_minutes_schedule(minutes_schedule, player_ids, gameweeks):
 
 
 def projections(
-    overrides=None, use_market=True, minutes_schedule=None, *, dataset=None
+    overrides=None, use_market=True, minutes_schedule=None, *, dataset=None, cache=True
 ):
     with _projection_lock:
         return _build_projections(
-            overrides, use_market, minutes_schedule, dataset=dataset
+            overrides, use_market, minutes_schedule, dataset=dataset, cache=cache
         )
 
 
 def _build_projections(
-    overrides=None, use_market=True, minutes_schedule=None, *, dataset=None
+    overrides=None, use_market=True, minutes_schedule=None, *, dataset=None, cache=True
 ):
     global _projections, _projection_key
     data = dataset if dataset is not None else get_data()
@@ -489,7 +491,7 @@ def _build_projections(
         use_market,
         schedule_key,
     )
-    if _projections is not None and _projection_key == key:
+    if cache and _projections is not None and _projection_key == key:
         return _projections
     history = attach_team_xg(data["history"])
     by_player = defaultdict(list)
@@ -569,7 +571,9 @@ def _build_projections(
                 }
         for f in fixtures_by_team[p["team"]]:
             context = fixture_projection(
-                data, f, p["team"], ratings, average, use_market
+                data.get("_fixture_source_data", data),
+                data.get("_fixture_source_by_id", {}).get(f["id"], f),
+                p["team"], ratings, average, use_market
             )
             forecast = components(
                 week_profiles[str(f["event"])],
@@ -593,6 +597,8 @@ def _build_projections(
                 "kickoff": f["kickoff_time"],
                 "source": context["source"],
                 "source_at": context["source_at"],
+                "source_at_scope": context.get("source_at_scope"),
+                "source_extracted_at": context.get("source_extracted_at"),
             }
             item = per_gw[str(f["event"])]
             item["points"] += forecast["points"]
@@ -649,7 +655,7 @@ def _build_projections(
                 "gw": per_gw,
             }
         )
-    _projections = {
+    payload = {
         "players": result,
         "gameweeks": horizon,
         "events": data["bootstrap"]["events"],
@@ -669,8 +675,10 @@ def _build_projections(
             "No head-to-head paid-provider accuracy claim is established.",
         ],
     }
-    _projection_key = key
-    return _projections
+    if cache:
+        _projections = payload
+        _projection_key = key
+    return payload
 
 
 def player_history(player_id):

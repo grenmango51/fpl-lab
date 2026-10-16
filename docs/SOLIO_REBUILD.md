@@ -70,3 +70,54 @@ member full-season optimisation. The observed account has GW7-11.
 The completed build and browser/data checks are recorded in STATUS.md.
 This file is a direct observed feature inventory, not a claim that all
 premium features or proprietary numerical behavior have been reproduced.
+
+## Interaction follow-up, October 14–15
+
+The signed-in free Solio planner was inspected again in the existing Chrome
+session. No membership was purchased and no proprietary forecast feed or source
+code was acquired. Observed details included the small adjacent player popup,
+C/VC/Lock/Ban actions, Transfer/Edit tabs, contextual replacement list, compact
+controls around the goalkeeper, Configure and Actions menus, selectable Plans
+Table/Distribution/Scatter views, collapsible analytical sections, and fixture
+attack/clean-sheet views. The account still exposed GW7–11; gated controls could
+be inventoried but not exercised.
+
+Open FPL now follows those observable interaction patterns using its own
+components, forecasts and branding. The player popup stays alongside the pitch
+on desktop and fits the screen on mobile. It includes a real same-position,
+budget/club-aware replacement list and a confirmation step, rather than routing
+every transfer through the full projections table. Whole-shirt hitboxes, legal
+substitution targets, drag substitutions, captain/vice controls, branch controls,
+resource editing, reversible plan changes and remembered filters are functional.
+The splitter is draggable and keyboard accessible. The original lineup image
+can be previewed and saved as PNG; rendering is verified, browser download
+completion has the automation limitation recorded in STATUS.md.
+
+Table/Scatter compare identical gameweeks and expose which plans are selected.
+The optimiser keeps the pitch present and separates setup, players, rules and
+advanced options. Drafts remain read-only until independently validated adoption.
+Fixture drilldowns retain source units/time scope and never replace team market
+odds with a player's manual scenario.
+
+This is a substantial implementation of the inspected flow, not pixel-identical
+or exhaustive parity. Solio's calibrated distributions, projected effective
+ownership, disruption/risk model, proprietary objective, natural-language rules,
+paid edit units and inaccessible premium screens are not reproduced. Similar
+layout does not imply equal numerical behaviour or forecast accuracy.
+
+## Recovered all-tab review, October 15
+
+The follow-up extends compact controls and contextual navigation to every main
+view and its subtabs. Tab strips reveal the selected item after resizing and
+support arrows/Home/End. Projection player and team metrics retain independent
+choices; filters and subviews survive navigation. Settings groups inputs,
+backups and sources. Market cards open fixture details, and dense tables retain
+internal scrolling on phones. Source times and player match records use readable
+text. The compact desktop editor stacks its stat and minutes forms.
+
+The review confirmed and fixed hidden player History results. Successful draft
+adoption now clears the old Apply action, and optimiser player links preserve
+the previewed GW. Direct checks include a real solve/adoption, fixed-plan chip
+recommendation, GW38 details, desktop/mobile tabs and production smoke checks.
+This recovery continued without subagents. STATUS.md records the checks and
+remaining limits; these changes do not establish exhaustive Solio parity.

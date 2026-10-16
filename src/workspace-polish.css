@@ -1,0 +1,851 @@
+/* Shared control sizes and panel-width layouts across every workspace view. */
+.solio-detail-panel .detail-panel-heading {
+  height: 48px;
+  padding: 5px 14px;
+  gap: 8px;
+  font-size: 11px;
+}
+.detail-panel-heading .workspace-context {
+  min-width: 0;
+  flex: 1;
+}
+.detail-panel-heading select {
+  font-size: 12px;
+  padding: 7px 9px;
+  height: 34px;
+}
+.workspace-context select {
+  width: 100%;
+  max-width: 330px;
+}
+.detail-panel-heading > select {
+  width: 78px;
+  flex-shrink: 0;
+}
+.detail-panel-heading .icon-button {
+  width: 32px;
+  height: 34px;
+  flex-shrink: 0;
+}
+.detail-panel-heading .icon-button:last-child {
+  margin-left: 0;
+}
+.solio-detail-panel > .main-nav {
+  padding: 0 8px;
+  height: 46px;
+  position: relative;
+}
+.solio-detail-panel > .main-nav button {
+  height: 46px;
+  font-size: 11px;
+  padding: 0 12px;
+  min-width: max-content;
+}
+.tab-strip {
+  overflow-x: auto;
+  scrollbar-width: thin;
+  max-width: 100%;
+  position: relative;
+  flex-shrink: 0;
+}
+.tab-strip > button {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.solio-detail-panel .segmented > button {
+  min-height: 36px;
+  padding: 8px 12px;
+  font-size: 12px;
+}
+.solio-detail-panel .button {
+  min-height: 36px;
+  font-size: 12px;
+}
+.solio-detail-panel .icon-button {
+  min-width: 32px;
+  min-height: 32px;
+}
+.solio-detail-panel .field-grid > label,
+.solio-detail-panel .filter-row > label {
+  font-size: 12px;
+  gap: 6px;
+}
+.solio-detail-panel .field-grid input,
+.solio-detail-panel .field-grid select,
+.solio-detail-panel .filter-row select {
+  min-height: 36px;
+  font-size: 13px;
+}
+.solio-detail-panel .view-heading h2 {
+  font-size: 18px;
+}
+.solio-detail-panel .engine-label,
+.solio-detail-panel .subtle-tag,
+.solio-detail-panel .compact-status {
+  font-size: 11px;
+}
+.solio-detail-panel .view-heading {
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.solio-detail-panel .table-toolbar {
+  flex-wrap: wrap;
+  gap: 9px;
+}
+.solio-detail-panel .search-box {
+  min-height: 38px;
+}
+.solio-detail-panel .search-box input {
+  font-size: 13px;
+}
+.solio-detail-panel .data-table th {
+  font-size: 11px;
+}
+.solio-detail-panel .data-table td {
+  font-size: 12px;
+}
+.solio-detail-panel .data-table th,
+.solio-detail-panel .data-table td {
+  font-variant-numeric: tabular-nums;
+}
+.solio-detail-panel .table-footer {
+  font-size: 12px;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.solio-detail-panel .table-footer small {
+  font-size: 11px;
+}
+.solio-detail-panel .compact-details > summary {
+  font-size: 12px;
+  padding: 9px 0;
+  cursor: pointer;
+}
+.solio-detail-panel .compact-details p {
+  font-size: 12px;
+}
+.solio-detail-panel .inline-empty {
+  font-size: 13px;
+  padding: 20px 12px;
+}
+.studio-feed-footer {
+  min-height: 32px;
+  font-size: 10px;
+}
+.studio-feed-footer button {
+  min-height: 24px;
+  font-size: 10px;
+}
+.tree-gw-card > span {
+  font-size: 14px;
+}
+.tree-gw-card > div,
+.tree-gw-card > em {
+  font-size: 12px;
+}
+.tree-gw-card > strong small {
+  font-size: 11px;
+}
+.tree-base-team,
+.tree-scenario,
+.tree-evaluation {
+  font-size: 12px;
+}
+.tree-base-team small,
+.tree-evaluation span,
+.tree-evaluation small {
+  font-size: 10px;
+}
+.tree-scenario span {
+  font-size: 13px;
+}
+.tree-scenario small {
+  font-size: 12px;
+}
+.tree-node-optimise {
+  font-size: 12px;
+  min-height: 32px;
+  top: -39px;
+}
+.tree-toolbar select,
+.tree-toolbar .button,
+.tree-footer button {
+  font-size: 12px;
+}
+.tree-toolbar select {
+  width: 91px;
+}
+.tree-footer button {
+  min-height: 32px;
+}
+.tree-team-label {
+  font-size: 12px;
+}
+.tree-plan-config {
+  font-size: 11px;
+}
+.projection-topline {
+  margin-bottom: 12px;
+}
+.projection-scenario {
+  margin-bottom: 12px;
+}
+.projection-controls {
+  margin-bottom: 12px;
+}
+.projection-controls > label {
+  font-size: 12px;
+}
+.projection-controls > span,
+.projection-controls > span small {
+  font-size: 11px;
+}
+.projection-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.projection-filter-bar .projection-position-tabs {
+  margin: 0;
+}
+.projection-filter-bar .filter-reset {
+  padding: 7px 9px;
+  font-size: 11px;
+}
+.projection-explorer .projection-filters {
+  margin-bottom: 8px;
+}
+.projection-explorer .projection-scroll {
+  max-height: calc(100dvh - 440px);
+  min-height: 250px;
+}
+.projection-explorer .projections-table th {
+  font-size: 11px;
+}
+.projection-explorer .projections-table td {
+  font-size: 12px;
+}
+.projection-explorer .player-name-cell b {
+  font-size: 12px;
+}
+.projection-explorer .player-name-cell small {
+  font-size: 10px;
+}
+.projection-value {
+  min-height: 44px;
+  width: 62px;
+  gap: 5px;
+}
+.projection-value b {
+  font-size: 12px;
+}
+.projection-value small {
+  font-size: 10px;
+}
+.team-projection-toolbar {
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+.team-projection-toolbar select {
+  font-size: 12px;
+}
+.team-name {
+  font-size: 12px;
+}
+.team-fixture-value {
+  min-width: 76px;
+  min-height: 48px;
+}
+.team-fixture-value b {
+  font-size: 13px;
+}
+.team-fixture-value small {
+  font-size: 10px;
+}
+.team-projection-table th:first-child,
+.team-projection-table td:first-child,
+.fixture-table th:first-child,
+.fixture-table td:first-child {
+  position: sticky;
+  left: 0;
+  background: #0b1626;
+  z-index: 2;
+  min-width: 125px;
+}
+.team-projection-table th:first-child,
+.fixture-table th:first-child {
+  z-index: 4;
+  background: #132034;
+}
+.fixture-scroll {
+  max-height: calc(100dvh - 255px);
+}
+.fixture-table th {
+  position: sticky;
+  top: 0;
+  background: #132034;
+  z-index: 3;
+}
+.fixture-chip {
+  min-height: 48px;
+  min-width: 74px;
+  padding: 8px;
+}
+.fixture-chip b {
+  font-size: 12px;
+}
+.fixture-chip small {
+  font-size: 10px;
+}
+.fixture-legend {
+  font-size: 11px;
+}
+.club-cell b {
+  font-size: 12px;
+}
+.solver-section > summary,
+.preset-caption {
+  font-size: 11px;
+}
+.constraint-scope-label {
+  font-size: 12px;
+}
+.constraint-scope-label select {
+  font-size: 12px;
+  width: 180px;
+}
+.constraint-tags button {
+  min-height: 34px;
+  font-size: 12px;
+}
+.solver-settings .panel-heading h3 {
+  font-size: 13px;
+}
+.rule-receipts span {
+  font-size: 11px;
+  padding: 7px;
+}
+.solver-run-footer {
+  padding: 10px 0;
+  background: #030b17;
+}
+.solver-run-footer > span {
+  font-size: 12px;
+}
+.plan-insights {
+  padding: 16px 0;
+  margin-top: 15px;
+}
+.pi-section > summary {
+  min-height: 38px;
+}
+.pi-section > summary > span {
+  font-size: 11px;
+}
+.pi-section h3 {
+  font-size: 13px;
+}
+.pi-method summary,
+.pi-inputs summary {
+  font-size: 11px;
+  min-height: 30px;
+  padding: 6px 0;
+}
+.pi-player-name {
+  font-size: 12px;
+  min-height: 34px;
+}
+.pi-lock {
+  width: 32px;
+  height: 32px;
+}
+.pi-source-note,
+.pi-upgrade small,
+.pi-empty {
+  font-size: 11px;
+}
+.pi-bar-row,
+.pi-dna-total,
+.pi-component-list > div {
+  font-size: 12px;
+}
+.comparison-plan-name {
+  min-height: 36px;
+}
+.market-mode {
+  margin-bottom: 22px;
+}
+.market-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.market-only-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  margin: 14px 0;
+  min-height: 32px;
+}
+.market-fixture-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 16px 0;
+}
+.market-fixture-card {
+  width: 100%;
+  min-width: 0;
+  text-align: left;
+  border: 1px solid #25354b;
+  border-radius: 8px;
+  background: #0b1626;
+  padding: 13px;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+}
+.market-fixture-card:hover {
+  border-color: #ff6a3d99;
+  background: #132035;
+}
+.market-fixture-header {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: #95a8c2;
+  margin-bottom: 15px;
+}
+.market-fixture-header b {
+  color: #ff9b76;
+}
+.market-match {
+  display: grid;
+  gap: 11px;
+}
+.market-match > span {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.market-match > span > span {
+  font-size: 13px;
+  flex: 1;
+}
+.market-match small {
+  display: block;
+  color: #8ca0bc;
+  font-size: 10px;
+  margin-top: 2px;
+}
+.market-match strong {
+  font-size: 22px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+.market-fixture-source {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  border-top: 1px solid #203149;
+  padding-top: 11px;
+  margin-top: 15px;
+  color: #8ca0bc;
+  font-size: 10px;
+  flex-wrap: wrap;
+}
+.market-fixture-source > span {
+  color: #ff9c76;
+}
+.market-chart h3 {
+  font-size: 15px;
+}
+.market-chart .source-caption {
+  margin: 8px 0 20px;
+  font-size: 11px;
+}
+.market-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0;
+}
+.market-stats .stat {
+  min-width: 0;
+  padding: 14px;
+  border-bottom: 1px solid #263547;
+}
+.market-stats > .stat:nth-child(odd) {
+  border-left: 0;
+}
+.market-stats > .stat:nth-last-child(-n + 2) {
+  border-bottom: 0;
+}
+.market-stats .stat > strong {
+  font-size: clamp(18px, 3cqw, 24px);
+  overflow-wrap: anywhere;
+  white-space: normal;
+  overflow: visible;
+  line-height: 1.3;
+}
+.market-stats .eyebrow {
+  font-size: 11px;
+}
+.price-scroll {
+  max-height: calc(100dvh - 400px);
+  min-height: 260px;
+}
+.price-table th {
+  position: sticky;
+  top: 0;
+  background: #132034;
+  z-index: 2;
+  white-space: nowrap;
+}
+.price-table td:nth-child(1),
+.price-table th:nth-child(1) {
+  position: sticky;
+  left: 0;
+  min-width: 40px;
+  background: #0b1626;
+  z-index: 3;
+}
+.price-table td:nth-child(2),
+.price-table th:nth-child(2) {
+  position: sticky;
+  left: 40px;
+  min-width: 155px;
+  background: #0b1626;
+  z-index: 3;
+}
+.price-table th:nth-child(-n + 2) {
+  z-index: 4;
+  background: #132034;
+}
+.reference-toolbar > select {
+  flex: 1;
+  min-width: 140px;
+  font-size: 12px;
+}
+.reference-toolbar .search-box {
+  flex-basis: 100%;
+}
+.reference-status {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.reference-heading {
+  flex-wrap: wrap;
+}
+.reference-heading > span {
+  font-size: 12px;
+}
+.market-movement {
+  background: #0b1525;
+}
+.market-movement .movement-actions > button {
+  min-height: 34px;
+  border: 1px solid #2b3c53;
+  border-radius: 5px;
+  background: #142137;
+}
+.movement-fixture {
+  max-width: none;
+}
+.movement-table-wrap tbody tr {
+  cursor: pointer;
+}
+.movement-table-wrap tbody tr:hover,
+.movement-table-wrap .selected-fixture {
+  background: #ff6a3d0f;
+}
+.settings-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin-top: 20px;
+}
+.settings-body > section {
+  width: 100%;
+}
+.settings-body > section:empty {
+  display: none;
+}
+.settings-body .button-row {
+  flex-wrap: wrap;
+}
+.settings-body textarea {
+  width: 100%;
+  margin: 12px 0;
+}
+.settings-body .compact-details {
+  margin-top: 15px;
+}
+@container (max-width:650px) {
+  .pi-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .pi-wide {
+    grid-column: auto;
+  }
+  .market-fixture-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .market-match {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .market-match > span {
+    gap: 8px;
+  }
+  .market-match strong {
+    font-size: 20px;
+  }
+  .solio-detail-panel .toolbar-actions {
+    flex-wrap: wrap;
+  }
+}
+@container (max-width:430px) {
+  .detail-panel-heading > span {
+    display: none;
+  }
+  .solio-detail-panel > .main-nav button {
+    padding: 0 11px;
+  }
+  .solio-detail-panel .view-heading {
+    align-items: flex-start;
+  }
+  .solio-detail-panel .filter-row {
+    flex-wrap: wrap;
+  }
+  .solio-detail-panel .filter-row > label {
+    flex: 1;
+  }
+  .fixture-legend {
+    flex-basis: 100%;
+  }
+  .solio-detail-panel .table-toolbar .search-box {
+    flex-basis: 100%;
+  }
+  .pi-heading {
+    flex-wrap: wrap;
+  }
+  .pi-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+  }
+  .pi-summary > div {
+    border: 0;
+    padding-left: 0;
+  }
+  .market-match > span {
+    flex-wrap: wrap;
+  }
+  .market-match strong {
+    flex-basis: 100%;
+    text-align: center;
+  }
+  .movement-actions {
+    gap: 8px;
+  }
+  .market-movement {
+    padding: 12px;
+  }
+}
+@media (max-width: 700px) {
+  .workspace:not(.workspace-lineup) > .plan-canvas {
+    display: none;
+  }
+  .workspace-lineup .detail-panel-heading .tree-toggle {
+    display: flex !important;
+    margin-right: 0;
+  }
+  .workspace-lineup .detail-panel-heading > span {
+    display: none;
+  }
+  .solio-detail-panel .detail-panel-heading {
+    padding: 5px 8px;
+  }
+  .detail-panel-heading .tree-toggle {
+    display: none;
+  }
+  .workspace-context select {
+    max-width: none;
+  }
+  .solio-detail-panel .segmented > button {
+    min-height: 40px;
+  }
+  .solio-detail-panel .icon-button {
+    min-width: 36px;
+    min-height: 36px;
+  }
+  .solio-detail-panel > .main-nav button svg {
+    display: block;
+  }
+  .solio-detail-panel > .main-nav button {
+    font-size: 11px;
+  }
+  .studio-feed-footer {
+    padding: 6px 8px;
+    font-size: 9px;
+  }
+  .studio-feed-footer button {
+    font-size: 10px;
+  }
+  .projection-explorer .projection-scroll {
+    min-height: 280px;
+    max-height: 450px;
+  }
+  .fixture-scroll {
+    max-height: 520px;
+  }
+  .settings-body {
+    display: block;
+  }
+  .settings-body > section {
+    margin-bottom: 18px;
+  }
+  .settings-body .toggle-row {
+    gap: 12px;
+  }
+}
+.movement-fixture-link {
+  min-height: 32px;
+  padding: 0;
+  text-align: left;
+  color: #ffb18e;
+}
+.movement-fixture-link:hover {
+  text-decoration: underline;
+}
+
+/* Provenance and player records need to stay readable in the narrow panel. */
+.source-list > div,
+.source-list a {
+  font-size: 12px;
+}
+.projection-explorer .projections-table th button {
+  min-height: 32px;
+  font-size: 11px;
+}
+.source-list small,
+.source-state {
+  font-size: 11px;
+  line-height: 1.5;
+}
+.source-list small {
+  color: #94a6bf;
+}
+.source-list a,
+.source-list small {
+  overflow-wrap: anywhere;
+}
+.source-list a {
+  display: inline-block;
+  padding: 4px 0;
+}
+.solio-detail-panel .panel-heading > span,
+.solio-detail-panel .source-caption,
+.player-window .source-caption,
+.player-window .distribution-stats,
+.player-window .history-list small {
+  font-size: 11px;
+  line-height: 1.5;
+}
+.player-window .component-bars > div,
+.player-window .component-bars b,
+.player-window .history-list > div,
+.player-window .history-list b {
+  font-size: 12px;
+}
+.player-window .stat-scenario-editor label,
+.player-window .minutes-schedule-editor label {
+  font-size: 12px;
+}
+.solio-detail-panel .benchmark-card > span,
+.solio-detail-panel .benchmark-card p,
+.solio-detail-panel .methodology p {
+  font-size: 12px;
+  line-height: 1.6;
+}
+.solio-detail-panel .benchmark-card > small,
+.solio-detail-panel .methodology > small {
+  font-size: 11px;
+  line-height: 1.5;
+}
+.modal[aria-label="Settings"] .tab-strip > button,
+.settings-body .toggle-row b,
+.settings-body .setting-row b,
+.settings-body .source-setting b,
+.settings-body .range-label,
+.settings-body .compact-details > summary {
+  font-size: 12px;
+}
+.modal[aria-label="Settings"] .tab-strip > button {
+  min-height: 36px;
+  padding: 8px 12px;
+}
+.settings-body .toggle-row small,
+.settings-body .setting-row small,
+.settings-body .source-setting small,
+.settings-body .help-text,
+.settings-body .limitation {
+  font-size: 11px;
+  line-height: 1.6;
+}
+.chip-planner {
+  margin-top: 12px;
+  border: 1px solid #26354b;
+  border-radius: 6px;
+  background: #0b1525;
+}
+.chip-planner > summary {
+  padding: 15px 16px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+.chip-planner > summary > span {
+  margin-left: 8px;
+  color: #95a8c2;
+  font-weight: 400;
+}
+.chip-planner > div {
+  padding: 0 16px 16px;
+}
+.chip-planner p {
+  color: #95a8c2;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.chip-recommendation {
+  margin-top: 14px;
+}
+.chip-recommendation > header,
+.chip-recommendation > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 0;
+  border-bottom: 1px solid #26354b;
+  font-size: 12px;
+}
+.chip-recommendation small {
+  color: #95a8c2;
+  font-size: 11px;
+}
+.chip-recommendation > button {
+  margin-top: 12px;
+}
+@container (max-width: 650px) {
+  .source-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

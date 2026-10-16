@@ -241,7 +241,7 @@
 .detail-tab-edit .detail-grid>section:last-child { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:18px; align-items:start; }
 .detail-tab-edit .player-underlying,.detail-tab-edit .fixture-source-detail,.detail-tab-edit .detail-forecast { display:none; }
 .detail-tab-overview .stat-scenario-editor,.detail-tab-overview .minutes-schedule-editor { display:none; }
-.detail-tab-history>.detail-grid,.detail-tab-history>.detail-forecast { display:none; }
+.detail-tab-history>.detail-grid:not(.history-grid),.detail-tab-history>.detail-forecast { display:none; }
 .minutes-notes { font-size:8px; margin:10px 0; color:#6f86a7; }
 .modal-wide { max-width:850px; }
 .global-busy { bottom:34px; }

@@ -1,8 +1,11 @@
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  lazy,
+  Suspense,
   type CSSProperties,
 } from "react";
 import { teamPoints } from "./scoring";
@@ -19,9 +22,14 @@ import {
   CircleHelp,
   Copy,
   Download,
+  Database,
   GitBranch,
   Info,
   LayoutGrid,
+  LockKeyhole,
+  Ban,
+  ArrowLeft,
+  ArrowLeftRight,
   Link2,
   LoaderCircle,
   Plus,
@@ -89,6 +97,7 @@ import { SensitivityView } from "./SensitivityView";
 import { MinutesScenarioEditor } from "./MinutesScenarioEditor";
 import { ReferenceView } from "./ReferenceView";
 import { PlannerBoard } from "./PlannerBoard";
+import { PlayerSurface } from "./PlayerSurface";
 import { PlanTree } from "./PlanTree";
 import { TeamOverview } from "./TeamOverview";
 import { StatScenarioEditor } from "./StatScenarioEditor";
@@ -96,6 +105,13 @@ import { ChipPlanner } from "./ChipPlanner";
 import { FixtureMarkets } from "./FixtureMarkets";
 import { ChipStrategyView, type ChipStrategyJob } from "./ChipStrategyView";
 import { MarketMovement } from "./MarketMovement";
+import { TransferPanel } from "./TransferPanel";
+import { LineupImageDialog } from "./LineupImageDialog";
+import { WorkspaceDivider } from "./WorkspaceDivider";
+import { TabStrip } from "./TabStrip";
+import { useViewState } from "./useViewState";
+import { canSwap, replacePlayer } from "./plannerInteractions";
+import { planWithOptimisedSuffix, quickSolveHorizon } from "./quickOptimise";
 import {
   createPlanExport,
   defaultSolverSettings,
@@ -104,20 +120,54 @@ import {
   preparePlanImport,
   solverSettingsForHorizon,
 } from "./planningPersistence";
-import type { ForecastConfiguration } from "./planningPersistence";
+import type {
+  TeamStrengthsSchedule,
+  ForecastConfiguration,
+} from "./planningPersistence";
 export { restorePlanningState } from "./planningPersistence";
+const SeasonData = lazy(() =>
+  import("./SeasonData").then((module) => ({ default: module.SeasonData })),
+);
 
 type Tab =
-  "lineup" | "projections" | "optimise" | "fixtures" | "analysis" | "market";
+  | "lineup"
+  | "projections"
+  | "optimise"
+  | "fixtures"
+  | "analysis"
+  | "market"
+  | "data";
 const tabs: { id: Tab; label: string; icon: typeof Users }[] = [
   { id: "lineup", label: "Lineup", icon: Users },
   { id: "projections", label: "Projections", icon: LayoutGrid },
   { id: "optimise", label: "Optimise", icon: Sparkles },
-  { id: "fixtures", label: "Fixtures", icon: CalendarDays },
   { id: "analysis", label: "Plans", icon: Activity },
+  { id: "fixtures", label: "Fixtures", icon: CalendarDays },
   { id: "market", label: "Market", icon: TrendingUp },
+  { id: "data", label: "Data", icon: Database },
 ];
+async function forecastBaseline(refresh = false) {
+  // Refresh the official inputs before reading their editable fixture catalog.
+  const refreshed = refresh ? await api<Bootstrap>("/refresh", {}) : null;
+  const [forecast, catalog] = await Promise.all([
+    refreshed ? Promise.resolve(refreshed) : api<Bootstrap>("/bootstrap"),
+    api<{ fixtures: NonNullable<Bootstrap["official_fixture_catalog"]> }>(
+      "/fixture-schedule",
+    ).catch(() => null),
+  ]);
+  return catalog
+    ? { ...forecast, official_fixture_catalog: catalog.fixtures }
+    : forecast;
+}
 const storageKey = "open-fpl-plans-v1";
+function locationTab(): Tab {
+  const value = new URLSearchParams(window.location.search).get("tab");
+  return value === "plans"
+    ? "analysis"
+    : tabs.some((tab) => tab.id === value)
+      ? (value as Tab)
+      : "lineup";
+}
 function stored<T>(key: string, fallback: T): T {
   try {
     return JSON.parse(localStorage.getItem(key) ?? "null") ?? fallback;
@@ -139,8 +189,15 @@ export default function App() {
   const [data, setData] = useState<Bootstrap | null>(null),
     [loadError, setLoadError] = useState(""),
     [loading, setLoading] = useState(true),
-    [tab, setTab] = useState<Tab>("lineup");
-  const [marketMode, setMarketMode] = useState("fixtures");
+    [tab, setTab] = useState<Tab>(locationTab);
+  const [marketMode, setMarketMode] = useViewState(
+    "market.section",
+    "fixtures",
+  );
+  const [settingsTab, setSettingsTab] = useViewState(
+    "settings.section",
+    "inputs",
+  );
   const [backupText, setBackupText] = useState("");
   const [importText, setImportText] = useState("");
   const [plans, setPlans] = useState<Plan[]>(() =>
@@ -151,6 +208,12 @@ export default function App() {
     ),
     [gw, setGw] = useState(0),
     [watch, setWatch] = useState<number[]>(() => stored("open-fpl-watch", []));
+  const [fixtureMoves, setFixtureMoves] = useState<
+    Record<string, number | null>
+  >(() => stored("open-fpl-fixture-moves", {}));
+  const [teamStrengths, setTeamStrengths] = useState<TeamStrengthsSchedule>(
+    () => stored("open-fpl-team-strengths", {}),
+  );
   const [overrides, setOverrides] = useState<Record<string, number>>(() =>
       stored("open-fpl-minutes", {}),
     ),
@@ -177,12 +240,46 @@ export default function App() {
   const [minutesSchedule, setMinutesSchedule] = useState<MinutesSchedule>(() =>
     stored("open-fpl-minutes-schedule", {}),
   );
-  const [statSchedule, setStatSchedule] = useState<StatSchedule>(() => stored("open-fpl-stat-schedule", {}));
-  const [detailTab, setDetailTab] = useState("edit");
+  const [statSchedule, setStatSchedule] = useState<StatSchedule>(() =>
+    stored("open-fpl-stat-schedule", {}),
+  );
+  const [detailTab, setDetailTab] = useState("transfer");
+  const [detailGW, setDetailGW] = useState(0);
+  const [detailBack, setDetailBack] = useState<number | null>(null);
+  const [detailAnchor, setDetailAnchor] = useState<{
+    left: number;
+    right: number;
+    top: number;
+    bottom: number;
+  } | null>(null);
+  const [detailReadOnly, setDetailReadOnly] = useState(false);
+  const [detailInline, setDetailInline] = useState(false);
+  const [projectionEditorTarget, setProjectionEditorTarget] =
+    useState<HTMLDivElement | null>(null);
+  const [pitchExpanded, setPitchExpanded] = useState(false);
+  const [wideLayout, setWideLayout] = useState(
+    () => window.matchMedia("(min-width: 701px)").matches,
+  );
+  useEffect(() => {
+    const media = window.matchMedia("(min-width: 701px)");
+    const changed = () => setWideLayout(media.matches);
+    media.addEventListener("change", changed);
+    return () => media.removeEventListener("change", changed);
+  }, []);
+  const [planHistory, setPlanHistory] = useState<
+    Record<string, { past: Plan[]; future: Plan[] }>
+  >({});
+  const [deletedPlans, setDeletedPlans] = useState<Plan[]>(() =>
+    stored("open-fpl-deleted-plans-v1", []),
+  );
+  const [treeHidden, setTreeHidden] = useState(false);
+  const scrollPositions = useRef<Record<string, number>>({});
+  const scrollKey = `${tab}:${marketMode}:${gw}:${activeId}`;
+  const [split, setSplit] = useState(() => stored("open-fpl-panel-split", 50));
   const [previewingDraft, setPreviewingDraft] = useState(false);
   const [draftGW, setDraftGW] = useState(0);
   const [modal, setModal] = useState<
-      "team" | "settings" | "csv" | "help" | null
+      "team" | "resources" | "settings" | "csv" | "help" | "lineupImage" | null
     >(null),
     [detailId, setDetailId] = useState<number | null>(null),
     [detail, setDetail] = useState<PlayerDetail | null>(null),
@@ -193,9 +290,11 @@ export default function App() {
       "targets",
     ),
     [busy, setBusy] = useState(""),
-    [toast, setToast] = useState<{ text: string; error?: boolean } | null>(
-      null,
-    ),
+    [toast, setToast] = useState<{
+      text: string;
+      error?: boolean;
+      action?: { label: string; run: () => void };
+    } | null>(null),
     [evalData, setEvalData] = useState<Evaluation | null>(null),
     [prospective, setProspective] = useState<Prospective | null>(null);
   const [teamId, setTeamId] = useState("2200722"),
@@ -203,19 +302,25 @@ export default function App() {
     [teamFT, setTeamFT] = useState(1),
     [csvError, setCsvError] = useState(""),
     [csvWeight, setCsvWeight] = useState(50);
-  const [settings, setSettings] = useState<SolverSettings>(() => stored("open-fpl-solver", defaultSolverSettings)),
+  const [settings, setSettings] = useState<SolverSettings>(() =>
+      stored("open-fpl-solver", defaultSolverSettings),
+    ),
     [solveResult, setSolveResult] = useState<SolveResult | null>(null),
     [solveContext, setSolveContext] = useState<OptimiseContext | null>(null);
   const initRef = useRef(false),
+    analyticsRef = useRef<HTMLDivElement>(null),
     dataRequestRef = useRef(0),
     loadedForecastArgsRef = useRef(""),
     solveRequestRef = useRef(0),
+    solveInFlightRef = useRef(false),
     fileRef = useRef<HTMLInputElement>(null);
   const notify = (text: string, error = false) => setToast({ text, error });
   const forecastArgs: ForecastConfiguration = {
     overrides,
     minutes_schedule: minutesSchedule,
     stat_schedule: statSchedule,
+    team_strengths: teamStrengths,
+    fixture_moves: fixtureMoves,
     use_market: useMarket,
     custom_points: customPoints,
     blend_weight: blendWeight,
@@ -226,6 +331,8 @@ export default function App() {
     custom_name: customName || "Imported CSV",
   };
   const active = plans.find((p) => p.id === activeId) ?? plans[0] ?? null;
+  const livePlanningRef = useRef({ plans, data, forecastArgs });
+  livePlanningRef.current = { plans, data, forecastArgs };
   const week = active?.weeks.find((w) => w.gw === gw) ?? null;
   const lookup = useMemo(
     () => new Map(data?.players.map((p) => [p.id, p]) ?? []),
@@ -233,12 +340,19 @@ export default function App() {
   );
   const selectedPlayer = selected === null ? null : lookup.get(selected);
   const detailPlayer = detailId === null ? null : lookup.get(detailId);
+  const playerGW = detailGW || gw;
+  const detailWeek = detailReadOnly
+    ? undefined
+    : active?.weeks.find((row) => row.gw === playerGW);
+  const detailSquad = detailWeek?.squad.includes(detailId ?? 0) ?? false;
   const currentHorizon = active?.weeks ?? [];
 
   function applyForecastConfiguration(configuration: ForecastConfiguration) {
     setOverrides(configuration.overrides);
     setMinutesSchedule(configuration.minutes_schedule);
     setStatSchedule(configuration.stat_schedule);
+    setTeamStrengths(configuration.team_strengths);
+    setFixtureMoves(configuration.fixture_moves);
     setUseMarket(configuration.use_market);
     setCustomPoints(configuration.custom_points);
     setBlendWeight(configuration.blend_weight);
@@ -250,27 +364,65 @@ export default function App() {
   }
   function archivePlanningInputs(savedPlans: unknown, configuration: unknown) {
     const archives = stored<unknown[]>("open-fpl-archived-plans-v1", []);
-    localStorage.setItem("open-fpl-archived-plans-v1", JSON.stringify([
-      ...(Array.isArray(archives) ? archives : []),
-      { archived_at: new Date().toISOString(), plans: savedPlans, configuration },
-    ]));
+    localStorage.setItem(
+      "open-fpl-archived-plans-v1",
+      JSON.stringify([
+        ...(Array.isArray(archives) ? archives : []),
+        {
+          archived_at: new Date().toISOString(),
+          plans: savedPlans,
+          configuration,
+        },
+      ]),
+    );
   }
 
   useEffect(() => {
     let alive = true;
-    loadPlanningState(plans, activeId, forecastArgs, settings,
-      configuration => configuration === undefined ? api<Bootstrap>("/bootstrap") : api<Bootstrap>("/projections", configuration))
+    loadPlanningState(
+      plans,
+      activeId,
+      forecastArgs,
+      settings,
+      (configuration) =>
+        configuration === undefined
+          ? forecastBaseline()
+          : api<Bootstrap>("/projections", configuration),
+    )
       .then((restored) => {
         if (!alive) return;
-        if (restored.notices.length || (Array.isArray(plans) && plans.some(plan => plan && Array.isArray(plan.weeks) && plan.weeks.some(week => week.gw < restored.forecast.next_gw)))) {
+        if (
+          restored.notices.length ||
+          (Array.isArray(plans) &&
+            plans.some(
+              (plan) =>
+                plan &&
+                Array.isArray(plan.weeks) &&
+                plan.weeks.some((week) => week.gw < restored.forecast.next_gw),
+            ))
+        ) {
           archivePlanningInputs(plans, forecastArgs);
         }
         loadedForecastArgsRef.current = JSON.stringify(restored.configuration);
         applyForecastConfiguration(restored.configuration);
         setSettings(restored.solver);
         setData(restored.forecast);
-        setGw(restored.gw);
-        setActiveId(restored.activeId);
+        const params = new URLSearchParams(window.location.search);
+        const requestedPlan = restored.plans.find(
+          (plan) => plan.id === params.get("plan"),
+        );
+        const selectedPlan =
+          requestedPlan ??
+          restored.plans.find((plan) => plan.id === restored.activeId);
+        const requestedGW = Number(params.get("gw"));
+        setGw(
+          restored.forecast.gameweeks.includes(requestedGW) &&
+            (!["lineup", "optimise"].includes(locationTab()) ||
+              selectedPlan?.weeks.some((week) => week.gw === requestedGW))
+            ? requestedGW
+            : (requestedPlan?.weeks[0]?.gw ?? restored.gw),
+        );
+        setActiveId(requestedPlan?.id ?? restored.activeId);
         setPlans(restored.plans);
         setLoading(false);
         if (restored.notices.length) notify(restored.notices.join(" "));
@@ -306,12 +458,20 @@ export default function App() {
     localStorage.setItem("open-fpl-watch", JSON.stringify(watch));
   }, [watch]);
   useEffect(() => {
+    localStorage.setItem(
+      "open-fpl-team-strengths",
+      JSON.stringify(teamStrengths),
+    );
+    localStorage.setItem("open-fpl-fixture-moves", JSON.stringify(fixtureMoves));
     localStorage.setItem("open-fpl-minutes", JSON.stringify(overrides));
     localStorage.setItem(
       "open-fpl-minutes-schedule",
       JSON.stringify(minutesSchedule),
     );
-    localStorage.setItem("open-fpl-stat-schedule", JSON.stringify(statSchedule));
+    localStorage.setItem(
+      "open-fpl-stat-schedule",
+      JSON.stringify(statSchedule),
+    );
     localStorage.setItem("open-fpl-custom", JSON.stringify(customPoints));
     localStorage.setItem("open-fpl-blend", JSON.stringify(blendWeight));
     localStorage.setItem("open-fpl-custom-name", JSON.stringify(customName));
@@ -330,6 +490,8 @@ export default function App() {
     overrides,
     minutesSchedule,
     statSchedule,
+    teamStrengths,
+    fixtureMoves,
     useMarket,
     customPoints,
     blendWeight,
@@ -405,7 +567,10 @@ export default function App() {
       .then((d) => {
         if (request === dataRequestRef.current) {
           loadedForecastArgsRef.current = serialized;
-          setData(d);
+          setData((current) => ({
+            ...d,
+            official_fixture_catalog: current?.official_fixture_catalog,
+          }));
         }
       })
       .catch((e) => notify(e.message, true));
@@ -413,6 +578,8 @@ export default function App() {
     overrides,
     minutesSchedule,
     statSchedule,
+    teamStrengths,
+    fixtureMoves,
     useMarket,
     customPoints,
     blendWeight,
@@ -451,7 +618,8 @@ export default function App() {
     }
     let alive = true;
     setDetailLoading(true);
-    api<PlayerDetail>(`/players/${detailId}?gw=${gw}`, forecastArgs)
+    setDetail(null);
+    api<PlayerDetail>(`/players/${detailId}?gw=${playerGW}`, forecastArgs)
       .then((d) => {
         if (alive) setDetail(d);
       })
@@ -462,16 +630,143 @@ export default function App() {
     return () => {
       alive = false;
     };
-  }, [detailId, gw, overrides, minutesSchedule, statSchedule, useMarket, useProvider, providerWeight, customPoints, blendWeight, extrapolate, anchorHalfLife]);
+  }, [
+    detailId,
+    playerGW,
+    overrides,
+    minutesSchedule,
+    statSchedule,
+    teamStrengths,
+    fixtureMoves,
+    useMarket,
+    useProvider,
+    providerWeight,
+    customPoints,
+    blendWeight,
+    extrapolate,
+    anchorHalfLife,
+  ]);
+
+  function openPlayer(
+    id: number,
+    gameweek = gw,
+    readOnly = false,
+    sourcePlan = active,
+    inline = false,
+  ) {
+    const source = document.activeElement as HTMLElement | null;
+    const anchor = source
+      ?.closest(".player-select,.projection-value,.player-info")
+      ?.getBoundingClientRect();
+    setDetailAnchor(
+      anchor
+        ? {
+            left: anchor.left,
+            right: anchor.right,
+            top: anchor.top,
+            bottom: anchor.bottom,
+          }
+        : null,
+    );
+    setDetailReadOnly(readOnly);
+    setDetailInline(inline);
+    setDetailGW(gameweek);
+    setDetailTab(
+      inline
+        ? "edit"
+        : !readOnly &&
+            sourcePlan?.weeks
+              .find((row) => row.gw === gameweek)
+              ?.squad.includes(id)
+          ? "transfer"
+          : "overview",
+    );
+    setDetailBack(null);
+    setDetailId(id);
+  }
+  useLayoutEffect(() => {
+    if (analyticsRef.current)
+      analyticsRef.current.scrollTop = scrollPositions.current[scrollKey] ?? 0;
+  }, [scrollKey, loading]);
+  function navigateTab(value: Tab) {
+    if (
+      ["lineup", "optimise"].includes(value) &&
+      active &&
+      !active.weeks.some((row) => row.gw === gw)
+    )
+      setGw(active.weeks[0].gw);
+    setDetailId(null);
+    setTab(value);
+  }
+  useEffect(() => {
+    if (detailId !== null && detailTab === "transfer" && !detailSquad)
+      setDetailTab("overview");
+  }, [detailId, detailSquad, detailTab]);
+  useEffect(() => {
+    if (loading || !data) return;
+    const next = new URL(window.location.href);
+    const desiredTab = tab === "analysis" ? "plans" : tab;
+    if (
+      next.searchParams.get("tab") === desiredTab &&
+      next.searchParams.get("gw") === String(gw) &&
+      next.searchParams.get("plan") === activeId
+    )
+      return;
+    next.searchParams.set("view", "tree");
+    next.searchParams.set("tab", desiredTab);
+    next.searchParams.set("gw", String(gw));
+    next.searchParams.set("plan", activeId);
+    window.history.pushState(null, "", next);
+  }, [tab, gw, activeId, loading]);
+  useEffect(() => {
+    const back = () => {
+      const params = new URLSearchParams(window.location.search),
+        plan = plans.find((row) => row.id === params.get("plan")),
+        week = Number(params.get("gw"));
+      const nextTab = locationTab();
+      const selectedPlan =
+        plan ?? plans.find((row) => row.id === activeId) ?? plans[0];
+      setTab(nextTab);
+      if (selectedPlan) {
+        setActiveId(selectedPlan.id);
+        if (
+          ["lineup", "optimise"].includes(nextTab) &&
+          !selectedPlan.weeks.some((row) => row.gw === week)
+        )
+          setGw(selectedPlan.weeks[0].gw);
+        else if (data?.gameweeks.includes(week)) setGw(week);
+      }
+      setDetailId(null);
+      setSelected(null);
+    };
+    window.addEventListener("popstate", back);
+    return () => window.removeEventListener("popstate", back);
+  }, [plans, data?.gameweeks, activeId]);
 
   async function validatedPlan(p: Plan) {
-    const result = await api<{ weeks: Week[] }>("/plan/validate", planValidationRequest(p, forecastArgs));
+    const result = await api<{ weeks: Week[] }>(
+      "/plan/validate",
+      planValidationRequest(p, forecastArgs),
+    );
     return { ...p, weeks: result.weeks };
   }
-  async function updatePlan(p: Plan, message?: string) {
+  async function updatePlan(p: Plan, message?: string, remember = true) {
+    if (busy) return false;
+    const before = plans.find((row) => row.id === p.id);
     setBusy("Checking your plan…");
     try {
       const valid = await validatedPlan(p);
+      if (remember && before)
+        setPlanHistory((history) => ({
+          ...history,
+          [p.id]: {
+            past: [
+              ...(history[p.id]?.past ?? []),
+              structuredClone(before),
+            ].slice(-30),
+            future: [],
+          },
+        }));
       setPlans((ps) => ps.map((v) => (v.id === p.id ? valid : v)));
       if (message) notify(message);
       return true;
@@ -482,18 +777,231 @@ export default function App() {
       setBusy("");
     }
   }
+  async function travelPlan(direction: "past" | "future") {
+    if (!active || busy) return;
+    const history = planHistory[active.id];
+    const target = history?.[direction].at(-1);
+    if (!target) return;
+    if (
+      await updatePlan(
+        target,
+        direction === "past" ? "Change undone." : "Change restored.",
+        false,
+      )
+    ) {
+      setPlanHistory((current) => ({
+        ...current,
+        [active.id]:
+          direction === "past"
+            ? {
+                past: history.past.slice(0, -1),
+                future: [...history.future, structuredClone(active)],
+              }
+            : {
+                past: [...history.past, structuredClone(active)],
+                future: history.future.slice(0, -1),
+              },
+      }));
+      if (!target.weeks.some((row) => row.gw === gw)) setGw(target.weeks[0].gw);
+      setSelected(null);
+    }
+  }
+  useEffect(() => {
+    const keyboard = (event: KeyboardEvent) => {
+      if (
+        (event.target as HTMLElement).closest(
+          'input,textarea,select,[contenteditable="true"]',
+        ) ||
+        modal ||
+        detailId !== null
+      )
+        return;
+      if (event.key === "Escape") {
+        setSelected(null);
+        return;
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
+        event.preventDefault();
+        void travelPlan(event.shiftKey ? "future" : "past");
+      }
+    };
+    document.addEventListener("keydown", keyboard);
+    return () => document.removeEventListener("keydown", keyboard);
+  }, [active, planHistory, busy, modal, detailId]);
   function onWatch(id: number) {
     setWatch((v) => (v.includes(id) ? v.filter((i) => i !== id) : [...v, id]));
   }
   function togglePlayerConstraint(id: number, kind: "locked" | "excluded") {
-    setSettings(current => ({...current, [kind]: current[kind].includes(id) ? current[kind].filter(value => value !== id) : [...current[kind],id], [kind === "locked" ? "excluded" : "locked"]: current[kind === "locked" ? "excluded" : "locked"].filter(value => value !== id)}));
-    notify(`${lookup.get(id)?.name}: ${kind === "locked" ? "include" : "exclude"} rule toggled.`);
+    setSettings((current) => ({
+      ...current,
+      [kind]: current[kind].includes(id)
+        ? current[kind].filter((value) => value !== id)
+        : [...current[kind], id],
+      [kind === "locked" ? "excluded" : "locked"]: current[
+        kind === "locked" ? "excluded" : "locked"
+      ].filter((value) => value !== id),
+    }));
+    notify(
+      `${lookup.get(id)?.name}: ${kind === "locked" ? "include" : "exclude"} rule toggled.`,
+    );
   }
   function choosePlan(id: string) {
     setActiveId(id);
     setSelected(null);
+    setDetailId(null);
     const p = plans.find((v) => v.id === id);
-    if (p && !p.weeks.some((w) => w.gw === gw)) setGw(p.weeks[0].gw);
+    if (
+      p &&
+      (["lineup", "optimise", "analysis"].includes(tab) ||
+        (pitchExpanded && wideLayout && !treeHidden)) &&
+      !p.weeks.some((w) => w.gw === gw)
+    )
+      setGw(p.weeks[0].gw);
+  }
+  async function createPlan() {
+    if (!active || !data || busy) return;
+    const p = planFromSquad(
+      active.base_squad,
+      data.players,
+      active.weeks.map((row) => row.gw),
+      active.base_bank,
+      active.free_transfers,
+      `Scenario ${plans.length + 1}`,
+    );
+    p.purchase_prices = { ...active.purchase_prices };
+    p.used_chips = structuredClone(active.used_chips ?? []);
+    p.entry_id = active.entry_id;
+    p.team_name = active.team_name;
+    setBusy("Creating scenario…");
+    try {
+      const valid = await validatedPlan(p);
+      setPlans((current) => [...current, valid]);
+      setActiveId(p.id);
+      setGw(valid.weeks[0].gw);
+      notify("New scenario from the base team.");
+    } catch (error) {
+      notify((error as Error).message, true);
+    } finally {
+      setBusy("");
+    }
+  }
+  function reorderPlan(direction: number) {
+    if (!active || busy) return;
+    setPlans((current) => {
+      const next = [...current],
+        index = next.findIndex((plan) => plan.id === active.id),
+        target = index + direction;
+      if (target < 0 || target >= next.length) return current;
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    });
+  }
+  async function startBranchAt(start: number) {
+    if (!active || !data || busy || start === active.weeks[0]?.gw) return;
+    setBusy("Creating future branch…");
+    try {
+      const source = await validatedPlan(active),
+        prefix = source.weeks.filter((row) => row.gw < start),
+        receipt = prefix.at(-1);
+      if (
+        !receipt?.permanent_squad ||
+        receipt.permanent_bank === undefined ||
+        !receipt.purchase_prices
+      )
+        throw new Error(
+          "Starting resources are unavailable for that gameweek.",
+        );
+      const next: Plan = {
+        ...structuredClone(source),
+        id: uid(),
+        name: `${source.name} · GW${start}`,
+        created_at: new Date().toISOString(),
+        base_squad: [...receipt.permanent_squad],
+        base_bank: receipt.permanent_bank,
+        free_transfers: receipt.next_free_transfers,
+        purchase_prices: { ...receipt.purchase_prices },
+        weeks: source.weeks.filter((row) => row.gw >= start),
+        history_weeks: [...(source.history_weeks ?? []), ...prefix],
+        used_chips: [
+          ...(source.used_chips ?? []),
+          ...prefix
+            .filter((row) => row.chip !== "none")
+            .map((row) => ({ chip: row.chip, gw: row.gw })),
+        ],
+      };
+      const valid = await validatedPlan(next);
+      setPlans((current) => [...current, valid]);
+      setActiveId(valid.id);
+      setGw(start);
+      setTab("lineup");
+      setSelected(null);
+      notify(`Branch starts at GW${start}. Original plan retained.`);
+    } catch (error) {
+      notify((error as Error).message, true);
+    } finally {
+      setBusy("");
+    }
+  }
+  useEffect(() => {
+    localStorage.setItem(
+      "open-fpl-deleted-plans-v1",
+      JSON.stringify(deletedPlans),
+    );
+  }, [deletedPlans]);
+  async function restoreDeleted(plan: Plan) {
+    if (busy) return;
+    setBusy("Restoring plan…");
+    try {
+      const valid = await validatedPlan(plan);
+      setPlans((current) =>
+        current.some((row) => row.id === valid.id)
+          ? current
+          : [...current, valid],
+      );
+      setDeletedPlans((current) =>
+        current.filter((row) => row.id !== valid.id),
+      );
+      setActiveId(valid.id);
+      setGw(valid.weeks[0].gw);
+      notify("Plan restored.");
+    } catch (error) {
+      notify((error as Error).message, true);
+    } finally {
+      setBusy("");
+    }
+  }
+  function lockTransfers() {
+    if (!week) return;
+    setSettings((current) => ({
+      ...current,
+      transfer_limits: {
+        ...current.transfer_limits,
+        [String(gw)]: week.transfers_in.length,
+      },
+      locked_by_gw: {
+        ...current.locked_by_gw,
+        [String(gw)]: [
+          ...new Set([
+            ...(current.locked_by_gw?.[String(gw)] ?? []).filter(
+              (id) => !week.transfers_out.includes(id),
+            ),
+            ...week.transfers_in,
+          ]),
+        ],
+      },
+      excluded_by_gw: {
+        ...current.excluded_by_gw,
+        [String(gw)]: [
+          ...new Set([
+            ...(current.excluded_by_gw?.[String(gw)] ?? []).filter(
+              (id) => !week.transfers_in.includes(id),
+            ),
+            ...week.transfers_out,
+          ]),
+        ],
+      },
+    }));
+    notify(`GW${gw} transfers locked in optimiser rules.`);
   }
   function clonePlan() {
     if (!active) return;
@@ -510,43 +1018,50 @@ export default function App() {
   function deletePlan() {
     if (!active || plans.length <= 1) return;
     const rest = plans.filter((p) => p.id !== active.id);
+    const removed = structuredClone(active);
+    setDeletedPlans((current) => [...current, removed].slice(-20));
     setPlans(rest);
-    setActiveId(rest[0].id);
-    notify("Planning branch deleted.");
+    choosePlan(rest[0].id);
+    setPreviewingDraft(false);
+    setToast({
+      text: "Branch moved to deleted plans.",
+      action: { label: "Undo", run: () => restoreDeleted(removed) },
+    });
   }
-  async function transferIn(id: number) {
-    if (!data || !active || selected === null || !week) return;
+  async function transferIn(id: number, from = selected, atGW = gw) {
+    const transferWeek = active?.weeks.find((row) => row.gw === atGW);
+    if (!data || !active || from === null || !transferWeek || busy)
+      return false;
     const incoming = lookup.get(id)!,
-      outgoing = lookup.get(selected)!;
+      outgoing = lookup.get(from)!;
+    if (!incoming || !outgoing || !transferWeek.squad.includes(from))
+      return false;
     if (
       incoming.position_id !== outgoing.position_id ||
-      week.squad.includes(id)
+      transferWeek.squad.includes(id)
     )
-      return;
-    const next = structuredClone(active);
-    const isFH = week.chip === "freehit";
-    next.weeks = next.weeks.map((w) => {
-      if (w.gw < gw || (isFH && w.gw !== gw) || !w.squad.includes(selected))
-        return w;
-      const squad = w.squad.map((i) => (i === selected ? id : i));
-      return {
-        ...w,
-        squad,
-        ...optimalLineup(squad, data.players, w.gw, w.chip),
-      };
-    });
+      return false;
+    const next = replacePlayer(active, atGW, from, id);
     if (
       await updatePlan(
         next,
         `${outgoing.name} → ${incoming.name}. Budget and transfers checked.`,
       )
-    )
+    ) {
       setSelected(null);
+      return true;
+    }
+    return false;
   }
-  function setCaptain(id: number, vice = false) {
-    if (!active || !week || !week.starters.includes(id)) return;
+  function setCaptain(id: number, vice = false, atGW = gw) {
+    if (
+      !active ||
+      busy ||
+      !active.weeks.find((row) => row.gw === atGW)?.starters.includes(id)
+    )
+      return;
     const p = structuredClone(active),
-      w = p.weeks.find((v) => v.gw === gw)!;
+      w = p.weeks.find((v) => v.gw === atGW)!;
     if (vice) {
       if (id === w.captain) w.captain = w.vice;
       w.vice = id;
@@ -559,31 +1074,45 @@ export default function App() {
       `${lookup.get(id)?.name} selected as ${vice ? "vice-captain" : "captain"}.`,
     );
   }
-  function swapBench(id: number) {
-    if (!active || !week || selected === null) return;
+  function swapPlayers(from: number, id: number) {
+    if (!active || !week || !data || busy) return;
+    const first = lookup.get(from),
+      second = lookup.get(id);
+    if (!first || !second || !canSwap(week, first, second, data.players)) {
+      notify("Choose a legal starter / bench substitution.", true);
+      return;
+    }
     const p = structuredClone(active),
       w = p.weeks.find((v) => v.gw === gw)!;
-    w.starters = w.starters.map((i) => (i === selected ? id : i));
-    w.bench = w.bench.map((i) => (i === id ? selected : i));
-    if (w.captain === selected) w.captain = id;
-    if (w.vice === selected) w.vice = id;
+    const starter = week.starters.includes(from) ? from : id,
+      reserve = starter === from ? id : from;
+    w.starters = w.starters.map((i) => (i === starter ? reserve : i));
+    w.bench = w.bench.map((i) => (i === reserve ? starter : i));
+    if (w.captain === starter) w.captain = reserve;
+    if (w.vice === starter) w.vice = reserve;
     void updatePlan(p, "Starting lineup updated.");
     setSelected(null);
   }
-  function moveBench(offset: number) {
-    if (!active || !week || selected === null) return;
-    const index = week.bench.indexOf(selected),
+  function swapBench(id: number) {
+    if (selected !== null) swapPlayers(selected, id);
+  }
+  function moveBench(offset: number, player = selected, atGW = gw) {
+    const targetWeek = active?.weeks.find((row) => row.gw === atGW);
+    if (!active || !targetWeek || player === null || busy) return;
+    const index = targetWeek.bench.indexOf(player),
       target = index + offset;
     if (index < 1 || target < 1 || target > 3) return;
     const p = structuredClone(active),
-      w = p.weeks.find((v) => v.gw === gw)!;
+      w = p.weeks.find((v) => v.gw === atGW)!;
     [w.bench[index], w.bench[target]] = [w.bench[target], w.bench[index]];
     void updatePlan(p, "Bench substitution priority updated.");
   }
   function changeHorizon(count: number) {
     if (!active || !data) return;
     const p = structuredClone(active),
-      weeks = data.gameweeks.filter(w => w >= (p.weeks[0]?.gw ?? data.next_gw)).slice(0, count),
+      weeks = data.gameweeks
+        .filter((w) => w >= (p.weeks[0]?.gw ?? data.next_gw))
+        .slice(0, count),
       permanentSquad =
         [...p.weeks].reverse().find((w) => w.chip !== "freehit")?.squad ??
         p.base_squad;
@@ -682,9 +1211,14 @@ export default function App() {
     const p = { ...active, base_bank: teamBank, free_transfers: teamFT };
     await updatePlan(p, "Starting bank and free transfers updated.");
   }
-  async function runSolve(fresh = false) {
-    if (!data || busy) return;
-    const startGW = data.gameweeks.includes(gw) ? gw : data.next_gw;
+  async function runSolve(fresh = false, inPlace = false) {
+    if (!data || busy || solveInFlightRef.current) return;
+    const startGW =
+      inPlace && active && !active.weeks.some((week) => week.gw === gw)
+        ? active.weeks[0].gw
+        : data.gameweeks.includes(gw)
+          ? gw
+          : data.next_gw;
     const sourcePlan = fresh ? null : active && structuredClone(active);
     if (!fresh && !sourcePlan) return;
     const forecasts = structuredClone(forecastArgs);
@@ -692,14 +1226,26 @@ export default function App() {
     const prices = Object.fromEntries(
       data.players.map((player) => [String(player.id), player.price]),
     );
-    const horizon = Math.max(
-      1,
-      Math.min(strategy.horizon, data.gameweeks.at(-1)! - startGW + 1),
-    );
+    const horizon =
+      inPlace && sourcePlan
+        ? quickSolveHorizon(
+            sourcePlan,
+            startGW,
+            strategy.horizon,
+            data.gameweeks.at(-1)!,
+          )
+        : Math.max(
+            1,
+            Math.min(strategy.horizon, data.gameweeks.at(-1)! - startGW + 1),
+          );
     const request = ++solveRequestRef.current;
-    setSolveResult(null);
-    setSolveContext(null);
-    setBusy("Optimising…");
+    solveInFlightRef.current = true;
+    if (!inPlace) {
+      setSolveResult(null);
+      setSolveContext(null);
+    }
+    setSelected(null);
+    setBusy(`Optimising GW${startGW}–${startGW + horizon - 1}…`);
     try {
       let prefix: Week[] = [];
       let baselinePlan: Plan | null = null;
@@ -782,6 +1328,58 @@ export default function App() {
           : {},
       });
       if (request !== solveRequestRef.current) return;
+      if (inPlace && sourcePlan) {
+        const unchanged = () => {
+          const live = livePlanningRef.current;
+          return (
+            JSON.stringify(
+              live.plans.find((plan) => plan.id === sourcePlan.id),
+            ) === JSON.stringify(sourcePlan) &&
+            JSON.stringify(live.forecastArgs) === JSON.stringify(forecasts) &&
+            live.data?.players.every(
+              (player) => prices[String(player.id)] === player.price,
+            )
+          );
+        };
+        if (!unchanged())
+          throw new Error("Plan or forecasts changed. Optimise again.");
+        const candidate = planWithOptimisedSuffix(
+          sourcePlan,
+          prefix,
+          result.weeks,
+          startGW,
+          horizon,
+        );
+        setBusy("Checking optimised team…");
+        const checked = await api<{ weeks: Week[] }>(
+          "/plan/validate",
+          planValidationRequest(candidate, forecasts),
+        );
+        if (request !== solveRequestRef.current) return;
+        if (!unchanged())
+          throw new Error("Plan or forecasts changed. Optimise again.");
+        const valid = { ...candidate, weeks: checked.weeks };
+        setPlanHistory((history) => ({
+          ...history,
+          [sourcePlan.id]: {
+            past: [
+              ...(history[sourcePlan.id]?.past ?? []),
+              structuredClone(sourcePlan),
+            ].slice(-30),
+            future: [],
+          },
+        }));
+        setPlans((current) =>
+          current.map((plan) => (plan.id === sourcePlan.id ? valid : plan)),
+        );
+        setSolveResult(null);
+        setSolveContext(null);
+        setPreviewingDraft(false);
+        notify(
+          `Optimised ${sourcePlan.name} · GW${startGW}–${startGW + horizon - 1}. Undo is available.`,
+        );
+        return;
+      }
       setSolveResult(result);
       setPreviewingDraft(true);
       setDraftGW(result.weeks[0]?.gw ?? startGW);
@@ -798,6 +1396,7 @@ export default function App() {
       if (request === solveRequestRef.current)
         notify((e as Error).message, true);
     } finally {
+      solveInFlightRef.current = false;
       if (request === solveRequestRef.current) setBusy("");
     }
   }
@@ -848,6 +1447,9 @@ export default function App() {
       setPlans((ps) => [...ps, valid]);
       setActiveId(p.id);
       setGw(context.startGW);
+      setSolveResult(null);
+      setSolveContext(null);
+      setPreviewingDraft(false);
       setTab("lineup");
       notify(`Branch saved · through GW${resultWeeks.at(-1)!.gw}.`);
     } catch (e) {
@@ -890,10 +1492,24 @@ export default function App() {
   async function refresh() {
     setBusy("Refreshing public feeds…");
     try {
-      const baseline = await api<Bootstrap>("/refresh", {});
-      const restored = await loadPlanningState(plans, activeId, forecastArgs, settings,
-        configuration => configuration === undefined ? Promise.resolve(baseline) : api<Bootstrap>("/projections", configuration));
-      if (restored.notices.length || plans.some(plan => plan.weeks.some(week => week.gw < restored.forecast.next_gw))) archivePlanningInputs(plans, forecastArgs);
+      const baseline = await forecastBaseline(true);
+      const restored = await loadPlanningState(
+        plans,
+        activeId,
+        forecastArgs,
+        settings,
+        (configuration) =>
+          configuration === undefined
+            ? Promise.resolve(baseline)
+            : api<Bootstrap>("/projections", configuration),
+      );
+      if (
+        restored.notices.length ||
+        plans.some((plan) =>
+          plan.weeks.some((week) => week.gw < restored.forecast.next_gw),
+        )
+      )
+        archivePlanningInputs(plans, forecastArgs);
       ++dataRequestRef.current;
       loadedForecastArgsRef.current = JSON.stringify(restored.configuration);
       applyForecastConfiguration(restored.configuration);
@@ -905,7 +1521,9 @@ export default function App() {
       setSolveResult(null);
       setSolveContext(null);
       setEvalData(await api<Evaluation>("/evaluation"));
-      notify(`Feeds refreshed.${restored.notices.length ? ` ${restored.notices.join(" ")}` : ""}`);
+      notify(
+        `Feeds refreshed.${restored.notices.length ? ` ${restored.notices.join(" ")}` : ""}`,
+      );
     } catch (e) {
       notify((e as Error).message, true);
     } finally {
@@ -1022,11 +1640,24 @@ export default function App() {
       if (file.size > 5_000_000) throw new Error("Plan file is too large.");
       const value = JSON.parse(await file.text());
       setBusy("Checking imported planning branches…");
-      const prepared = await preparePlanImport(value, data, forecastArgs, settings, {
-        projections: configuration => api<Bootstrap>("/projections", configuration),
-        validate: body => api<{ weeks: Week[] }>("/plan/validate", body),
-      }, uid);
-      if (prepared.notices.length || value.plans.some((plan: Plan) => plan.weeks.some(week => week.gw < prepared.forecast.next_gw))) {
+      const prepared = await preparePlanImport(
+        value,
+        data,
+        forecastArgs,
+        settings,
+        {
+          projections: (configuration) =>
+            api<Bootstrap>("/projections", configuration),
+          validate: (body) => api<{ weeks: Week[] }>("/plan/validate", body),
+        },
+        uid,
+      );
+      if (
+        prepared.notices.length ||
+        value.plans.some((plan: Plan) =>
+          plan.weeks.some((week) => week.gw < prepared.forecast.next_gw),
+        )
+      ) {
         archivePlanningInputs(value.plans, value.configuration);
       }
       ++dataRequestRef.current;
@@ -1034,12 +1665,14 @@ export default function App() {
       applyForecastConfiguration(prepared.configuration);
       setSettings(prepared.solver);
       setData(prepared.forecast);
-      setPlans(ps => [...ps, ...prepared.plans]);
+      setPlans((ps) => [...ps, ...prepared.plans]);
       setActiveId(prepared.plans[0].id);
       setGw(prepared.plans[0].weeks[0].gw);
       setSolveResult(null);
       setSolveContext(null);
-      notify(`${prepared.plans.length} branches and settings imported.${prepared.notices.length ? ` ${prepared.notices.join(" ")}` : ""}`);
+      notify(
+        `${prepared.plans.length} branches and settings imported.${prepared.notices.length ? ` ${prepared.notices.join(" ")}` : ""}`,
+      );
     } catch (e) {
       notify((e as Error).message, true);
     } finally {
@@ -1051,8 +1684,14 @@ export default function App() {
     if (busy) return;
     setBusy("Checking chip branch…");
     try {
-      const valid = await validatedPlan({ ...structuredClone(source), id: uid(), name: `${source.name} · chips`, weeks, created_at: new Date().toISOString() });
-      setPlans(current => [...current, valid]);
+      const valid = await validatedPlan({
+        ...structuredClone(source),
+        id: uid(),
+        name: `${source.name} · chips`,
+        weeks,
+        created_at: new Date().toISOString(),
+      });
+      setPlans((current) => [...current, valid]);
       setActiveId(valid.id);
       setGw(valid.weeks[0].gw);
       notify("Chip branch saved.");
@@ -1061,7 +1700,11 @@ export default function App() {
     }
   }
 
-  async function applyChipStrategy(source: Plan, weeks: Week[], job: ChipStrategyJob) {
+  async function applyChipStrategy(
+    source: Plan,
+    weeks: Week[],
+    job: ChipStrategyJob,
+  ) {
     if (busy) return;
     setBusy("Checking strategy branch…");
     try {
@@ -1072,7 +1715,7 @@ export default function App() {
         weeks: structuredClone(weeks),
         created_at: new Date().toISOString(),
       });
-      setPlans(current => [...current, valid]);
+      setPlans((current) => [...current, valid]);
       setActiveId(valid.id);
       setGw(job.scope.gameweeks[0] ?? valid.weeks[0].gw);
       setTab("lineup");
@@ -1151,56 +1794,442 @@ export default function App() {
     hour: "2-digit",
     minute: "2-digit",
   });
+  const showLeftPitch =
+    pitchExpanded && wideLayout && !treeHidden && tab !== "data";
+  const plannerBoard =
+    active && week ? (
+      <PlannerBoard
+        data={data}
+        plan={active}
+        week={week}
+        selected={selected}
+        busy={Boolean(busy)}
+        onWeek={(value) => {
+          setGw(value);
+          setSelected(null);
+        }}
+        onName={(name) =>
+          setPlans((ps) =>
+            ps.map((p) => (p.id === active.id ? { ...p, name } : p)),
+          )
+        }
+        onHorizon={changeHorizon}
+        onClone={clonePlan}
+        onSelect={setSelected}
+        onDetail={openPlayer}
+        onBenchSwap={swapBench}
+        onSwap={swapPlayers}
+        onChip={changeChip}
+        onBestXI={autoLineup}
+        onReset={resetWeek}
+        onTeam={() => {
+          setTeamBank(active.base_bank);
+          setTeamFT(active.free_transfers);
+          setModal("resources");
+        }}
+        onShare={() => setModal("lineupImage")}
+        onLockTransfers={lockTransfers}
+        onOptimise={() => void runSolve(false, true)}
+        onUndo={() => void travelPlan("past")}
+        onRedo={() => void travelPlan("future")}
+        canUndo={Boolean(planHistory[active.id]?.past.length)}
+        canRedo={Boolean(planHistory[active.id]?.future.length)}
+      />
+    ) : null;
+
   return (
     <div className="app-shell solio-studio">
       <aside className="app-rail" aria-label="App navigation">
-        <button className="rail-brand" onClick={() => setTab("lineup")} aria-label="Open FPL"><Logo/></button>
-        <button className={tab !== "market" ? "active" : ""} onClick={() => setTab("lineup")} title="Planner" aria-label="Planner"><GitBranch size={19}/></button>
-        <button onClick={() => setTab("projections")} title="Player data" aria-label="Player data"><Activity size={19}/></button>
-        <button className={tab === "market" ? "active" : ""} onClick={() => setTab("market")} title="Market data" aria-label="Market data"><TrendingUp size={19}/></button>
-        <div className="rail-bottom"><button onClick={refresh} disabled={Boolean(busy)} title="Refresh feeds" aria-label="Refresh data"><RefreshCw size={17}/></button><button onClick={() => setModal("help")} title="Help" aria-label="Help"><CircleHelp size={17}/></button><button onClick={() => setModal("settings")} title="Settings and sources" aria-label="Settings and data sources"><Settings2 size={19}/></button></div>
+        <button
+          className="rail-brand"
+          onClick={() => navigateTab("lineup")}
+          aria-label="Open FPL"
+        >
+          <Logo />
+        </button>
+        <button
+          className={
+            !["market", "projections", "data"].includes(tab) ? "active" : ""
+          }
+          onClick={() => navigateTab("lineup")}
+          title="Planner"
+          aria-label="Planner"
+        >
+          <GitBranch size={19} />
+        </button>
+        <button
+          className={tab === "projections" ? "active" : ""}
+          onClick={() => navigateTab("projections")}
+          title="Player data"
+          aria-label="Player data"
+        >
+          <Activity size={19} />
+        </button>
+        <button
+          className={tab === "data" ? "active" : ""}
+          onClick={() => navigateTab("data")}
+          title="Season stats"
+          aria-label="Season stats"
+        >
+          <Database size={19} />
+        </button>
+        <button
+          className={tab === "market" ? "active" : ""}
+          onClick={() => navigateTab("market")}
+          title="Market data"
+          aria-label="Market data"
+        >
+          <TrendingUp size={19} />
+        </button>
+        <div className="rail-bottom">
+          <button
+            onClick={refresh}
+            disabled={Boolean(busy)}
+            title="Refresh feeds"
+            aria-label="Refresh data"
+          >
+            <RefreshCw size={17} />
+          </button>
+          <button
+            onClick={() => setModal("help")}
+            title="Help"
+            aria-label="Help"
+          >
+            <CircleHelp size={17} />
+          </button>
+          <button
+            onClick={() => setModal("settings")}
+            title="Settings and sources"
+            aria-label="Settings and data sources"
+          >
+            <Settings2 size={19} />
+          </button>
+        </div>
       </aside>
-      <div className="workspace solio-workspace">
-        <PlanTree data={data} plans={plans} active={active} gw={gw} onPlan={choosePlan} onWeek={value=>{setGw(value);setSelected(null);setPreviewingDraft(false);}} onCreate={clonePlan} onDelete={deletePlan} onConfigure={()=>{setTeamBank(active?.base_bank??0);setTeamFT(active?.free_transfers??1);setModal("team");}} onHorizon={changeHorizon} onOptimise={()=>setTab("optimise")}/>
+      <div
+        className={`workspace solio-workspace workspace-${tab} ${treeHidden || tab === "data" ? "tree-hidden" : ""}`}
+        style={{ "--panel-split": `${split}%` } as CSSProperties}
+      >
+        <PlanTree
+          data={data}
+          plans={plans}
+          active={active}
+          gw={gw}
+          onPlan={choosePlan}
+          onWeek={(value) => {
+            setGw(value);
+            setSelected(null);
+            setPreviewingDraft(false);
+          }}
+          onCreate={() => void createPlan()}
+          onCopy={clonePlan}
+          onEvaluate={() => setTab("analysis")}
+          pitchExpanded={showLeftPitch}
+          onPitchExpanded={(expanded) => {
+            setPitchExpanded(expanded);
+            setSelected(null);
+          }}
+          lineup={plannerBoard}
+          onStart={(value) => void startBranchAt(value)}
+          onReorder={reorderPlan}
+          busy={Boolean(busy)}
+          onDelete={deletePlan}
+          onConfigure={() => {
+            setTeamBank(active?.base_bank ?? 0);
+            setTeamFT(active?.free_transfers ?? 1);
+            setModal("team");
+          }}
+          onHorizon={changeHorizon}
+          onOptimise={() => void runSolve(false, true)}
+          onOptimiseSettings={() => navigateTab("optimise")}
+        />
+        <WorkspaceDivider
+          value={split}
+          onChange={(value) => {
+            setSplit(value);
+            localStorage.setItem("open-fpl-panel-split", JSON.stringify(value));
+          }}
+        />
         <main className="main-content solio-detail-panel">
-          <div className="detail-panel-heading"><span className="mini-brand">open<b>fpl</b></span><span>{data.season.replace("-","/")}</span><button className="icon-button" onClick={()=>setModal("team")} aria-label="Import team"><Users size={15}/></button></div>
-              <nav className="main-nav" aria-label="Main navigation">
-          {tabs.map((t) => (
+          <div className="detail-panel-heading" hidden={tab === "data"}>
             <button
-              key={t.id}
-              className={tab === t.id ? "nav-active" : ""}
-              onClick={() => {
-                setTab(t.id);
+              className="icon-button tree-toggle"
+              aria-label={
+                treeHidden ? "Show planning tree" : "Hide planning tree"
+              }
+              onClick={() => setTreeHidden(!treeHidden)}
+            >
+              <GitBranch size={15} />
+            </button>
+            <label className="workspace-context">
+              <span className="sr-only">Active plan</span>
+              <select
+                aria-label="Active plan"
+                value={active?.id ?? ""}
+                onChange={(event) => choosePlan(event.target.value)}
+              >
+                {plans.map((plan) => (
+                  <option key={plan.id} value={plan.id}>
+                    {plan.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <select
+              aria-label="View gameweek"
+              value={gw}
+              onChange={(event) => {
+                setGw(+event.target.value);
+                setSelected(null);
+                setDetailId(null);
               }}
             >
-              <t.icon size={16} />
-              {t.label}
+              {(["lineup", "optimise"].includes(tab)
+                ? (active?.weeks.map((row) => row.gw) ?? [])
+                : data.gameweeks
+              ).map((value) => (
+                <option key={value} value={value}>
+                  GW{value}
+                </option>
+              ))}
+            </select>
+            <span>{data.season.replace("-", "/")}</span>
+            <button
+              className="icon-button"
+              onClick={() => setModal("team")}
+              aria-label="Import team"
+            >
+              <Users size={15} />
             </button>
-          ))}
-        </nav>
+          </div>
+          <TabStrip
+            className="main-nav"
+            label="Main navigation"
+            value={tab}
+            onChange={navigateTab}
+            items={tabs.map((item) => ({
+              id: item.id,
+              label: (
+                <>
+                  <item.icon size={16} />
+                  {item.label}
+                </>
+              ),
+            }))}
+          />
 
-              <div className="analytics-body">
-                {tab === "lineup" ? <><div className="lineup-board-slot">{active && week ? <PlannerBoard
-                data={data} plan={active} week={week}
-                selected={selected} busy={Boolean(busy)}
-                onWeek={value => {setGw(value);setSelected(null);}}
-                onName={name => setPlans(ps => ps.map(p => p.id === active.id ? {...p,name} : p))}
-                onHorizon={changeHorizon} onClone={clonePlan} onSelect={setSelected} onDetail={setDetailId} onBenchSwap={swapBench} onCaptain={setCaptain} onBenchMove={moveBench} onChip={changeChip} onBestXI={autoLineup} onReset={resetWeek}
-                onTransfers={() => setTab("projections")} onTeam={() => {setTeamBank(active.base_bank);setTeamFT(active.free_transfers);setModal("team");}}
-                previewing={false}
-                onPreview={setPreviewingDraft}
-              /> : <Empty title="Your starting squad" text="Import a public FPL team or build a legal £100m squad."><button className="button primary" onClick={() => setModal("team")}>Import team</button><button className="button" disabled={Boolean(busy)} onClick={() => void runSolve(true)}>Build squad</button></Empty>}</div>{week ? <details className="lineup-details"><summary>Squad stats & captain comparison</summary><TeamOverview data={data} week={week} selected={selectedPlayer} targets={availableTargets} watch={watch} onWatch={onWatch} onDetail={setDetailId} onSelect={setSelected} onTransfer={id => void transferIn(id)} onPlayers={() => setTab("projections")} onCaptain={setCaptain}/></details> : null}</> : tab === "projections" ? <ProjectionsView data={data} gw={gw} onDetail={setDetailId} watch={watch} onWatch={onWatch} onCSV={() => setModal("csv")} onExport={exportCSV} selectedPlayer={selectedPlayer} squad={week?.squad ?? []} onTransfer={id => void transferIn(id)}/> : tab === "fixtures" ? <FixturesView data={data} gw={gw}/> : tab === "optimise" ? <>
-                  <OptimiseView data={data} plan={active} gw={gw} settings={settings} onSettings={setSettings} onSolve={runSolve} result={solveResult} busy={Boolean(busy)} resultFresh={solveContext?.fresh} baselinePlan={solveContext?.baselinePlan} onApply={() => void applySolve()} onDetail={setDetailId} onPreviewGW={value => {setDraftGW(value);setPreviewingDraft(true);}}/>
-                  <ChipPlanner plan={active} forecast={forecastArgs} busy={Boolean(busy)} onApply={applyChipPlan} onNotify={notify}/>
-                  <ChipStrategyView data={data} plan={active} gw={gw} strategy={settings} forecast={forecastArgs} busy={Boolean(busy)} onApply={applyChipStrategy}/>
-                  <SensitivityView data={data} plan={active} strategy={settings} forecast={forecastArgs} busy={Boolean(busy)} onApply={(job,weeks,label) => void applyStress(job,weeks,label)} onDetail={setDetailId}/>
-                </> : tab === "analysis" ? <AnalysisView data={data} plans={plans} active={active} evalData={evalData} onSnapshot={snapshot} prospective={prospective} onScore={scoreProspective} selectedGW={gw} onDetail={setDetailId} onLock={id=>togglePlayerConstraint(id,"locked")}/> : <>
-                  <div className="market-mode segmented" aria-label="Market view"><button className={marketMode === "fixtures" ? "active" : ""} onClick={() => setMarketMode("fixtures")}>Fixture markets</button><button className={marketMode === "movement" ? "active" : ""} onClick={() => setMarketMode("movement")}>Movement</button><button className={marketMode === "prices" ? "active" : ""} onClick={() => setMarketMode("prices")}>Prices</button><button className={marketMode === "references" ? "active" : ""} onClick={() => setMarketMode("references")}>Provider shortlists</button></div>
-                  {marketMode === "fixtures" ? <FixtureMarkets data={data} gw={gw}/> : marketMode === "movement" ? <MarketMovement gw={gw}/> : marketMode === "prices" ? <MarketView data={data} gw={gw} onDetail={setDetailId} watch={watch} onWatch={onWatch}/> : <ReferenceView data={data} gw={gw} onDetail={setDetailId} watch={watch} onWatch={onWatch}/>}
-                </>}
-              </div>
+          <div
+            className={`analytics-body view-${tab}`}
+            ref={analyticsRef}
+            onScroll={(event) => {
+              scrollPositions.current[scrollKey] =
+                event.currentTarget.scrollTop;
+            }}
+          >
+            {tab === "lineup" ? (
+              <>
+                {!showLeftPitch && (
+                  <div className="lineup-board-slot">
+                    {active && week ? (
+                      plannerBoard
+                    ) : (
+                      <Empty
+                        title="Your starting squad"
+                        text="Import a public FPL team or build a legal £100m squad."
+                      >
+                        <button
+                          className="button primary"
+                          onClick={() => setModal("team")}
+                        >
+                          Import team
+                        </button>
+                        <button
+                          className="button"
+                          disabled={Boolean(busy)}
+                          onClick={() => void runSolve(true)}
+                        >
+                          Build squad
+                        </button>
+                      </Empty>
+                    )}
+                  </div>
+                )}
+                {week ? (
+                  <details
+                    className="lineup-details"
+                    open={showLeftPitch || undefined}
+                  >
+                    <summary>Squad stats & captain comparison</summary>
+                    <TeamOverview
+                      data={data}
+                      week={week}
+                      selected={selectedPlayer}
+                      targets={availableTargets}
+                      watch={watch}
+                      onWatch={onWatch}
+                      onDetail={openPlayer}
+                      onSelect={setSelected}
+                      onTransfer={(id) => void transferIn(id)}
+                      onPlayers={() => setTab("projections")}
+                      onCaptain={setCaptain}
+                    />
+                  </details>
+                ) : null}
+              </>
+            ) : tab === "projections" ? (
+              <ProjectionsView
+                data={data}
+                gw={gw}
+                onDetail={(id, gameweek) =>
+                  openPlayer(id, gameweek ?? gw, false, active, true)
+                }
+                onEditorTarget={setProjectionEditorTarget}
+                editing={
+                  detailInline && detailId !== null
+                    ? { id: detailId, gw: playerGW }
+                    : null
+                }
+                watch={watch}
+                onWatch={onWatch}
+                onCSV={() => setModal("csv")}
+                onExport={exportCSV}
+                teamStrengths={teamStrengths}
+                onTeamStrengths={setTeamStrengths}
+                fixtureMoves={fixtureMoves}
+                onFixtureMoves={setFixtureMoves}
+                selectedPlayer={selectedPlayer}
+                squad={week?.squad ?? []}
+                onTransfer={(id) => void transferIn(id)}
+                onCancelTransfer={() => setSelected(null)}
+              />
+            ) : tab === "data" ? (
+              <Suspense fallback={<Busy text="Loading season stats…" />}>
+                <SeasonData data={data} onDetail={openPlayer} />
+              </Suspense>
+            ) : tab === "fixtures" ? (
+              <FixturesView data={data} gw={gw} onDetail={openPlayer} />
+            ) : tab === "optimise" ? (
+              <>
+                <OptimiseView
+                  data={data}
+                  plan={active}
+                  gw={gw}
+                  settings={settings}
+                  onSettings={setSettings}
+                  onSolve={runSolve}
+                  result={solveResult}
+                  busy={Boolean(busy)}
+                  resultFresh={solveContext?.fresh}
+                  baselinePlan={solveContext?.baselinePlan}
+                  onApply={() => void applySolve()}
+                  onDetail={(id, week) =>
+                    openPlayer(id, week ?? gw, Boolean(solveResult))
+                  }
+                  onPreviewGW={(value) => {
+                    setDraftGW(value);
+                    setPreviewingDraft(true);
+                  }}
+                />
+                <ChipPlanner
+                  plan={active}
+                  forecast={forecastArgs}
+                  busy={Boolean(busy)}
+                  onApply={applyChipPlan}
+                  onNotify={notify}
+                />
+                <ChipStrategyView
+                  data={data}
+                  plan={active}
+                  gw={gw}
+                  strategy={settings}
+                  forecast={forecastArgs}
+                  busy={Boolean(busy)}
+                  onApply={applyChipStrategy}
+                />
+                <SensitivityView
+                  data={data}
+                  plan={active}
+                  strategy={settings}
+                  forecast={forecastArgs}
+                  busy={Boolean(busy)}
+                  onApply={(job, weeks, label) =>
+                    void applyStress(job, weeks, label)
+                  }
+                  onDetail={openPlayer}
+                />
+              </>
+            ) : tab === "analysis" ? (
+              <AnalysisView
+                data={data}
+                plans={plans}
+                active={active}
+                evalData={evalData}
+                onSnapshot={snapshot}
+                prospective={prospective}
+                onScore={scoreProspective}
+                selectedGW={gw}
+                onPlan={choosePlan}
+                onDetail={openPlayer}
+                onLock={(id) => togglePlayerConstraint(id, "locked")}
+              />
+            ) : (
+              <>
+                <TabStrip
+                  className="market-mode segmented"
+                  label="Market view"
+                  value={marketMode}
+                  onChange={setMarketMode}
+                  items={[
+                    { id: "fixtures", label: "Fixture markets" },
+                    { id: "movement", label: "Movement" },
+                    { id: "prices", label: "Prices" },
+                    { id: "references", label: "Shortlists" },
+                  ]}
+                />
+                {marketMode === "fixtures" ? (
+                  <FixtureMarkets data={data} gw={gw} onDetail={openPlayer} />
+                ) : marketMode === "movement" ? (
+                  <MarketMovement gw={gw} />
+                ) : marketMode === "prices" ? (
+                  <MarketView
+                    data={data}
+                    gw={gw}
+                    onDetail={openPlayer}
+                    watch={watch}
+                    onWatch={onWatch}
+                  />
+                ) : (
+                  <ReferenceView
+                    data={data}
+                    gw={gw}
+                    onDetail={openPlayer}
+                    watch={watch}
+                    onWatch={onWatch}
+                  />
+                )}
+              </>
+            )}
+          </div>
 
-          <footer className="studio-feed-footer"><button onClick={()=>setModal("settings")}><i className={Object.values(data.sources).some(source=>source.status==="stale")?"stale":""}/>Sources · {pastRefresh}<Info size={11}/></button><span>{data.players.length} players · GW{data.gameweeks[0]}–{data.gameweeks.at(-1)}</span></footer>
+          <footer className="studio-feed-footer">
+            <button onClick={() => setModal("settings")}>
+              <i
+                className={
+                  Object.values(data.sources).some(
+                    (source) => source.status === "stale",
+                  )
+                    ? "stale"
+                    : ""
+                }
+              />
+              Sources · {pastRefresh}
+              <Info size={11} />
+            </button>
+            <span>
+              {data.players.length} players · GW{data.gameweeks[0]}–
+              {data.gameweeks.at(-1)}
+            </span>
+          </footer>
         </main>
       </div>
 
@@ -1217,6 +2246,11 @@ export default function App() {
         >
           {toast.error ? <Info size={17} /> : <Check size={17} />}
           <span>{toast.text}</span>
+          {toast.action ? (
+            <button className="toast-undo" onClick={toast.action.run}>
+              {toast.action.label}
+            </button>
+          ) : null}
           <button
             className="icon-button"
             onClick={() => setToast(null)}
@@ -1225,6 +2259,59 @@ export default function App() {
             <X size={15} />
           </button>
         </div>
+      )}
+      {modal === "lineupImage" && active && week && (
+        <LineupImageDialog
+          data={data}
+          plan={active}
+          week={week}
+          onClose={() => setModal(null)}
+        />
+      )}
+      {modal === "resources" && active && (
+        <Modal
+          title="Starting resources"
+          subtitle={`Entering GW${active.weeks[0]?.gw}`}
+          onClose={() => setModal(null)}
+        >
+          <div className="modal-body">
+            <div className="field-grid">
+              <label>
+                Bank (£m)
+                <input
+                  aria-label="Starting bank"
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.1"
+                  value={teamBank}
+                  onChange={(event) => setTeamBank(+event.target.value)}
+                />
+              </label>
+              <label>
+                Free transfers
+                <select
+                  aria-label="Starting free transfers"
+                  value={teamFT}
+                  onChange={(event) => setTeamFT(+event.target.value)}
+                >
+                  {[0, 1, 2, 3, 4, 5].map((n) => (
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <button
+              className="button primary"
+              disabled={Boolean(busy)}
+              onClick={() => void saveTeamSettings()}
+            >
+              Save resources
+            </button>
+          </div>
+        </Modal>
       )}
       {modal === "team" && (
         <Modal
@@ -1383,236 +2470,333 @@ export default function App() {
       )}
       {modal === "settings" && (
         <Modal
-          title="Your model, your workspace."
-          subtitle="Control inputs, save your work, and inspect the data connection."
+          title="Settings"
+          subtitle="Forecasts, backups and sources"
           onClose={() => setModal(null)}
           wide
         >
-          <div className="modal-body settings-body">
-            <section>
-              <h3>Forecast inputs</h3>
-              <label className="toggle-row">
-                <span>
-                  <b>Market and Elevenify team inputs</b>
-                  <small>Turn off to use historical team estimates only</small>
-                </span>
-                <input
-                  aria-label="Use market and Elevenify inputs"
-                  type="checkbox"
-                  checked={useMarket}
-                  onChange={(e) => setUseMarket(e.target.checked)}
-                />
-              </label>
-              <label className="toggle-row">
-                <span>
-                  <b>FPL Form player forecasts</b>
-                  <small>Public player points and appearance estimates</small>
-                </span>
-                <input
-                  type="checkbox"
-                  checked={useProvider}
-                  onChange={(e) => setUseProvider(e.target.checked)}
-                  aria-label="Use FPL Form forecasts"
-                />
-              </label>
-              <label className="range-label">
-                FPL Form weight <b>{fmt(providerWeight * 100, 0)}%</b>
-                <input
-                  type="range"
-                  min="0"
-                  max="100"
-                  step="5"
-                  value={providerWeight * 100}
-                  onChange={(e) => setProviderWeight(+e.target.value / 100)}
-                  aria-label="FPL Form weight"
-                />
-              </label>
-              <label className="toggle-row">
-                <span>
-                  <b>Extrapolate short-range forecasts</b>
-                  <small>
-                    Provider anchors fade toward the fixture component model
-                  </small>
-                </span>
-                <input
-                  type="checkbox"
-                  checked={extrapolate}
-                  onChange={(e) => setExtrapolate(e.target.checked)}
-                  aria-label="Use forecast extrapolation"
-                />
-              </label>
-              <label className="range-label">
-                Anchor influence half-life <b>{anchorHalfLife} GWs</b>
-                <input
-                  type="range"
-                  min="1"
-                  max="20"
-                  step="1"
-                  value={anchorHalfLife}
-                  onChange={(e) => setAnchorHalfLife(+e.target.value)}
-                  aria-label="Anchor influence half-life"
-                />
-              </label>
-              <p className="help-text">
-                The historical benchmark tests the component model. These
-                provider blends and extrapolations need separate prospective
-                evaluation.{" "}
-                <a
-                  href="https://www.fplform.com/export-fpl-form-data"
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  FPL Form source
-                </a>
-              </p>
-              <div className="setting-row">
-                <span>
-                  <b>Manual minutes scenarios</b>
-                  <small>
-                    {
-                      new Set([
-                        ...Object.keys(overrides),
-                        ...Object.keys(minutesSchedule),
-                      ]).size
-                    }{" "}
-                    players customised
-                  </small>
-                </span>
-                <button
-                  className="button small"
-                  onClick={() => {
-                    setOverrides({});
-                    setMinutesSchedule({});
-                    notify("Minutes scenarios cleared.");
-                  }}
-                >
-                  Reset all
-                </button>
-              </div>
-              <div className="setting-row">
-                <span>
-                  <b>Imported points model</b>
-                  <small>
-                    {customName || "No external CSV loaded"} ·{" "}
-                    {fmt(blendWeight * 100, 0)}% weight
-                  </small>
-                </span>
-                <button
-                  className="button small"
-                  onClick={() => {
-                    setCustomPoints({});
-                    setBlendWeight(0);
-                    setCustomName("");
-                  }}
-                >
-                  Clear
-                </button>
-              </div>
-              <div className="divider" />
-              <h3>Planning branches</h3>
-              <div className="button-row">
-                <button
-                  className="button"
-                  onClick={() =>
-                    download(
-                      "open-fpl-plans.json",
-                      JSON.stringify(
-                        createPlanExport(plans, forecastArgs, settings),
-                        null,
-                        2,
-                      ),
-                    )
-                  }
-                >
-                  <Download size={15} />
-                  Export plans
-                </button>
-                <button className="button" onClick={() => setBackupText(JSON.stringify(createPlanExport(plans, forecastArgs, settings), null, 2))}><Copy size={15}/>Backup text</button>
-                <button
-                  className="button"
-                  onClick={() => fileRef.current?.click()}
-                >
-                  <Upload size={15} />
-                  Import plans
-                </button>
-                <input
-                  hidden
-                  ref={fileRef}
-                  type="file"
-                  accept=".json"
-                  onChange={(e) => {
-                    if (e.target.files?.[0])
-                      void importPlans(e.target.files[0]);
-                    e.target.value = "";
-                  }}
-                />
-              </div>
-              {backupText && <label>Plan backup<textarea aria-label="Plan backup JSON" readOnly rows={4} value={backupText} onFocus={event => event.currentTarget.select()}/></label>}
-              <details className="compact-details"><summary>Paste a backup</summary>
-                <textarea aria-label="Import backup JSON" rows={4} value={importText} onChange={event => setImportText(event.target.value)} placeholder="Paste Open FPL backup JSON"/>
-                <button className="button small" disabled={!importText.trim() || Boolean(busy)} onClick={() => void importPlans(new File([importText], "pasted-plan-backup.json", {type:"application/json"}))}><Upload size={14}/>Import backup</button>
-              </details>
-              <p className="help-text">
-                Plan files are checked against current FPL rules before being
-                loaded. Browser storage stays on this device.
-              </p>
-              <button
-                className="button full"
-                onClick={refresh}
-                disabled={!!busy}
-              >
-                <RefreshCw size={15} />
-                Refresh public feeds
-              </button>
-            </section>
-            <section>
-              <h3>Connected sources</h3>
-              {Object.entries(data.sources)
-                .filter(([key]) =>
-                  [
-                    "fpl_bootstrap",
-                    "fpl_fixtures",
-                    "fpljoe",
-                    "elevenify_sheet",
-                    `fplform_${data.season}_gw${data.next_gw}`,
-                    "archive_2025-26_gws",
-                  ].includes(key),
-                )
-                .map(([key, s]) => (
+          <div className="modal-body">
+            <TabStrip
+              label="Settings views"
+              value={settingsTab}
+              onChange={setSettingsTab}
+              items={[
+                { id: "inputs", label: "Forecast inputs" },
+                { id: "plans", label: "Plans & backups" },
+                { id: "sources", label: "Sources" },
+              ]}
+            />
+            <div className="settings-body">
+              <section hidden={settingsTab !== "plans"}>
+                {deletedPlans.length ? (
+                  <details className="compact-details deleted-plans">
+                    <summary>Deleted plans · {deletedPlans.length}</summary>
+                    {deletedPlans.map((plan) => (
+                      <div key={plan.id}>
+                        <span>{plan.name}</span>
+                        <button
+                          className="button small"
+                          onClick={() => restoreDeleted(plan)}
+                        >
+                          Restore
+                        </button>
+                      </div>
+                    ))}
+                  </details>
+                ) : null}
+              </section>
+              <section hidden={settingsTab !== "inputs"}>
+                <h3>Forecast inputs</h3>
+                <label className="toggle-row">
+                  <span>
+                    <b>Market and Elevenify team inputs</b>
+                    <small>
+                      Turn off to use historical team estimates only
+                    </small>
+                  </span>
+                  <input
+                    aria-label="Use market and Elevenify inputs"
+                    type="checkbox"
+                    checked={useMarket}
+                    onChange={(e) => setUseMarket(e.target.checked)}
+                  />
+                </label>
+                <label className="toggle-row">
+                  <span>
+                    <b>FPL Form player forecasts</b>
+                    <small>Public player points and appearance estimates</small>
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={useProvider}
+                    onChange={(e) => setUseProvider(e.target.checked)}
+                    aria-label="Use FPL Form forecasts"
+                  />
+                </label>
+                <label className="range-label">
+                  FPL Form weight <b>{fmt(providerWeight * 100, 0)}%</b>
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    step="5"
+                    value={providerWeight * 100}
+                    onChange={(e) => setProviderWeight(+e.target.value / 100)}
+                    aria-label="FPL Form weight"
+                  />
+                </label>
+                <label className="toggle-row">
+                  <span>
+                    <b>Extrapolate short-range forecasts</b>
+                    <small>
+                      Provider anchors fade toward the fixture component model
+                    </small>
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={extrapolate}
+                    onChange={(e) => setExtrapolate(e.target.checked)}
+                    aria-label="Use forecast extrapolation"
+                  />
+                </label>
+                <label className="range-label">
+                  Anchor influence half-life <b>{anchorHalfLife} GWs</b>
+                  <input
+                    type="range"
+                    min="1"
+                    max="20"
+                    step="1"
+                    value={anchorHalfLife}
+                    onChange={(e) => setAnchorHalfLife(+e.target.value)}
+                    aria-label="Anchor influence half-life"
+                  />
+                </label>
+                <p className="help-text">
+                  The historical benchmark tests the component model. These
+                  provider blends and extrapolations need separate prospective
+                  evaluation.{" "}
                   <a
-                    className="source-setting"
-                    key={key}
-                    href={s.url}
+                    href="https://www.fplform.com/export-fpl-form-data"
                     target="_blank"
                     rel="noreferrer"
                   >
-                    <span
-                      className={`status-dot ${s.status === "stale" ? "stale" : ""}`}
-                    />
-                    <span>
-                      <b>{key.replaceAll("_", " ")}</b>
-                      <small>
-                        {s.fetched_at
-                          ? new Date(s.fetched_at).toLocaleString()
-                          : "Unavailable"}
-                      </small>
-                    </span>
-                    <ArrowUpRight size={14} />
+                    FPL Form source
                   </a>
-                ))}
-              <p className="help-text">
-                Vendor data is locally cached and attributed. Public access is
-                not an unrestricted redistribution licence.
-              </p>
-              <div className="divider" />
-              <h3>Model limitations</h3>
-              {data.limitations.map((l) => (
-                <p className="limitation" key={l}>
-                  <Info size={13} />
-                  {l}
                 </p>
-              ))}
-            </section>
+                <div className="setting-row">
+                  <span>
+                    <b>Manual minutes scenarios</b>
+                    <small>
+                      {
+                        new Set([
+                          ...Object.keys(overrides),
+                          ...Object.keys(minutesSchedule),
+                        ]).size
+                      }{" "}
+                      players customised
+                    </small>
+                  </span>
+                  <button
+                    className="button small"
+                    onClick={() => {
+                      setOverrides({});
+                      setMinutesSchedule({});
+                      notify("Minutes scenarios cleared.");
+                    }}
+                  >
+                    Reset all
+                  </button>
+                </div>
+                <div className="setting-row">
+                  <span>
+                    <b>Team strength assumptions</b>
+                    <small>
+                      {Object.keys(teamStrengths).length} clubs customised
+                    </small>
+                  </span>
+                  <button
+                    className="button small"
+                    disabled={!Object.keys(teamStrengths).length}
+                    onClick={() => {
+                      setTeamStrengths({});
+                      notify("Team strengths restored.");
+                    }}
+                  >
+                    Reset all
+                  </button>
+                </div>
+                <div className="setting-row">
+                  <span>
+                    <b>Imported points model</b>
+                    <small>
+                      {customName || "No external CSV loaded"} ·{" "}
+                      {fmt(blendWeight * 100, 0)}% weight
+                    </small>
+                  </span>
+                  <button
+                    className="button small"
+                    onClick={() => {
+                      setCustomPoints({});
+                      setBlendWeight(0);
+                      setCustomName("");
+                    }}
+                  >
+                    Clear
+                  </button>
+                </div>
+              </section>
+              <section hidden={settingsTab !== "plans"}>
+                <h3>Planning branches</h3>
+                <div className="button-row">
+                  <button
+                    className="button"
+                    onClick={() =>
+                      download(
+                        "open-fpl-plans.json",
+                        JSON.stringify(
+                          createPlanExport(plans, forecastArgs, settings),
+                          null,
+                          2,
+                        ),
+                      )
+                    }
+                  >
+                    <Download size={15} />
+                    Export plans
+                  </button>
+                  <button
+                    className="button"
+                    onClick={() =>
+                      setBackupText(
+                        JSON.stringify(
+                          createPlanExport(plans, forecastArgs, settings),
+                          null,
+                          2,
+                        ),
+                      )
+                    }
+                  >
+                    <Copy size={15} />
+                    Backup text
+                  </button>
+                  <button
+                    className="button"
+                    onClick={() => fileRef.current?.click()}
+                  >
+                    <Upload size={15} />
+                    Import plans
+                  </button>
+                  <input
+                    hidden
+                    ref={fileRef}
+                    type="file"
+                    accept=".json"
+                    onChange={(e) => {
+                      if (e.target.files?.[0])
+                        void importPlans(e.target.files[0]);
+                      e.target.value = "";
+                    }}
+                  />
+                </div>
+                {backupText && (
+                  <label>
+                    Plan backup
+                    <textarea
+                      aria-label="Plan backup JSON"
+                      readOnly
+                      rows={4}
+                      value={backupText}
+                      onFocus={(event) => event.currentTarget.select()}
+                    />
+                  </label>
+                )}
+                <details className="compact-details">
+                  <summary>Paste a backup</summary>
+                  <textarea
+                    aria-label="Import backup JSON"
+                    rows={4}
+                    value={importText}
+                    onChange={(event) => setImportText(event.target.value)}
+                    placeholder="Paste Open FPL backup JSON"
+                  />
+                  <button
+                    className="button small"
+                    disabled={!importText.trim() || Boolean(busy)}
+                    onClick={() =>
+                      void importPlans(
+                        new File([importText], "pasted-plan-backup.json", {
+                          type: "application/json",
+                        }),
+                      )
+                    }
+                  >
+                    <Upload size={14} />
+                    Import backup
+                  </button>
+                </details>
+                <p className="help-text">
+                  Plan files are checked against current FPL rules before being
+                  loaded. Browser storage stays on this device.
+                </p>
+                <button
+                  className="button full"
+                  onClick={refresh}
+                  disabled={!!busy}
+                >
+                  <RefreshCw size={15} />
+                  Refresh public feeds
+                </button>
+              </section>
+              <section hidden={settingsTab !== "sources"}>
+                <h3>Connected sources</h3>
+                {Object.entries(data.sources)
+                  .filter(([key]) =>
+                    [
+                      "fpl_bootstrap",
+                      "fpl_fixtures",
+                      "fpljoe",
+                      "elevenify_sheet",
+                      `fplform_${data.season}_gw${data.next_gw}`,
+                      "archive_2025-26_gws",
+                    ].includes(key),
+                  )
+                  .map(([key, s]) => (
+                    <a
+                      className="source-setting"
+                      key={key}
+                      href={s.url}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      <span
+                        className={`status-dot ${s.status === "stale" || s.status === "unavailable" ? "stale" : ""}`}
+                      />
+                      <span>
+                        <b>{key.replaceAll("_", " ")}</b>
+                        <small>
+                          {s.fetched_at
+                            ? new Date(s.fetched_at).toLocaleString()
+                            : "Unavailable"}
+                        </small>
+                      </span>
+                      <ArrowUpRight size={14} />
+                    </a>
+                  ))}
+                <p className="help-text">
+                  Vendor data is locally cached and attributed. Public access is
+                  not an unrestricted redistribution licence.
+                </p>
+                <details className="compact-details">
+                  <summary>Model limitations</summary>
+                  {data.limitations.map((l) => (
+                    <p className="limitation" key={l}>
+                      <Info size={13} />
+                      {l}
+                    </p>
+                  ))}
+                </details>
+              </section>
+            </div>
           </div>
         </Modal>
       )}
@@ -1722,46 +2906,225 @@ export default function App() {
         </Modal>
       )}
       {detailId !== null && detailPlayer && (
-        <Modal
+        <PlayerSurface
           title={detailPlayer.name}
           subtitle={`${detailPlayer.team_name} · ${detailPlayer.position} · ${money(detailPlayer.price)}`}
           onClose={() => setDetailId(null)}
-          wide
+          anchor={detailAnchor}
+          target={
+            detailInline && tab === "projections"
+              ? projectionEditorTarget
+              : null
+          }
         >
           <div className={`modal-body player-detail detail-tab-${detailTab}`}>
+            <div className="player-context-bar">
+              {detailReadOnly ? (
+                <span className="subtle-tag">Draft preview</span>
+              ) : null}
+              {detailBack !== null ? (
+                <button
+                  className="button small"
+                  onClick={() => {
+                    setDetailId(detailBack);
+                    setDetailBack(null);
+                    setDetailTab("transfer");
+                  }}
+                >
+                  <ArrowLeft size={14} />
+                  Back to shortlist
+                </button>
+              ) : (
+                <div className="player-neighbours">
+                  {[-1, 1].map((offset) => (
+                    <button
+                      key={offset}
+                      className="icon-button"
+                      aria-label={
+                        offset < 0
+                          ? "Previous squad player"
+                          : "Next squad player"
+                      }
+                      disabled={!detailSquad || Boolean(busy)}
+                      onClick={() => {
+                        const squad = detailWeek!.squad;
+                        const index = squad.indexOf(detailId);
+                        openPlayer(
+                          squad[(index + offset + squad.length) % squad.length],
+                          playerGW,
+                          false,
+                          active,
+                          detailInline,
+                        );
+                      }}
+                    >
+                      {offset < 0 ? (
+                        <ChevronLeft size={16} />
+                      ) : (
+                        <ChevronRight size={16} />
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <select
+                aria-label="Player gameweek"
+                disabled={Boolean(busy)}
+                value={playerGW}
+                onChange={(event) => setDetailGW(+event.target.value)}
+              >
+                {data.gameweeks.map((value) => (
+                  <option key={value} value={value}>
+                    GW{value}
+                  </option>
+                ))}
+              </select>
+              <button
+                className={`icon-button ${watch.includes(detailId) ? "starred" : ""}`}
+                aria-label={`Watch ${detailPlayer.name}`}
+                aria-pressed={watch.includes(detailId)}
+                onClick={() => onWatch(detailId)}
+              >
+                <Star
+                  size={17}
+                  fill={watch.includes(detailId) ? "currentColor" : "none"}
+                />
+              </button>
+            </div>
             <div className="player-detail-top">
               <Shirt player={detailPlayer} />
               <Stat
-                label={`GW${gw} EXPECTED POINTS`}
-                value={fmt(xp(detailPlayer, gw), 2)}
+                label={`GW${playerGW} xPts`}
+                value={fmt(xp(detailPlayer, playerGW), 2)}
                 accent
               />
               <Stat
-                label="EXPECTED MINUTES"
-                value={fmt(detailPlayer.gw[String(gw)]?.xmins ?? 0, 0)}
-                note={`${fmt(detailPlayer.p60 * 100, 0)}% modelled 60+ minutes`}
+                label="xMins"
+                value={fmt(detailPlayer.gw[String(playerGW)]?.xmins ?? 0, 0)}
               />
               <Stat
-                label="OWNERSHIP"
+                label="Ownership"
                 value={`${fmt(detailPlayer.ownership)}%`}
-                note={`${detailPlayer.sample_matches} historical fixture rows`}
               />
-              <button
-                className={`button ${watch.includes(detailId) ? "selected" : ""}`}
-                onClick={() => onWatch(detailId)}
-              >
-                <Star size={14} />
-                {watch.includes(detailId) ? "Watching" : "Watch"}
-              </button>
             </div>
             <div className="player-dialog-actions">
-              <button className="button small" disabled={!week?.starters.includes(detailId)} onClick={()=>setCaptain(detailId)}>C</button>
-              <button className="button small" disabled={!week?.starters.includes(detailId)} onClick={()=>setCaptain(detailId,true)}>VC</button>
-              <button className={`button small ${settings.locked.includes(detailId)?"selected":""}`} onClick={()=>togglePlayerConstraint(detailId,"locked")}>Lock</button>
-              <button className={`button small ${settings.excluded.includes(detailId)?"selected":""}`} onClick={()=>togglePlayerConstraint(detailId,"excluded")}>Ban</button>
-              {week?.squad.includes(detailId)?<button className="button small primary" onClick={()=>{setSelected(detailId);setTab("projections");setDetailId(null);}}>Transfer out</button>:selectedPlayer&&selectedPlayer.position_id===detailPlayer.position_id?<button className="button small primary" onClick={()=>{void transferIn(detailId);setDetailId(null);}}>Transfer in</button>:null}
+              <button
+                className={`button small ${detailWeek?.captain === detailId ? "selected" : ""}`}
+                title="Captain"
+                disabled={
+                  Boolean(busy) || !detailWeek?.starters.includes(detailId)
+                }
+                onClick={() => setCaptain(detailId, false, playerGW)}
+              >
+                C<span>Captain</span>
+              </button>
+              <button
+                className={`button small ${detailWeek?.vice === detailId ? "selected" : ""}`}
+                title="Vice-captain"
+                disabled={
+                  Boolean(busy) || !detailWeek?.starters.includes(detailId)
+                }
+                onClick={() => setCaptain(detailId, true, playerGW)}
+              >
+                VC<span>Vice</span>
+              </button>
+              <button
+                className={`button small ${settings.locked.includes(detailId) ? "selected" : ""}`}
+                aria-pressed={settings.locked.includes(detailId)}
+                title="Include in every solved gameweek"
+                onClick={() => togglePlayerConstraint(detailId, "locked")}
+              >
+                <LockKeyhole size={14} />
+                Lock
+              </button>
+              <button
+                className={`button small ${settings.excluded.includes(detailId) ? "selected" : ""}`}
+                aria-pressed={settings.excluded.includes(detailId)}
+                title="Exclude from every solved gameweek"
+                onClick={() => togglePlayerConstraint(detailId, "excluded")}
+              >
+                <Ban size={14} />
+                Ban
+              </button>
+              {detailSquad ? (
+                <button
+                  className="button small"
+                  disabled={Boolean(busy)}
+                  onClick={() => {
+                    setGw(playerGW);
+                    setSelected(detailId);
+                    setDetailId(null);
+                    if (!detailInline) setTab("lineup");
+                  }}
+                >
+                  <ArrowLeftRight size={14} />
+                  Sub
+                </button>
+              ) : null}
+              {detailWeek?.bench.includes(detailId) &&
+              detailPlayer.position_id !== 1 ? (
+                <>
+                  <button
+                    className="button small"
+                    disabled={
+                      Boolean(busy) || detailWeek.bench.indexOf(detailId) <= 1
+                    }
+                    onClick={() => moveBench(-1, detailId, playerGW)}
+                  >
+                    Bench ↑
+                  </button>
+                  <button
+                    className="button small"
+                    disabled={
+                      Boolean(busy) || detailWeek.bench.indexOf(detailId) >= 3
+                    }
+                    onClick={() => moveBench(1, detailId, playerGW)}
+                  >
+                    Bench ↓
+                  </button>
+                </>
+              ) : null}
             </div>
-            <div className="segmented player-detail-tabs">{["overview","edit","history"].map(value=><button className={detailTab===value?"active":""} key={value} onClick={()=>setDetailTab(value)}>{value==="overview"?"Breakdown":value==="edit"?"Edit stats":"History & outcomes"}</button>)}</div>
+            <TabStrip
+              className="segmented player-detail-tabs"
+              label="Player views"
+              value={detailTab}
+              onChange={setDetailTab}
+              items={[
+                ...(detailSquad ? [{ id: "transfer", label: "Transfer" }] : []),
+                { id: "edit", label: "Edit" },
+                { id: "overview", label: "Breakdown" },
+                { id: "history", label: "History" },
+              ]}
+            />
+            {detailTab === "transfer" && detailSquad && active && detailWeek ? (
+              <TransferPanel
+                key={`${detailId}-${playerGW}`}
+                data={data}
+                plan={active}
+                week={detailWeek}
+                outgoing={detailPlayer}
+                busy={Boolean(busy)}
+                watch={watch}
+                onWatch={onWatch}
+                onInspect={(id) => {
+                  setDetailBack(detailId);
+                  setDetailId(id);
+                  setDetailTab("overview");
+                }}
+                onTransfer={async (id) => {
+                  const ok = await transferIn(id, detailId, playerGW);
+                  if (ok) {
+                    setDetailId(null);
+                    if (!detailInline) {
+                      setGw(playerGW);
+                      setTab("lineup");
+                    }
+                  }
+                  return ok;
+                }}
+              />
+            ) : null}
             {detailPlayer.news && (
               <p className="news-alert">
                 Official team news: {detailPlayer.news}
@@ -1772,7 +3135,7 @@ export default function App() {
                 <h3>Where the points come from</h3>
                 <div className="component-bars">
                   {Object.entries(
-                    detailPlayer.gw[String(gw)]?.components ?? {},
+                    detailPlayer.gw[String(playerGW)]?.components ?? {},
                   ).map(([key, value]) => (
                     <div key={key}>
                       <span>{key.replaceAll("_", " ")}</span>
@@ -1793,7 +3156,7 @@ export default function App() {
                 </div>
                 <div className="component-total">
                   <b>Total expected points</b>
-                  <strong>{fmt(xp(detailPlayer, gw), 2)}</strong>
+                  <strong>{fmt(xp(detailPlayer, playerGW), 2)}</strong>
                 </div>
                 <p className="source-caption">
                   Current scoring configuration from the official FPL API. Bonus
@@ -1801,12 +3164,28 @@ export default function App() {
                 </p>
               </section>
               <section>
-                <StatScenarioEditor player={detailPlayer} weeks={data.gameweeks} gw={gw} schedule={statSchedule[String(detailId)] ?? {}} onSchedule={schedule => setStatSchedule(current => {const next = {...current}; if(Object.keys(schedule).length) next[String(detailId)]=schedule; else delete next[String(detailId)]; return next;})} onNotify={notify}/>
-                <MinutesScenarioEditor
-                  key={detailId}
+                <StatScenarioEditor
+                  key={`stats-${detailId}-${playerGW}`}
                   player={detailPlayer}
                   weeks={data.gameweeks}
-                  gw={gw}
+                  gw={playerGW}
+                  schedule={statSchedule[String(detailId)] ?? {}}
+                  onSchedule={(schedule) =>
+                    setStatSchedule((current) => {
+                      const next = { ...current };
+                      if (Object.keys(schedule).length)
+                        next[String(detailId)] = schedule;
+                      else delete next[String(detailId)];
+                      return next;
+                    })
+                  }
+                  onNotify={notify}
+                />
+                <MinutesScenarioEditor
+                  key={`minutes-${detailId}-${playerGW}`}
+                  player={detailPlayer}
+                  weeks={data.gameweeks}
+                  gw={playerGW}
                   globalMinutes={overrides[String(detailId)]}
                   schedule={minutesSchedule[String(detailId)] ?? {}}
                   onSchedule={(schedule) =>
@@ -1848,7 +3227,7 @@ export default function App() {
                   </span>
                 </div>
                 <div className="fixture-source-detail">
-                  {detailPlayer.gw[String(gw)]?.fixtures.map((f) => (
+                  {detailPlayer.gw[String(playerGW)]?.fixtures.map((f) => (
                     <p key={f.id}>
                       <Badge
                         code={
@@ -1881,85 +3260,96 @@ export default function App() {
                 labels={data.gameweeks.map((w) => `GW${w}`)}
               />
             </section>
-            {detailTab === "history" && (detailLoading ? (
-              <Busy text="Loading match history and scenario simulation…" />
-            ) : (
-              detail && (
-                <>
-                  <div className="detail-grid">
-                    <section>
-                      <h3>A range of possible outcomes</h3>
-                      <div className="distribution-chart">
-                        {detail.simulation.histogram.map((v) => (
-                          <div
-                            key={v.points}
-                            title={`${v.points} points · ${fmt(v.probability * 100, 1)}%`}
-                          >
-                            <i
-                              style={{
-                                height: `${Math.max(2, (v.probability / Math.max(...detail.simulation.histogram.map((x) => x.probability))) * 95)}px`,
-                              }}
-                            />
-                            <span>{v.points}</span>
-                          </div>
-                        ))}
-                      </div>
-                      <div className="distribution-stats">
-                        <span>
-                          ≤2 points{" "}
-                          <b>
-                            {fmt(detail.simulation.blank_probability * 100, 0)}%
-                          </b>
-                        </span>
-                        <span>
-                          10+ points{" "}
-                          <b>
-                            {fmt(detail.simulation.haul_probability * 100, 0)}%
-                          </b>
-                        </span>
-                        <span>
-                          10th–90th percentile{" "}
-                          <b>
-                            {fmt(detail.simulation.p10, 0)}–
-                            {fmt(detail.simulation.p90, 0)}
-                          </b>
-                        </span>
-                      </div>
-                      <p className="source-caption">
-                        {detail.simulation.label} ·{" "}
-                        {detail.simulation.trials.toLocaleString()} trials. Base
-                        model, excluding custom overrides/blends.
-                      </p>
-                    </section>
-                    <section>
-                      <h3>Recent match record</h3>
-                      <div className="history-list">
-                        {detail.history
-                          .slice(-6)
-                          .reverse()
-                          .map((r, i) => (
-                            <div key={`${r.date}-${i}`}>
-                              <span>
-                                GW{r.gw}
-                                <small>{r.season}</small>
-                              </span>
-                              <span>{r.opponent || "—"}</span>
-                              <span>{r.minutes} min</span>
-                              <b>{r.total_points} pts</b>
+            {detailTab === "history" &&
+              (detailLoading ? (
+                <Busy text="Loading match history and scenario simulation…" />
+              ) : (
+                detail && (
+                  <>
+                    <div className="detail-grid history-grid">
+                      <section>
+                        <h3>Simulated points</h3>
+                        <div className="distribution-chart">
+                          {detail.simulation.histogram.map((v) => (
+                            <div
+                              key={v.points}
+                              title={`${v.points} points · ${fmt(v.probability * 100, 1)}%`}
+                            >
+                              <i
+                                style={{
+                                  height: `${Math.max(2, (v.probability / Math.max(...detail.simulation.histogram.map((x) => x.probability))) * 95)}px`,
+                                }}
+                              />
+                              <span>{v.points}</span>
                             </div>
                           ))}
-                      </div>
-                      <p className="source-caption">
-                        Official FPL and vaastav archive · per-fixture actual
-                        points
-                      </p>
-                    </section>
-                  </div>
-                </>
-              )
-            ))}
+                        </div>
+                        <div className="distribution-stats">
+                          <span>
+                            ≤2 points{" "}
+                            <b>
+                              {fmt(
+                                detail.simulation.blank_probability * 100,
+                                0,
+                              )}
+                              %
+                            </b>
+                          </span>
+                          <span>
+                            10+ points{" "}
+                            <b>
+                              {fmt(detail.simulation.haul_probability * 100, 0)}
+                              %
+                            </b>
+                          </span>
+                          <span>
+                            10th–90th percentile{" "}
+                            <b>
+                              {fmt(detail.simulation.p10, 0)}–
+                              {fmt(detail.simulation.p90, 0)}
+                            </b>
+                          </span>
+                        </div>
+                        <p className="source-caption">
+                          {detail.simulation.label} ·{" "}
+                          {detail.simulation.trials.toLocaleString()} trials.
+                          Base model, excluding custom overrides/blends.
+                        </p>
+                      </section>
+                      <section>
+                        <h3>Recent match record</h3>
+                        <div className="history-list">
+                          {!detail.history.length ? (
+                            <p className="inline-empty">
+                              No recent match records.
+                            </p>
+                          ) : null}
+                          {detail.history
+                            .slice(-6)
+                            .reverse()
+                            .map((r, i) => (
+                              <div key={`${r.date}-${i}`}>
+                                <span>
+                                  GW{r.gw}
+                                  <small>{r.season}</small>
+                                </span>
+                                <span>{r.opponent || "—"}</span>
+                                <span>{r.minutes} min</span>
+                                <b>{r.total_points} pts</b>
+                              </div>
+                            ))}
+                        </div>
+                        <p className="source-caption">
+                          Official FPL and vaastav archive · per-fixture actual
+                          points
+                        </p>
+                      </section>
+                    </div>
+                  </>
+                )
+              ))}
           </div>
-        </Modal>
+        </PlayerSurface>
       )}
     </div>
   );

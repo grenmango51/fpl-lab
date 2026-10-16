@@ -1,5 +1,13 @@
 # Provider access and integration
 
+October 15 provenance update: the current FPL Joe payload may omit a fixture
+row's `snapshotTsUtc` while its period supplies `latestSnapshotTs`. Open FPL uses
+the row timestamp when available, otherwise records the period timestamp with
+scope **gameweek latest snapshot**. It does not claim this is the publication
+time of every fixture row. The acquisition `fetched_at` remains separate, and
+neither missing timestamp is invented from extraction time. This is a metadata
+compatibility fix; forecast values and ensemble weights are unchanged.
+
 Initial research 2026-10-02; updated **2026-10-03, Europe/Kiev**, with the primary agent's confirmed assigned-browser findings. A free Elevenify/Substack signup revealed its normal published forecast embeds. The HTTP verification below used those exact embeds and their declared public assets, without transferring any browser credentials or cookies. Ilmari Chrome was already connected to Patreon for FPL Review, without premium membership; no new Review account was needed. No paid subscription was purchased.
 
 ## FPL Review

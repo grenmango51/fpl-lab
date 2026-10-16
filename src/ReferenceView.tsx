@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useViewState } from "./useViewState";
+import { matchesPlayerQuery } from "./playerSearch";
 import {
   ChevronLeft,
   ChevronRight,
@@ -32,12 +33,18 @@ export function ReferenceView({
   watch: number[];
   onWatch: (id: number) => void;
 }) {
-  const [query, setQuery] = useState("");
-  const [position, setPosition] = useState("ALL");
-  const [sort, setSort] = useState("importance");
-  const [page, setPage] = useState(0);
-  const [view, setView] = useState("baseline");
-  const [referenceGW, setReferenceGW] = useState(gw);
+  const [query, setQuery] = useViewState("market.references.query", "");
+  const [position, setPosition] = useViewState(
+    "market.references.position",
+    "ALL",
+  );
+  const [sort, setSort] = useViewState("market.references.sort", "importance");
+  const [page, setPage] = useViewState("market.references.page", 0);
+  const [view, setView] = useViewState("market.references.view", "baseline");
+  const [referenceGW, setReferenceGW] = useViewState(
+    "market.references.gw",
+    gw,
+  );
   const source = data.reference_data;
   const baseline = view === "baseline";
   const feed = source?.feeds?.[view];
@@ -65,9 +72,7 @@ export function ReferenceView({
     .filter(
       ({ player }) =>
         (position === "ALL" || player.position === position) &&
-        `${player.name} ${player.full_name} ${player.team_short}`
-          .toLowerCase()
-          .includes(query.toLowerCase()),
+        matchesPlayerQuery(player, query),
     )
     .sort((a, b) => {
       const value = (row: typeof a) =>
@@ -188,7 +193,7 @@ export function ReferenceView({
               <Search size={16} />
               <input
                 aria-label="Search provider references"
-                placeholder="Search player or club…"
+                placeholder="Players or clubs · Haaland, Saka"
                 value={query}
                 onChange={(e) => {
                   setQuery(e.target.value);

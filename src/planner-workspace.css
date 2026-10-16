@@ -1,0 +1,187 @@
+.tree-canvas-scroll[hidden],
+.tree-zoom[hidden],
+.tree-toolbar select[hidden] {
+  display: none;
+}
+.tree-pitch-panel {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px;
+}
+.tree-pitch-navigation {
+  display: flex;
+  margin-bottom: 8px;
+}
+.tree-pitch-navigation select {
+  width: 100%;
+  min-width: 0;
+}
+.tree-pitch-panel .planner-board {
+  margin: 0;
+}
+.tree-with-pitch .tree-toolbar {
+  position: relative;
+  flex-shrink: 0;
+}
+.tree-with-pitch .tree-footer {
+  position: relative;
+  inset: auto;
+  width: auto;
+  flex-shrink: 0;
+  margin: 0 10px 8px;
+}
+.tree-pitch-panel .board-metrics,
+.tree-pitch-panel .lineup-control-row,
+.tree-pitch-panel .board-week-bar {
+  position: static;
+  width: auto;
+}
+.tree-pitch-panel .board-metrics {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  padding: 0 0 10px;
+}
+.tree-pitch-panel .board-metrics > :nth-child(n + 3) {
+  display: flex;
+}
+.tree-pitch-panel .board-metrics b {
+  font-size: 17px;
+}
+.tree-pitch-panel .lineup-control-row {
+  margin-bottom: 8px;
+}
+.tree-pitch-panel .board-week-bar {
+  flex-direction: row;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.tree-pitch-panel .swap-banner {
+  margin-top: 0;
+}
+.tree-pitch-navigation {
+  display: none;
+}
+.tree-pitch-panel .planner-board .pitch {
+  height: clamp(300px, 40vh, 420px);
+}
+.tree-pitch-panel .planner-board .player-select {
+  min-height: 78px;
+}
+.tree-pitch-panel .planner-board .player-shirt,
+.tree-pitch-panel .planner-board .shirt {
+  width: 52px;
+  height: 52px;
+}
+.tree-pitch-panel .planner-board .bench .player-select {
+  min-height: 70px;
+}
+.tree-pitch-panel .planner-board .bench .player-shirt,
+.tree-pitch-panel .planner-board .bench .shirt {
+  width: 40px;
+  height: 40px;
+}
+.tree-with-pitch .tree-team-label {
+  max-width: 160px;
+}
+.tree-pitch-panel .board-metrics span {
+  white-space: normal;
+}
+.tree-pitch-panel .board-metrics button {
+  border: 0;
+}
+.projection-explorer:has(.projection-player-editor) .projection-scroll {
+  min-height: 130px;
+  max-height: 20vh;
+}
+.projection-explorer:has(.projection-player-editor) .projection-topline,
+.projection-explorer:has(.projection-player-editor) .projection-controls,
+.projection-explorer:has(.projection-player-editor) .projection-position-tabs {
+  margin-bottom: 6px;
+}
+.projection-player-slot:empty {
+  display: none;
+}
+.projection-editing-compact .projection-controls,
+.projection-editing-compact .table-toolbar,
+.projection-editing-compact .projection-filter-bar,
+.projection-editing-compact .projection-filters {
+  display: none;
+}
+.projection-controls-toggle {
+  margin-bottom: 8px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.projection-value[aria-pressed="true"] {
+  outline: 2px solid var(--orange);
+  outline-offset: -2px;
+}
+.projection-player-editor {
+  border: 1px solid var(--line, #24334b);
+  border-radius: 10px;
+  background: #0b1525;
+  margin: 12px 0;
+  max-width: 100%;
+  outline-offset: 3px;
+  max-height: 36vh;
+  overflow: auto;
+  height: auto;
+}
+.projection-player-editor .modal-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #0b1525;
+}
+.projection-player-editor .modal-body {
+  max-height: none;
+  overflow: visible;
+}
+.projection-player-editor .player-context-bar {
+  flex-wrap: wrap;
+}
+.projection-player-editor .player-detail-top,
+.projection-player-editor .player-dialog-actions {
+  display: none;
+}
+.projection-player-editor .modal-header {
+  padding: 10px 12px;
+}
+.projection-player-editor .modal-header h2 {
+  font-size: 15px;
+}
+.projection-player-editor .modal-header p {
+  font-size: 10px;
+}
+.projection-player-editor .modal-body {
+  padding: 10px 12px;
+}
+.projection-player-editor .detail-tab-edit .detail-grid > section:last-child {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.projection-player-editor .field-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+.projection-player-editor .player-detail-tabs {
+  margin: 6px 0;
+}
+.projection-player-editor .player-context-bar {
+  margin-bottom: 4px;
+}
+.projection-player-editor .detail-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+@media (max-width: 700px) {
+  .tree-pitch-panel,
+  .tree-pitch-toggle {
+    display: none;
+  }
+  .projection-player-editor .detail-tab-edit .detail-grid > section:last-child {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

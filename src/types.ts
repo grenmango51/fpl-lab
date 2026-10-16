@@ -1,12 +1,34 @@
 export type Fixture = {
+  team_strength_scenario?: {
+    label: string;
+    source: string;
+    adjusted_at: string;
+    attack_factor: number;
+    conceded_factor: number;
+    base: {
+      team_goals: number;
+      conceded: number;
+      cs: number;
+      source: string;
+      source_at?: string | null;
+      source_at_scope?: string | null;
+      source_extracted_at?: string | null;
+    };
+  };
   id: number;
   opponent: string;
   opponent_id: number;
   home: boolean;
   difficulty: number;
-  kickoff: string;
+  kickoff: string | null;
+  original_event?: number | null;
+  source_event?: number | null;
+  target_event?: number | null;
+  original_kickoff?: string | null;
   source: string;
-  source_at: string;
+  source_at: string | null;
+  source_at_scope?: string | null;
+  source_extracted_at?: string | null;
   points: number;
   xmins: number;
   xg: number;
@@ -19,6 +41,25 @@ export type Fixture = {
   components: Record<string, number>;
 };
 export type Forecast = {
+  fixture_scenario?: {
+    source: string;
+    label: string;
+    adjusted_at: string;
+    base_points: number;
+    points_delta: number;
+    base_fixture_ids: number[];
+    fixture_ids: number[];
+    anchors_bypassed: boolean;
+    moves: unknown[];
+  };
+  team_strength_scenario?: {
+    label: string;
+    source: string;
+    adjusted_at: string;
+    base_points: number;
+    points_delta: number;
+    fixture_ids: number[];
+  };
   points: number;
   xmins: number;
   fixtures: Fixture[];
@@ -42,11 +83,11 @@ export type Forecast = {
   prediction_source?: {
     kind: "provider" | "extrapolated" | "user-scenario";
     name: string;
-    weight: number;
+    weight?: number;
     base_points: number;
-    source_points: number;
-    anchor_gameweeks: number[];
-    ratio: number | null;
+    source_points?: number;
+    anchor_gameweeks?: number[];
+    ratio?: number | null;
     source_at: string | null;
   };
 };
@@ -185,6 +226,29 @@ export type ReferenceData = {
   limitations: string[];
 };
 export type Bootstrap = {
+  fixture_scenario?: {
+    source: string;
+    label: string;
+    adjusted_at: string;
+    moves: Record<string, number | null>;
+    receipts: unknown[];
+    scope: string;
+  };
+  official_fixture_catalog?: {
+    id: number;
+    event: number | null;
+    team_h: number;
+    team_a: number;
+    kickoff_time: string | null;
+  }[];
+  team_strength_scenario?: {
+    label: string;
+    source: string;
+    adjusted_at: string;
+    adjustments: Record<string, { attack: number; defence: number }>;
+    affected_player_fixtures: number;
+    scope: string;
+  };
   players: Player[];
   gameweeks: number[];
   events: {
@@ -206,10 +270,11 @@ export type Bootstrap = {
   reference_data?: ReferenceData;
   forecast_layers?: {
     name: string;
-    weight: number;
-    direct_forecasts: number;
-    extrapolated_forecasts: number;
-    half_life: number;
+    kind?: string;
+    weight?: number;
+    direct_forecasts?: number;
+    extrapolated_forecasts?: number;
+    half_life?: number;
     source_at: string | null;
   }[];
 };

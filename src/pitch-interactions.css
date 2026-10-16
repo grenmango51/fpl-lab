@@ -1,0 +1,24 @@
+.planner-board .pitch-select-mode .player-info {
+  left: 0;
+  right: auto;
+  top: 0;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 4px;
+  border-radius: 50%;
+  background: #0b1929;
+  opacity: 0.85;
+}
+
+.planner-board .pitch-select-mode .player-info:hover,
+.planner-board .pitch-select-mode .player-info:focus-visible {
+  opacity: 1;
+  color: #fff;
+}
+
+.planner-board .pitch-select-mode .player-select:focus-visible {
+  outline: 2px solid #ff996d;
+  outline-offset: 2px;
+}

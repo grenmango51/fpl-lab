@@ -117,3 +117,20 @@ For strategy jobs, short windows also receive a constraint-checked held-squad in
 - Player forecast input and export semantics: https://www.fplform.com/export-fpl-form-data
 - Formation, autosubs and captain fallback: https://www.premierleague.com/en/news/2174899
 - Optimisation engine implementation: SciPy `optimize.milp`, HiGHS. All modelling choices not supplied by an external source are explicitly derived or declared above.
+
+## HUMAN team-strength scenarios
+
+The optional `team_strengths` map uses canonical stable official club-code strings and finite numeric attack/defence factors in [0.5, 2], default 1, for every remaining GW. Empty/identity inputs are exact no-ops. After ordinary provider/CSV calibration and before individual stat schedules, own goals and player xG/xA scale by own attack divided by opposing defence; conceded goals scale by opposing attack divided by own defence. CS probability is raised to that conceded factor, preserving the original source probability including exact 0/1 boundaries. Both fixture participants change; blanks and untouched fixtures/weeks remain unchanged.
+
+Event-point deltas use the existing scoring configuration. GK/DEF conceded deductions reuse the component calculation separately for short/long exposure, with the same historical conditional-duration helper and manual-minute precedence. Original provider/imported point-anchor residuals retain their labels/values and reconcile onto changed fixtures. Minutes/appearance, saves, bonus, disciplinary events and defensive contributions stay fixed. Player event totals are scaled independent historical rates, not conserved team goal/assist shares; no second historical attack clipping is applied. Individual stat assumptions apply last.
+
+This is an explicit HUMAN planning assumption, not sourced market odds, calibrated Solio numerical parity or an accuracy result. Original source/time/base values remain separate from application metadata. Snapshots retain configuration and mark affected live-ensemble targets exploratory. The existing player-detail event simulation consumes changed components but uses default scoring and can omit point-anchor residuals; its labelled component mean need not equal the scenario point forecast. See [contract, provenance and limits](TEAM_SCENARIOS.md).
+
+
+## HUMAN fixture permutations
+
+The optional `fixture_moves` map assigns canonical official fixture-ID strings to strict integer remaining GWs or null (Unset). Finished/provisionally finished fixtures, completed events and past/unknown inputs are rejected. Fixture identity, both clubs, venue and original event/kickoff remain immutable; moved fixture dates stay unknown. Empty/identity inputs are exact forecast no-ops.
+
+The ordinary provider/CSV-calibrated baseline is frozen first. A read-only copied fixture event map then rebuilds component forecasts using the original fixture market context and original full-schedule sheet-cell eligibility. Only moved clubs' origin/destination player-weeks are replaced, bypassing their GW point/probability anchors; all other calibrated weeks and extrapolation ratios remain exact. This does not relabel season-sheet aggregates onto another opponent or infer individual-fixture values from an original double-GW aggregate. Destination-GW minutes/availability govern rebuilt components; team strengths apply next and individual stat schedules last. Blanks, doubles and larger fixture counts follow actual scenario membership.
+
+These are frozen-fixture HUMAN assumptions, not sourced schedule updates, move probabilities or date-aware congestion/recovery forecasts. Responses/CSV/snapshots retain original-source events, kickoff receipts, manual destinations and base forecast provenance. Configuration hashes include the map; affected Live ensemble targets are exploratory and the Component model remains the official-schedule baseline. See [fixture contract and limitations](FIXTURE_SCENARIOS.md).

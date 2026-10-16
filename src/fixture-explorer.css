@@ -1,0 +1,210 @@
+.fixture-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 9px;
+  margin: 14px 0 8px;
+}
+.fixture-controls > label,
+.fixture-range label {
+  display: grid;
+  gap: 6px;
+  color: #91a4bf;
+  font-size: 12px;
+}
+.fixture-controls select {
+  min-height: 36px;
+  font-size: 12px;
+}
+.fixture-filter {
+  position: relative;
+  min-width: 110px;
+  font-size: 12px;
+}
+.fixture-filter > summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid #293b54;
+  border-radius: 5px;
+  background: #101d30;
+  min-height: 36px;
+}
+.fixture-filter > summary::after {
+  content: "⌄";
+  color: #93a6c0;
+}
+.fixture-filter[open] > summary {
+  border-color: #b46848;
+}
+.fixture-filter-body {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 5px);
+  z-index: 12;
+  width: 330px;
+  max-width: calc(100vw - 70px);
+  padding: 12px;
+  border: 1px solid #34445d;
+  border-radius: 6px;
+  background: #111d30;
+  box-shadow: 0 14px 35px #0008;
+}
+.fixture-filter-body .button-row {
+  justify-content: flex-start;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.fixture-filter-body .button-row > button {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: #ffc09e;
+  padding: 5px;
+  font-size: 12px;
+  min-height: 30px;
+}
+.fixture-team-choices,
+.fixture-week-choices {
+  display: grid;
+  gap: 4px;
+  max-height: 300px;
+  overflow: auto;
+}
+.fixture-team-choices {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.fixture-week-choices {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.fixture-team-choices > label,
+.fixture-week-choices > label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.fixture-filter-body input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+}
+.fixture-range {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 9px;
+  margin-bottom: 10px;
+}
+.fixture-range select {
+  width: 100%;
+}
+.fixture-range input[type="range"] {
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  accent-color: #ff8b5b;
+}
+.fixture-selection-caption {
+  color: #91a4bf;
+  font-size: 11px;
+  margin: 10px 0;
+}
+.fixture-table .fixture-sort {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 32px;
+  font-size: 11px;
+  white-space: nowrap;
+  text-align: left;
+}
+.fixture-table .fixture-total {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: #ffb18e;
+}
+.fixture-trend-cell {
+  min-width: 94px;
+}
+.fixture-trend {
+  width: 84px;
+  height: 34px;
+  display: block;
+  fill: #ff9c70;
+}
+.fixture-trend-line {
+  fill: none;
+  stroke: #ff9c70;
+  stroke-width: 1.4;
+}
+.fixture-trend-baseline {
+  fill: none;
+  stroke: #37445b;
+  stroke-width: 0.5;
+}
+.fixture-explorer .fixture-table th,
+.fixture-explorer .fixture-table td {
+  padding: 4px 7px;
+}
+.fixture-explorer .fixture-table td:first-child {
+  padding: 4px 10px;
+}
+.fixture-explorer .fixture-chip {
+  min-height: 34px;
+  padding: 4px 6px;
+  margin: 0;
+}
+.fixture-explorer .fixture-chip b {
+  font-size: 11px;
+}
+.fixture-explorer .fixture-chip small {
+  margin-top: 1px;
+}
+.fixture-explorer > .view-heading {
+  align-items: flex-start;
+}
+.fixture-explorer > .view-heading .tab-strip {
+  max-width: 100%;
+}
+@container (max-width:500px) {
+  .fixture-controls {
+    position: relative;
+  }
+  .fixture-filter {
+    position: static;
+  }
+  .fixture-filter .fixture-filter-body {
+    left: 0;
+    right: auto;
+    max-width: 100%;
+    max-height: calc(100dvh - 420px);
+    overflow: auto;
+  }
+  .fixture-explorer .club-cell {
+    min-width: 115px;
+  }
+}
+@media (max-width: 700px) {
+  .fixture-explorer .fixture-chip {
+    min-height: 44px;
+  }
+  .fixture-controls {
+    align-items: flex-end;
+  }
+  .fixture-filter-body {
+    width: 285px;
+  }
+  .fixture-filter {
+    min-width: 95px;
+  }
+  .fixture-team-choices {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

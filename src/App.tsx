@@ -1285,13 +1285,15 @@ export default function App() {
     void updatePlan(p, "Bench substitution priority updated.");
   }
   async function changeHorizon(count: number) {
-    if (!active || !data || busy || count === active.weeks.length) return;
+    if (!active || !data || busy || !Number.isInteger(count) || count < 1 || count === active.weeks.length) return;
     const receipt = horizonReceipts.current.get(active.id);
     const configuration = JSON.stringify(forecastArgs);
-    let reusable = reuseValidatedHorizon(active,
+    const saved =
       receipt?.data === data && receipt.configuration === configuration &&
-      loadedForecastArgsRef.current === configuration ? receipt.plan : undefined,
-      count);
+      loadedForecastArgsRef.current === configuration ? receipt.plan : undefined;
+    const retained = reuseValidatedHorizon(active, saved, saved?.weeks.length ?? 0);
+    let reusable = retained && count <= retained.weeks.length
+      ? { ...retained, weeks: retained.weeks.slice(0, count) } : null;
     if (!reusable) {
       setBusy("Checking your plan…");
       try {
@@ -1301,7 +1303,7 @@ export default function App() {
           const valid = await validatedPlan(active);
           reusable = { ...valid, weeks: valid.weeks.slice(0, count) };
         } else {
-          const resized = resizePlanHorizon(active, count, data.gameweeks, data.players);
+          const resized = resizePlanHorizon(retained ?? active, count, data.gameweeks, data.players);
           if (!resized.weeks.length) return;
           reusable = await validatedPlan(resized);
         }

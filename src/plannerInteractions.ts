@@ -11,15 +11,20 @@ export function reuseValidatedHorizon(
   const source = saved;
   if (count > source.weeks.length || plan.weeks.length > source.weeks.length)
     return null;
-  if (
-    JSON.stringify({
-      ...source,
-      weeks: source.weeks.slice(0, plan.weeks.length),
-    }) !== JSON.stringify(plan)
-  )
+  const inputs = (p: Plan) => ({
+    id: p.id,
+    base_squad: p.base_squad,
+    base_bank: p.base_bank,
+    free_transfers: p.free_transfers,
+    purchase_prices: p.purchase_prices,
+    used_chips: p.used_chips,
+    history_weeks: p.history_weeks,
+    weeks: p.weeks.slice(0, plan.weeks.length),
+  });
+  if (JSON.stringify(inputs(source)) !== JSON.stringify(inputs(plan)))
     return null;
   return {
-    ...structuredClone(source),
+    ...structuredClone(plan),
     weeks: structuredClone(source.weeks.slice(0, count)),
   };
 }

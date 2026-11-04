@@ -84,6 +84,26 @@ describe("contextual planner decisions", () => {
     expect(reuseValidatedHorizon(restored, validated, 2)).toBeNull();
     expect(reuseValidatedHorizon(plan(), { ...plan(), weeks: [week(7)] }, 1)).toBeNull();
   });
+  it("retains hidden decisions before adding weeks past the cached horizon", () => {
+    const saved = plan();
+    saved.weeks[2].squad[14] = 16;
+    saved.weeks[2].transfers_in = [16];
+    saved.weeks[2].transfers_out = [15];
+    saved.weeks[3].chip = "triplecaptain";
+    const short = reuseValidatedHorizon(saved, saved, 2)!;
+    const retained = reuseValidatedHorizon(short, saved, saved.weeks.length)!;
+    const extended = resizePlanHorizon(retained, 5, [7, 8, 9, 10, 11], players);
+    expect(extended.weeks.slice(0, 4)).toEqual(saved.weeks);
+    expect(extended.weeks[4].gw).toBe(11);
+  });
+  it("retains the current name when revealing unchanged hidden decisions", () => {
+    const saved = plan();
+    saved.weeks[3].chip = "triplecaptain";
+    const renamed = { ...reuseValidatedHorizon(saved, saved, 2)!, name: "Renamed" };
+    expect(reuseValidatedHorizon(renamed, saved, 4)).toEqual({ ...saved, name: "Renamed" });
+    renamed.weeks[0].captain = 14;
+    expect(reuseValidatedHorizon(renamed, saved, 4)).toBeNull();
+  });
   it("extends a final Free Hit from its permanent bank, squad and actual saved transfers", () => {
     const p = plan();
     const last = p.weeks.at(-1)!;

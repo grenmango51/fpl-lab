@@ -8,6 +8,8 @@ import {
   replacePlayer,
   sellingPrice,
   transferAllowance,
+  resizePlanHorizon,
+  reuseValidatedHorizon,
 } from "./plannerInteractions";
 import type { Bootstrap, Plan, Player, Week } from "./types";
 
@@ -57,6 +59,75 @@ function plan(): Plan {
 }
 
 describe("contextual planner decisions", () => {
+  it("reveals saved decisions without losing transfers, chips or receipts", () => {
+    const saved = plan();
+    saved.weeks[3].chip = "triplecaptain";
+    const short = reuseValidatedHorizon(saved, saved, 2)!;
+    expect(short.weeks).toHaveLength(2);
+    expect(reuseValidatedHorizon(short, saved, 4)).toEqual(saved);
+    short.weeks[0].captain = 14;
+    expect(reuseValidatedHorizon(short, saved, 4)).toBeNull();
+    expect(saved.weeks[0].captain).toBe(13);
+  });
+  it("never restores a tail after starting resources change", () => {
+    const saved = plan();
+    const short = reuseValidatedHorizon(saved, saved, 2)!;
+    short.base_bank = 4;
+    expect(reuseValidatedHorizon(short, saved, 4)).toBeNull();
+    expect(reuseValidatedHorizon(saved, undefined, 5)).toBeNull();
+  });
+  it("requires an actual receipt even to shorten a restored plan", () => {
+    const restored = plan();
+    expect(reuseValidatedHorizon(restored, undefined, 2)).toBeNull();
+    const validated = structuredClone(restored);
+    restored.weeks[0].bank = 0;
+    expect(reuseValidatedHorizon(restored, validated, 2)).toBeNull();
+    expect(reuseValidatedHorizon(plan(), { ...plan(), weeks: [week(7)] }, 1)).toBeNull();
+  });
+  it("retains hidden decisions before adding weeks past the cached horizon", () => {
+    const saved = plan();
+    saved.weeks[2].squad[14] = 16;
+    saved.weeks[2].transfers_in = [16];
+    saved.weeks[2].transfers_out = [15];
+    saved.weeks[3].chip = "triplecaptain";
+    const short = reuseValidatedHorizon(saved, saved, 2)!;
+    const retained = reuseValidatedHorizon(short, saved, saved.weeks.length)!;
+    const extended = resizePlanHorizon(retained, 5, [7, 8, 9, 10, 11], players);
+    expect(extended.weeks.slice(0, 4)).toEqual(saved.weeks);
+    expect(extended.weeks[4].gw).toBe(11);
+  });
+  it("retains the current name when revealing unchanged hidden decisions", () => {
+    const saved = plan();
+    saved.weeks[3].chip = "triplecaptain";
+    const renamed = { ...reuseValidatedHorizon(saved, saved, 2)!, name: "Renamed" };
+    expect(reuseValidatedHorizon(renamed, saved, 4)).toEqual({ ...saved, name: "Renamed" });
+    renamed.weeks[0].captain = 14;
+    expect(reuseValidatedHorizon(renamed, saved, 4)).toBeNull();
+  });
+  it("extends a final Free Hit from its permanent bank, squad and actual saved transfers", () => {
+    const p = plan();
+    const last = p.weeks.at(-1)!;
+    last.chip = "freehit";
+    last.squad = last.squad.map((id) => (id === 15 ? 16 : id));
+    last.bank = 0;
+    last.permanent_squad = week(7).squad;
+    last.permanent_bank = 2.4;
+    last.next_free_transfers = 1;
+    const next = resizePlanHorizon(p, 6, [7, 8, 9, 10, 11, 12], players);
+    expect(next.weeks[4].squad).toEqual(last.permanent_squad);
+    expect(next.weeks[4].bank).toBe(2.4);
+    expect(next.weeks[4].free_transfers).toBe(1);
+    expect(next.weeks[5].free_transfers).toBe(2);
+    expect(next.weeks[3]).toEqual(last);
+    expect(p.weeks).toHaveLength(4);
+  });
+  it("respects a future start and GW38 when resizing", () => {
+    const p = plan();
+    p.weeks = [week(37)];
+    const next = resizePlanHorizon(p, 20, [36, 37, 38], players);
+    expect(next.weeks.map((w) => w.gw)).toEqual([37, 38]);
+    expect(resizePlanHorizon(p, 0, [37, 38], players)).toEqual(p);
+  });
   it("uses integer selling steps for profits and losses", () => {
     expect(sellingPrice(5.8, 5.5)).toBe(5.6);
     expect(sellingPrice(5.9, 5.5)).toBe(5.7);

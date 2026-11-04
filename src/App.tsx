@@ -113,7 +113,7 @@ import { LineupImageDialog } from "./LineupImageDialog";
 import { WorkspaceDivider } from "./WorkspaceDivider";
 import { TabStrip } from "./TabStrip";
 import { useViewState } from "./useViewState";
-import { canSwap, replacePlayer } from "./plannerInteractions";
+import { canSwap, replacePlayer, resizePlanHorizon, reuseValidatedHorizon } from "./plannerInteractions";
 import { planWithOptimisedSuffix, quickSolveHorizon } from "./quickOptimise";
 import {
   createPlanExport,
@@ -206,6 +206,11 @@ export default function App() {
   const [importText, setImportText] = useState("");
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("loading");
   const sharedRef = useRef<SharedWorkspace | null>(null);
+  const horizonReceipts = useRef(new Map<string, {
+    plan: Plan;
+    data: Bootstrap;
+    configuration: string;
+  }>());
   if (!sharedRef.current) sharedRef.current = new SharedWorkspace(setSaveStatus);
   const [plans, setPlans] = useState<Plan[]>(() =>
       stored<Plan[]>(storageKey, []),
@@ -905,11 +910,22 @@ export default function App() {
   }, [plans, data?.gameweeks, activeId]);
 
   async function validatedPlan(p: Plan) {
+    const configuration = JSON.stringify(forecastArgs);
+    const forecastsReady = loadedForecastArgsRef.current === configuration;
     const result = await api<{ weeks: Week[] }>(
       "/plan/validate",
       planValidationRequest(p, forecastArgs),
     );
-    return { ...p, weeks: result.weeks };
+    const valid = { ...p, weeks: result.weeks };
+    // A restored/re-scored plan has no validation receipt. Only the server can
+    // establish one, against the same loaded data and requested configuration.
+    if (data && forecastsReady && livePlanningRef.current.data === data &&
+        JSON.stringify(livePlanningRef.current.forecastArgs) === configuration) {
+      horizonReceipts.current.set(p.id, {
+        plan: structuredClone(valid), data, configuration,
+      });
+    }
+    return valid;
   }
   async function updatePlan(p: Plan, message?: string, remember = true) {
     if (busy) return false;
@@ -1268,34 +1284,50 @@ export default function App() {
     [w.bench[index], w.bench[target]] = [w.bench[target], w.bench[index]];
     void updatePlan(p, "Bench substitution priority updated.");
   }
-  function changeHorizon(count: number) {
-    if (!active || !data) return;
-    const p = structuredClone(active),
-      weeks = data.gameweeks
-        .filter((w) => w >= (p.weeks[0]?.gw ?? data.next_gw))
-        .slice(0, count),
-      permanentSquad =
-        [...p.weeks].reverse().find((w) => w.chip !== "freehit")?.squad ??
-        p.base_squad;
-    p.weeks = weeks.map(
-      (w, index) =>
-        p.weeks.find((v) => v.gw === w) ?? {
-          gw: w,
-          squad: [...permanentSquad],
-          ...optimalLineup(permanentSquad, data.players, w),
-          chip: "none",
-          bank: p.weeks.at(-1)!.bank,
-          free_transfers: Math.min(5, p.free_transfers + index),
-          next_free_transfers: Math.min(5, p.free_transfers + index + 1),
-          hits: 0,
-          net_points: 0,
-          transfers_in: [],
-          transfers_out: [],
-        },
-    );
-    void updatePlan(p, `Planning horizon updated to ${count} gameweeks.`);
-    if (!weeks.includes(gw)) setGw(weeks[0]);
+  async function changeHorizon(count: number) {
+    if (!active || !data || busy || !Number.isInteger(count) || count < 1 || count === active.weeks.length) return;
+    const receipt = horizonReceipts.current.get(active.id);
+    const configuration = JSON.stringify(forecastArgs);
+    const saved =
+      receipt?.data === data && receipt.configuration === configuration &&
+      loadedForecastArgsRef.current === configuration ? receipt.plan : undefined;
+    const retained = reuseValidatedHorizon(active, saved, saved?.weeks.length ?? 0);
+    let reusable = retained && count <= retained.weeks.length
+      ? { ...retained, weeks: retained.weeks.slice(0, count) } : null;
+    if (!reusable) {
+      setBusy("Checking your plan…");
+      try {
+        // Validate a restored plan in full before retaining its hidden decisions.
+        // Merely shortening it cannot grant old prices a new validation receipt.
+        if (count < active.weeks.length) {
+          const valid = await validatedPlan(active);
+          reusable = { ...valid, weeks: valid.weeks.slice(0, count) };
+        } else {
+          const resized = resizePlanHorizon(retained ?? active, count, data.gameweeks, data.players);
+          if (!resized.weeks.length) return;
+          reusable = await validatedPlan(resized);
+        }
+      } catch (e) {
+        notify((e as Error).message, true);
+        return;
+      } finally {
+        setBusy("");
+      }
+    }
+    const next = reusable;
+    setPlanHistory((history) => ({ ...history, [active.id]: {
+      past: [...(history[active.id]?.past ?? []), structuredClone(active)].slice(-30),
+      future: [],
+    } }));
+    setPlans((plans) => plans.map((plan) => plan.id === active.id ? next : plan));
+    const live = livePlanningRef.current;
+    const selectedPlan = live.plans.find((plan) => plan.id === live.activeId) ?? live.plans[0];
+    if (selectedPlan?.id === active.id)
+      setGw((current) => next.weeks.some((week) => week.gw === current)
+        ? current : next.weeks.at(-1)!.gw);
+    notify(`Planning horizon updated to ${next.weeks.length} gameweeks.`);
   }
+
   function changeChip(chip: Chip) {
     if (!active) return;
     const p = structuredClone(active),

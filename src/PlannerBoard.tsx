@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { ActionMenu, Pitch } from "./components";
 import { chipNames, fmt, money } from "./lib";
+import { HorizonControl } from "./HorizonControl";
 import { canSwap } from "./plannerInteractions";
 import { projectionMetric } from "./ProjectionExplorer";
 import type { Bootstrap, Chip, Plan, Player, Week } from "./types";
@@ -192,7 +193,11 @@ export function PlannerBoard({
           <span>GW{week.gw} xPts</span>
           <b className="orange">{fmt(week.net_points ?? week.points)}</b>
         </div>
-        <button onClick={onOptimise} disabled={busy} title="Quick optimise · short plans use up to 5s">
+        <button
+          onClick={onOptimise}
+          disabled={busy}
+          title="Quick optimise · short plans use up to 5s"
+        >
           <span>{weeks.length} GW total</span>
           <b>{fmt(total)}</b>
         </button>
@@ -398,21 +403,14 @@ export function PlannerBoard({
       </div>
       <div className="board-horizon">
         <span>Plan horizon</span>
-        <select
-          aria-label="Planner horizon"
+        <HorizonControl
+          key={plan.id}
           value={weeks.length}
+          max={remaining}
+          start={firstGW}
           disabled={busy}
-          onChange={(event) => onHorizon(+event.target.value)}
-        >
-          {[...new Set([weeks.length, 1, 3, 5, 6, 10, 14, 20, remaining])]
-            .filter((n) => n <= remaining)
-            .sort((a, b) => a - b)
-            .map((n) => (
-              <option key={n} value={n}>
-                {n} GWs
-              </option>
-            ))}
-        </select>
+          onChange={onHorizon}
+        />
       </div>
     </section>
   );

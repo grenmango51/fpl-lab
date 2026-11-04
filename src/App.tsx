@@ -113,7 +113,7 @@ import { LineupImageDialog } from "./LineupImageDialog";
 import { WorkspaceDivider } from "./WorkspaceDivider";
 import { TabStrip } from "./TabStrip";
 import { useViewState } from "./useViewState";
-import { canSwap, replacePlayer } from "./plannerInteractions";
+import { canSwap, replacePlayer, resizePlanHorizon, reuseValidatedHorizon } from "./plannerInteractions";
 import { planWithOptimisedSuffix, quickSolveHorizon } from "./quickOptimise";
 import {
   createPlanExport,
@@ -206,6 +206,7 @@ export default function App() {
   const [importText, setImportText] = useState("");
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("loading");
   const sharedRef = useRef<SharedWorkspace | null>(null);
+  const horizonReceipts = useRef(new Map<string, { plan: Plan; data: Bootstrap }>());
   if (!sharedRef.current) sharedRef.current = new SharedWorkspace(setSaveStatus);
   const [plans, setPlans] = useState<Plan[]>(() =>
       stored<Plan[]>(storageKey, []),
@@ -1268,33 +1269,24 @@ export default function App() {
     [w.bench[index], w.bench[target]] = [w.bench[target], w.bench[index]];
     void updatePlan(p, "Bench substitution priority updated.");
   }
-  function changeHorizon(count: number) {
-    if (!active || !data) return;
-    const p = structuredClone(active),
-      weeks = data.gameweeks
-        .filter((w) => w >= (p.weeks[0]?.gw ?? data.next_gw))
-        .slice(0, count),
-      permanentSquad =
-        [...p.weeks].reverse().find((w) => w.chip !== "freehit")?.squad ??
-        p.base_squad;
-    p.weeks = weeks.map(
-      (w, index) =>
-        p.weeks.find((v) => v.gw === w) ?? {
-          gw: w,
-          squad: [...permanentSquad],
-          ...optimalLineup(permanentSquad, data.players, w),
-          chip: "none",
-          bank: p.weeks.at(-1)!.bank,
-          free_transfers: Math.min(5, p.free_transfers + index),
-          next_free_transfers: Math.min(5, p.free_transfers + index + 1),
-          hits: 0,
-          net_points: 0,
-          transfers_in: [],
-          transfers_out: [],
-        },
-    );
-    void updatePlan(p, `Planning horizon updated to ${count} gameweeks.`);
-    if (!weeks.includes(gw)) setGw(weeks[0]);
+  async function changeHorizon(count: number) {
+    if (!active || !data || busy || count === active.weeks.length) return;
+    const receipt = horizonReceipts.current.get(active.id);
+    const reusable = reuseValidatedHorizon(active, receipt?.data === data ? receipt.plan : undefined, count);
+    if (reusable) {
+      if (active.weeks.length > count && (!receipt || receipt.data !== data || receipt.plan.weeks.length <= active.weeks.length || !reuseValidatedHorizon(active, receipt.plan, receipt.plan.weeks.length)))
+        horizonReceipts.current.set(active.id, { plan: structuredClone(active), data });
+      setPlanHistory((history) => ({ ...history, [active.id]: { past: [...(history[active.id]?.past ?? []), structuredClone(active)].slice(-30), future: [] } }));
+      setPlans((plans) => plans.map((plan) => plan.id === active.id ? reusable : plan));
+      if (!reusable.weeks.some((week) => week.gw === gw)) setGw(reusable.weeks.at(-1)!.gw);
+      notify(`Planning horizon updated to ${reusable.weeks.length} gameweeks.`);
+      return;
+    }
+    const p = resizePlanHorizon(active, count, data.gameweeks, data.players);
+    if (!p.weeks.length) return;
+    if (await updatePlan(p, `Planning horizon updated to ${p.weeks.length} gameweeks.`)) {
+      if (!p.weeks.some((week) => week.gw === gw)) setGw(p.weeks.at(-1)!.gw);
+    }
   }
   function changeChip(chip: Chip) {
     if (!active) return;

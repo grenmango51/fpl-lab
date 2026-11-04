@@ -1,7 +1,6 @@
 import {
   ArrowDown,
   ArrowUp,
-  CalendarDays,
   ChevronDown,
   Copy,
   GitBranch,
@@ -11,6 +10,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { ActionMenu } from "./components";
+import { HorizonControl } from "./HorizonControl";
 import { useViewState } from "./useViewState";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { fmt, money } from "./lib";
@@ -81,22 +81,6 @@ export function PlanTree({
   const visibleWeeks = (plan: Plan) =>
     plan.weeks.filter((week) => visibleGameweeks.includes(week.gw));
   const column = (gameweek: number) => visibleGameweeks.indexOf(gameweek);
-  const horizonOptions = [
-    ...new Set([
-      active?.weeks.length ?? 0,
-      1,
-      3,
-      4,
-      5,
-      6,
-      10,
-      14,
-      20,
-      remaining,
-    ]),
-  ]
-    .sort((a, b) => a - b)
-    .filter((n) => n > 0 && (n <= remaining || n === active?.weeks.length));
   const width = 455 + shown * 146;
   const configure = (
     <ActionMenu
@@ -251,33 +235,30 @@ export function PlanTree({
           {active?.team_name ?? "My FPL team"}
         </span>
         {active && !pitchExpanded ? (
-          <label className="tree-horizon-control">
-            <CalendarDays size={15} aria-hidden="true" />
-            <select
-              aria-label="Tree plan horizon"
-              value={active.weeks.length}
-              disabled={busy}
-              onChange={(event) => onHorizon(+event.target.value)}
-            >
-              {horizonOptions.map((n) => (
-                <option key={n} value={n}>
-                  {n} GWs
-                </option>
-              ))}
-            </select>
-          </label>
+          <HorizonControl
+            key={active.id}
+            value={active.weeks.length}
+            max={remaining}
+            start={firstGW}
+            disabled={busy}
+            onChange={onHorizon}
+          />
         ) : null}
       </header>
       <div className="tree-zoom" hidden={pitchExpanded}>
-        <input
-          aria-label="Planning tree zoom"
-          type="range"
-          min="2"
-          max="150"
-          step="1"
-          value={Math.round(zoom * 100)}
-          onChange={(event) => setZoom(+event.target.value / 100)}
-        />
+        <button
+          aria-label="Zoom out"
+          onClick={() => setZoom((value) => Math.max(0.02, value / 1.2))}
+        >
+          −
+        </button>
+        <output aria-label="Tree zoom">{Math.round(zoom * 100)}%</output>
+        <button
+          aria-label="Zoom in"
+          onClick={() => setZoom((value) => Math.min(1.5, value * 1.2))}
+        >
+          +
+        </button>
         <button aria-label="Fit planning tree" onClick={fit}>
           Fit
         </button>
@@ -350,21 +331,14 @@ export function PlanTree({
               })}
             </div>
             <div className="tree-mobile-options">
-              <label>
-                Horizon
-                <select
-                  aria-label="Mobile plan horizon"
-                  value={active.weeks.length}
-                  disabled={busy}
-                  onChange={(event) => onHorizon(+event.target.value)}
-                >
-                  {horizonOptions.map((n) => (
-                    <option key={n} value={n}>
-                      {n} GWs
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <HorizonControl
+                key={active.id}
+                value={active.weeks.length}
+                max={remaining}
+                start={firstGW}
+                disabled={busy}
+                onChange={onHorizon}
+              />
               <button onClick={onOptimise} disabled={busy}>
                 <Sparkles size={13} />
                 {busy ? "Optimising…" : `Optimise GW${gw}`}
@@ -593,7 +567,11 @@ export function PlanTree({
                         ),
                       )}
                     </b>
-                    <small>{weeks.length} GW xPts</small>
+                    <small>
+                      {weeks.length === shown
+                        ? `${weeks.length} GW xPts`
+                        : `${weeks.length}/${shown} GW overlap`}
+                    </small>
                   </button>
                 </div>
               );

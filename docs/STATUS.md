@@ -1,5 +1,12 @@
 # Current handover
 
+## Jam interaction ladder — 4 November (in progress)
+
+- Read issue #2 and its full Jam transcript. Recorded actual signed-in Solio and Open FPL interactions in dedicated Ilmari Chrome; the first anonymized review rejected horizon parity and found Open FPL's click substitution guidance clearer, with slower validation feedback. This is a workflow review, not a forecast-quality benchmark or an entire-app parity verdict.
+- Replaced horizon dropdowns with a compact GW button and a real horizon slider, with separate labelled zoom buttons. Unchanged, previously validated weeks can be hidden and revealed immediately during the session; edits to the plan prefix/resources or a changed forecast invalidate reuse. New weeks still validate on the server. Extension after Free Hit uses permanent holdings and bank, and shrinking beyond the selected week selects the last remaining week only after success. Partial branch comparison windows are labelled explicitly. Independent code review and a fresh blinded video review are pending.
+- **571 backend tests, 141 frontend/gateway tests, production build and hosting typecheck pass.** Both source configurations cover **670 players × GW10–38 = 19,430/19,430 cells**, with sourced fixture membership, reconciled finite values and valid probabilities. Desktop keyboard horizon changes, selected-week truncation, Undo and a 390px mobile popover were opened and inspected; mobile document width is 390/390px. Raw recordings, source coverage receipts and blind reviews stay ignored under `data/exports/qa/ladder-20261104/`.
+- Existing uncommitted hosted/model work was preserved intact on `baseline/pre-ladder-20261104` before the ladder fixes. New issue PRs use that baseline to keep their diffs reviewable. No new deployment, whole-app parity, completed transfer/branching audit, or passing final review is claimed yet.
+
 Updated 2026-10-26. **The original mission to reproduce all eight Solio tutorial areas is unfinished.** The earlier review closeouts below cover bounded checks, not complete Solio workflow parity. The private Cloudflare website is live with verified Google sign-in, the Python API and shared plans on Ubuntu. Windows local use remains supported, but its existing browser plans have not been migrated.
 
 ## Planner horizon and timeline layout — 26 October

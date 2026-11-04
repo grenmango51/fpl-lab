@@ -62,7 +62,7 @@ describe("contextual planner decisions", () => {
   it("reveals saved decisions without losing transfers, chips or receipts", () => {
     const saved = plan();
     saved.weeks[3].chip = "triplecaptain";
-    const short = reuseValidatedHorizon(saved, undefined, 2)!;
+    const short = reuseValidatedHorizon(saved, saved, 2)!;
     expect(short.weeks).toHaveLength(2);
     expect(reuseValidatedHorizon(short, saved, 4)).toEqual(saved);
     short.weeks[0].captain = 14;
@@ -71,10 +71,18 @@ describe("contextual planner decisions", () => {
   });
   it("never restores a tail after starting resources change", () => {
     const saved = plan();
-    const short = reuseValidatedHorizon(saved, undefined, 2)!;
+    const short = reuseValidatedHorizon(saved, saved, 2)!;
     short.base_bank = 4;
     expect(reuseValidatedHorizon(short, saved, 4)).toBeNull();
     expect(reuseValidatedHorizon(saved, undefined, 5)).toBeNull();
+  });
+  it("requires an actual receipt even to shorten a restored plan", () => {
+    const restored = plan();
+    expect(reuseValidatedHorizon(restored, undefined, 2)).toBeNull();
+    const validated = structuredClone(restored);
+    restored.weeks[0].bank = 0;
+    expect(reuseValidatedHorizon(restored, validated, 2)).toBeNull();
+    expect(reuseValidatedHorizon(plan(), { ...plan(), weeks: [week(7)] }, 1)).toBeNull();
   });
   it("extends a final Free Hit from its permanent bank, squad and actual saved transfers", () => {
     const p = plan();

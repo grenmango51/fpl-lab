@@ -206,7 +206,11 @@ export default function App() {
   const [importText, setImportText] = useState("");
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("loading");
   const sharedRef = useRef<SharedWorkspace | null>(null);
-  const horizonReceipts = useRef(new Map<string, { plan: Plan; data: Bootstrap }>());
+  const horizonReceipts = useRef(new Map<string, {
+    plan: Plan;
+    data: Bootstrap;
+    configuration: string;
+  }>());
   if (!sharedRef.current) sharedRef.current = new SharedWorkspace(setSaveStatus);
   const [plans, setPlans] = useState<Plan[]>(() =>
       stored<Plan[]>(storageKey, []),
@@ -906,11 +910,22 @@ export default function App() {
   }, [plans, data?.gameweeks, activeId]);
 
   async function validatedPlan(p: Plan) {
+    const configuration = JSON.stringify(forecastArgs);
+    const forecastsReady = loadedForecastArgsRef.current === configuration;
     const result = await api<{ weeks: Week[] }>(
       "/plan/validate",
       planValidationRequest(p, forecastArgs),
     );
-    return { ...p, weeks: result.weeks };
+    const valid = { ...p, weeks: result.weeks };
+    // A restored/re-scored plan has no validation receipt. Only the server can
+    // establish one, against the same loaded data and requested configuration.
+    if (data && forecastsReady && livePlanningRef.current.data === data &&
+        JSON.stringify(livePlanningRef.current.forecastArgs) === configuration) {
+      horizonReceipts.current.set(p.id, {
+        plan: structuredClone(valid), data, configuration,
+      });
+    }
+    return valid;
   }
   async function updatePlan(p: Plan, message?: string, remember = true) {
     if (busy) return false;
@@ -1272,22 +1287,45 @@ export default function App() {
   async function changeHorizon(count: number) {
     if (!active || !data || busy || count === active.weeks.length) return;
     const receipt = horizonReceipts.current.get(active.id);
-    const reusable = reuseValidatedHorizon(active, receipt?.data === data ? receipt.plan : undefined, count);
-    if (reusable) {
-      if (active.weeks.length > count && (!receipt || receipt.data !== data || receipt.plan.weeks.length <= active.weeks.length || !reuseValidatedHorizon(active, receipt.plan, receipt.plan.weeks.length)))
-        horizonReceipts.current.set(active.id, { plan: structuredClone(active), data });
-      setPlanHistory((history) => ({ ...history, [active.id]: { past: [...(history[active.id]?.past ?? []), structuredClone(active)].slice(-30), future: [] } }));
-      setPlans((plans) => plans.map((plan) => plan.id === active.id ? reusable : plan));
-      if (!reusable.weeks.some((week) => week.gw === gw)) setGw(reusable.weeks.at(-1)!.gw);
-      notify(`Planning horizon updated to ${reusable.weeks.length} gameweeks.`);
-      return;
+    const configuration = JSON.stringify(forecastArgs);
+    let reusable = reuseValidatedHorizon(active,
+      receipt?.data === data && receipt.configuration === configuration &&
+      loadedForecastArgsRef.current === configuration ? receipt.plan : undefined,
+      count);
+    if (!reusable) {
+      setBusy("Checking your plan…");
+      try {
+        // Validate a restored plan in full before retaining its hidden decisions.
+        // Merely shortening it cannot grant old prices a new validation receipt.
+        if (count < active.weeks.length) {
+          const valid = await validatedPlan(active);
+          reusable = { ...valid, weeks: valid.weeks.slice(0, count) };
+        } else {
+          const resized = resizePlanHorizon(active, count, data.gameweeks, data.players);
+          if (!resized.weeks.length) return;
+          reusable = await validatedPlan(resized);
+        }
+      } catch (e) {
+        notify((e as Error).message, true);
+        return;
+      } finally {
+        setBusy("");
+      }
     }
-    const p = resizePlanHorizon(active, count, data.gameweeks, data.players);
-    if (!p.weeks.length) return;
-    if (await updatePlan(p, `Planning horizon updated to ${p.weeks.length} gameweeks.`)) {
-      if (!p.weeks.some((week) => week.gw === gw)) setGw(p.weeks.at(-1)!.gw);
-    }
+    const next = reusable;
+    setPlanHistory((history) => ({ ...history, [active.id]: {
+      past: [...(history[active.id]?.past ?? []), structuredClone(active)].slice(-30),
+      future: [],
+    } }));
+    setPlans((plans) => plans.map((plan) => plan.id === active.id ? next : plan));
+    const live = livePlanningRef.current;
+    const selectedPlan = live.plans.find((plan) => plan.id === live.activeId) ?? live.plans[0];
+    if (selectedPlan?.id === active.id)
+      setGw((current) => next.weeks.some((week) => week.gw === current)
+        ? current : next.weeks.at(-1)!.gw);
+    notify(`Planning horizon updated to ${next.weeks.length} gameweeks.`);
   }
+
   function changeChip(chip: Chip) {
     if (!active) return;
     const p = structuredClone(active),

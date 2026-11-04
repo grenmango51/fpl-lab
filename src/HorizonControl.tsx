@@ -78,9 +78,19 @@ export function HorizonControl({
             min={1}
             max={max}
             value={draft}
-            disabled={disabled}
+            aria-disabled={disabled}
+            aria-busy={disabled}
             autoFocus
-            onChange={(event) => setDraft(+event.target.value)}
+            onChange={(event) => {
+              if (!disabled) setDraft(+event.target.value);
+            }}
+            onKeyDown={(event) => {
+              if (disabled && event.key !== "Tab" && event.key !== "Escape")
+                event.preventDefault();
+            }}
+            onPointerDown={(event) => {
+              if (disabled) event.preventDefault();
+            }}
             onPointerUp={(event) => commit(+event.currentTarget.value)}
             onKeyUp={(event) => {
               if (

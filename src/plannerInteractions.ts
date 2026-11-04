@@ -7,11 +7,11 @@ export function reuseValidatedHorizon(
   saved: Plan | undefined,
   count: number,
 ): Plan | null {
-  if (!Number.isInteger(count) || count < 1) return null;
-  const source = count <= plan.weeks.length ? plan : saved;
-  if (!source || count > source.weeks.length) return null;
+  if (!Number.isInteger(count) || count < 1 || !saved) return null;
+  const source = saved;
+  if (count > source.weeks.length || plan.weeks.length > source.weeks.length)
+    return null;
   if (
-    source !== plan &&
     JSON.stringify({
       ...source,
       weeks: source.weeks.slice(0, plan.weeks.length),

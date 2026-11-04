@@ -1,7 +1,117 @@
 .tree-canvas-scroll[hidden],
-.tree-zoom[hidden],
+.plan-canvas > .tree-zoom[hidden],
+.tree-branch-order[hidden],
 .tree-toolbar select[hidden] {
   display: none;
+}
+.plan-canvas .tree-toolbar {
+  background: none;
+  padding: 14px 16px;
+}
+.tree-toolbar .tree-horizon-control {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 8px;
+  margin-left: auto;
+  padding: 0 10px;
+  border: 1px solid #344052;
+  background: #070c17;
+  color: #a1aec1;
+  border-radius: 2px;
+}
+.tree-horizon-control select {
+  width: 83px;
+  height: 38px;
+  padding: 7px 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  font-size: 13px;
+  font-weight: 650;
+}
+.plan-canvas > .tree-zoom {
+  position: absolute;
+  top: 66px;
+  right: 16px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.tree-zoom input[type="range"] {
+  appearance: none;
+  width: 132px;
+  height: 2px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: var(--orange);
+  cursor: pointer;
+}
+.tree-zoom input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  width: 22px;
+  height: 22px;
+  border: 2px solid var(--orange);
+  border-radius: 50%;
+  background: #070c17;
+}
+.tree-zoom input[type="range"]::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--orange);
+  border-radius: 50%;
+  background: #070c17;
+}
+.tree-zoom button {
+  min-height: 28px;
+  color: #9aaac1;
+  font-size: 11px;
+}
+.tree-canvas-scroll {
+  background-color: #050b15;
+  background-size: 14px 14px;
+}
+.tree-canvas-size {
+  margin: 112px 24px 68px;
+}
+.tree-gw-card,
+.tree-base-team,
+.tree-evaluation {
+  border-radius: 1px;
+  background: #0b1320;
+  box-shadow: none;
+}
+.tree-gw-card.active {
+  background: #ff6a3d0c;
+}
+.tree-gw-card.active > strong {
+  color: var(--orange);
+}
+.tree-scenario.active {
+  background: var(--orange);
+  color: #111827;
+  box-shadow: none;
+}
+.tree-scenario.active span {
+  color: #e3eaf5;
+}
+.tree-node-optimise {
+  left: 0;
+  width: 120px;
+  border-radius: 1px;
+  background: var(--orange);
+  color: #111827;
+}
+.tree-evaluation {
+  width: 150px;
+  min-height: 100px;
+  transform: translateY(-18px);
+}
+.tree-evaluation b {
+  color: #e3eaf5;
+  font-size: 25px;
 }
 .tree-pitch-panel {
   flex: 1;
@@ -177,6 +287,9 @@
   grid-template-columns: minmax(0, 1fr);
 }
 @media (max-width: 700px) {
+  .tree-branch-order {
+    display: none !important;
+  }
   .tree-pitch-panel,
   .tree-pitch-toggle {
     display: none;

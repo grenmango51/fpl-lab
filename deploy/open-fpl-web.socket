@@ -1,0 +1,10 @@
+[Unit]
+Description=Start Open FPL when its private origin is used
+
+[Socket]
+ListenStream=127.0.0.1:18082
+NoDelay=true
+Service=open-fpl-web-proxy.service
+
+[Install]
+WantedBy=sockets.target

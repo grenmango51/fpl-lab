@@ -1,0 +1,18 @@
+[Unit]
+Description=Open FPL free Cloudflare origin connection
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+ExecStart=%h/projects/github/grenmango51/fpl-lab/.venv/bin/python %h/projects/github/grenmango51/fpl-lab/tools/tunnel_bridge.py
+Restart=always
+RestartSec=10
+TimeoutStopSec=20
+MemoryHigh=96M
+MemoryMax=160M
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0077
+
+[Install]
+WantedBy=default.target

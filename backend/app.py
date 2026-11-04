@@ -32,8 +32,14 @@ from .chip_strategy import jobs as chip_strategy_jobs, ChipStrategyConflict
 from .market_history import market_history, capture_market_history
 from .season_data import router as season_data_router
 from .fixture_catalog import router as fixture_catalog_router
+from .live_updates import router as live_updates_router, lifespan, refresh_once
+from .solio import apply as apply_solio
+from . import workspace
+from .hosting import OriginOnly
 
-app = FastAPI(title="Open FPL", version="0.1.0")
+app = FastAPI(title="Open FPL", version="0.1.0", lifespan=lifespan)
+app.add_middleware(OriginOnly)
+app.include_router(live_updates_router)
 app.include_router(season_data_router)
 app.include_router(fixture_catalog_router)
 app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=3)
@@ -114,6 +120,7 @@ class ForecastRequest(BaseModel):
     custom_points: dict[str, dict[str, float]] = Field(default_factory=dict)
     blend_weight: float = Field(default=0, ge=0, le=1)
     use_provider: bool = True
+    use_solio: bool = True
     provider_weight: float = Field(default=0.5, ge=0, le=1)
     extrapolate: bool = True
     anchor_half_life: float = Field(default=6, ge=1, le=20)
@@ -244,6 +251,10 @@ def forecast_for(request: ForecastRequest, *, dataset=None):
             request.blend_weight,
             request.custom_name or "Imported CSV",
         )
+    payload = apply_solio(payload, dataset, enabled=request.use_solio,
+                          overrides=overrides, minutes_schedule=schedule,
+                          extrapolate=request.extrapolate, half_life=request.anchor_half_life,
+                          calibration_payload=calibration)
     try:
         payload = apply_fixture_moves(
             payload, moves, dataset, overrides, request.use_market, schedule,
@@ -327,6 +338,56 @@ class ChipStrategyRequest(SolveRequest):
     source_plan: PlanRequest | None = None
 
 
+class WorkspaceDocument(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    version: Literal[1] = 1
+    plans: list[dict] = Field(default_factory=list, max_length=30)
+    configuration: ForecastRequest = Field(default_factory=ForecastRequest)
+    solver_settings: dict = Field(default_factory=dict, max_length=40)
+    active_id: str = Field(default="", max_length=120)
+    watch: list[StrictInt] = Field(default_factory=list, max_length=700)
+
+
+class WorkspaceSave(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    revision: StrictInt = Field(ge=0)
+    document: WorkspaceDocument
+
+
+@app.get("/api/workspace")
+def shared_workspace():
+    return workspace.read()
+
+
+@app.post("/api/workspace")
+def save_workspace(request: WorkspaceSave):
+    document = request.document.model_dump()
+    payload = forecast_for(request.document.configuration)
+    checked = []
+    identifiers = set()
+    for source in document["plans"]:
+        if (not isinstance(source.get("id"), str) or not 1 <= len(source["id"]) <= 120
+                or source["id"] in identifiers or not isinstance(source.get("name"), str)
+                or not 1 <= len(source["name"]) <= 100):
+            raise HTTPException(422, "Shared branches need distinct IDs and short names.")
+        identifiers.add(source["id"])
+        try:
+            plan = PlanRequest.model_validate({
+                **document["configuration"], "base_squad": source.get("base_squad"),
+                "bank": source.get("base_bank"), "free_transfers": source.get("free_transfers"),
+                "purchase_prices": source.get("purchase_prices", {}), "weeks": source.get("weeks"),
+                "used_chips": source.get("used_chips", []),
+            })
+        except ValueError:
+            raise HTTPException(422, "A shared branch has invalid planning inputs.") from None
+        validated = validate_plan_payload(plan, payload)
+        checked.append({**source, "weeks": validated["weeks"]})
+    if document["active_id"] and document["active_id"] not in identifiers:
+        raise HTTPException(422, "The active branch is missing from the workspace.")
+    document["plans"] = checked
+    return workspace.save(request.revision, document)
+
+
 @app.get("/api/health")
 def health():
     return {"status": "ok", "app": "Open FPL", "version": "0.1.0"}
@@ -356,8 +417,8 @@ def custom_projections(request: ForecastRequest):
 
 @app.post("/api/refresh")
 def refresh():
-    get_data(force=True)
-    return forecast_response(forecast_for(ForecastRequest()))
+    dataset = refresh_once()
+    return forecast_response(forecast_for(ForecastRequest(), dataset=dataset))
 
 
 @app.get("/api/players/{player_id}")
@@ -996,6 +1057,8 @@ def save_snapshot(request: ForecastRequest, refresh_inputs: bool = True):
     )
     base = {p["id"]: p for p in component["players"]}
     vendor = dataset.get("fplform", {}).get("players", {})
+    solio = dataset.get("solio", {})
+    solio_rows = solio.get("players", {}) if solio.get("usable") else {}
     now = datetime.now(timezone.utc)
     if now >= min(deadline, fresh_deadline):
         raise HTTPException(
@@ -1060,6 +1123,9 @@ def save_snapshot(request: ForecastRequest, refresh_inputs: bool = True):
             raw_points = vendor.get(str(player["id"]), {}).get("points", {})
             if str(gw) in raw_points:
                 models["FPL Form"] = raw_points[str(gw)]
+            observed = solio_rows.get(str(player["id"]), {})
+            if observed.get("code") == player["code"] and str(gw) in observed.get("points", {}):
+                models["Solio"] = observed["points"][str(gw)]
             target_players.append(
                 {
                     "id": player["id"],
@@ -1103,6 +1169,9 @@ def save_snapshot(request: ForecastRequest, refresh_inputs: bool = True):
         source = vendor.get(str(row["id"]), {}).get("points", {})
         if str(payload["next_gw"]) in source:
             row["models"]["FPL Form"] = source[str(payload["next_gw"])]
+        observed = solio_rows.get(str(row["id"]), {})
+        if observed.get("code") == row["code"] and str(payload["next_gw"]) in observed.get("points", {}):
+            row["models"]["Solio"] = observed["points"][str(payload["next_gw"])]
     # Complete serialisation before the final deadline check or creating a file.
     body = json.dumps(snapshot, ensure_ascii=False, allow_nan=False)
     compressed = gzip.compress(body.encode("utf-8"), compresslevel=6, mtime=0)

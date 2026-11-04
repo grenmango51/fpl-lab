@@ -71,7 +71,8 @@ def test_propagates_teammates_opponents_all_weeks_and_preserves_inputs(data):
         assert forecast(changed, pid, 8) is forecast(baseline, pid, 8)
     for pid in (3, 4):
         assert next(p for p in changed["players"] if p["id"] == pid) is next(p for p in baseline["players"] if p["id"] == pid)
-    assert forecast(changed, 1)["points"] == 0  # unavailable player stays unavailable
+    # A flagged-out player's availability is not changed by team strengths.
+    assert forecast(changed, 1)["pplay"] == forecast(baseline, 1)["pplay"] < 0.05
 
 
 def test_identity_reset_and_two_sided_factors(data):
@@ -153,7 +154,7 @@ def test_probabilities_boundaries_and_exact_minutes_state_deductions(data):
 def test_legacy_duration_survives_team_deltas_and_availability_only_schedule(data, duration, availability_only):
     data["players"][1]["chance_of_playing_next_round"] = 80
     args = {"overrides": {"1": duration}}
-    availability = 0.8
+    availability = None  # The fitted 75%-flag curve replaces the official 80%.
     if availability_only:
         args["minutes_schedule"] = {"1": {"7": {"availability": 0.6}}}
         availability = 0.6
@@ -164,18 +165,21 @@ def test_legacy_duration_survives_team_deltas_and_availability_only_schedule(dat
     assert week["minutes_scenario"]["conditional_minutes"] == duration
     pairs = lambda lam: lam / 2 - (1 - math.exp(-2 * lam)) / 4
     for old, new in zip(week["fixtures"], forecast(changed, 1, 7)["fixtures"]):
+        if not availability_only:
+            assert old["availability_assumption"]["source"] == "fitted flag availability model"
+            availability = old["availability_assumption"]["value"]
         expected = availability * (
             pairs(old["conceded"] * duration / 90)
             - pairs(new["conceded"] * duration / 90)
         )
         assert new["components"]["deductions"] - old["components"]["deductions"] == pytest.approx(expected)
-        assert new["pplay"] == old["pplay"] == (availability if duration else 0)
-        assert new["p60"] == old["p60"] == (availability if duration >= 60 else 0)
-        assert new["xmins"] == old["xmins"] == availability * duration
+        assert new["pplay"] == old["pplay"] == pytest.approx(availability if duration else 0)
+        assert new["p60"] == old["p60"] == pytest.approx(availability if duration >= 60 else 0)
+        assert new["xmins"] == old["xmins"] == pytest.approx(availability * duration)
     assert base == frozen
 
 
-def test_provider_probability_does_not_replace_fixture_component_states(data):
+def test_provider_probability_updates_fixture_states_before_team_scenarios(data):
     data["players"][2]["element_type"] = 2
     for row in data["history"]:
         if row["code"] == 1002:
@@ -185,7 +189,7 @@ def test_provider_probability_does_not_replace_fixture_component_states(data):
     changed = api.forecast_for(request(team_strengths={"101": {"attack": 2}}), dataset=data)
     old_week, new_week = forecast(base, 2, 6), forecast(changed, 2, 6)
     old, new = old_week["fixtures"][0], new_week["fixtures"][0]
-    assert old_week["pplay"] != pytest.approx(old["pplay"])
+    assert old_week["pplay"] == pytest.approx(old["pplay"])
     means = model.appearance_profile([
         r for r in data["history"] if r["code"] == 1002 and r["season"] == data["season"]
     ])

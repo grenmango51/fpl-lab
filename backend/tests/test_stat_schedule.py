@@ -101,6 +101,7 @@ def test_minutes_and_stats_combine_with_no_clean_sheet_for_short_appearance(data
 
 
 def test_blanks_and_zero_appearance_remain_zero(data):
+    data["players"][1]["status"] = "u"  # Unavailable: no fitted recovery.
     result = api_module.forecast_for(options(stat_schedule={
         "2": {"8": {"expected_points": 10, "xg": 2}},
         "1": {"6": {"xg": 0, "xa": 0, "clean_sheet_probability": 1, "expected_points": 0}},

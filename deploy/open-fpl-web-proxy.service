@@ -1,0 +1,12 @@
+[Unit]
+Description=Open FPL on-demand API proxy
+Requires=open-fpl-web.service
+After=open-fpl-web.service
+
+[Service]
+ExecStartPre=%h/projects/github/grenmango51/fpl-lab/.venv/bin/python %h/projects/github/grenmango51/fpl-lab/tools/wait_web.py
+ExecStart=/usr/lib/systemd/systemd-socket-proxyd --exit-idle-time=5h 127.0.0.1:18083
+ExecStopPost=/usr/bin/systemctl --user --no-block stop open-fpl-web.service
+MemoryMax=64M
+NoNewPrivileges=true
+PrivateTmp=true

@@ -93,6 +93,9 @@ import {
   ProjectionsView,
 } from "./Views";
 import type { SolverSettings } from "./Views";
+import DataRefreshSettings, {
+  type DataRefreshStatus,
+} from "./DataRefreshSettings";
 import { SensitivityView } from "./SensitivityView";
 import { MinutesScenarioEditor } from "./MinutesScenarioEditor";
 import { ReferenceView } from "./ReferenceView";
@@ -124,6 +127,7 @@ import type {
   TeamStrengthsSchedule,
   ForecastConfiguration,
 } from "./planningPersistence";
+import { SharedWorkspace, type SaveStatus, type SharedDocument } from "./sharedWorkspace";
 export { restorePlanningState } from "./planningPersistence";
 const SeasonData = lazy(() =>
   import("./SeasonData").then((module) => ({ default: module.SeasonData })),
@@ -200,6 +204,9 @@ export default function App() {
   );
   const [backupText, setBackupText] = useState("");
   const [importText, setImportText] = useState("");
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>("loading");
+  const sharedRef = useRef<SharedWorkspace | null>(null);
+  if (!sharedRef.current) sharedRef.current = new SharedWorkspace(setSaveStatus);
   const [plans, setPlans] = useState<Plan[]>(() =>
       stored<Plan[]>(storageKey, []),
     ),
@@ -221,6 +228,7 @@ export default function App() {
     [useProvider, setUseProvider] = useState(() =>
       stored("open-fpl-provider", true),
     ),
+    [useSolio, setUseSolio] = useState(() => stored("open-fpl-solio", true)),
     [providerWeight, setProviderWeight] = useState(() =>
       stored("open-fpl-provider-weight", 0.5),
     ),
@@ -325,14 +333,33 @@ export default function App() {
     custom_points: customPoints,
     blend_weight: blendWeight,
     use_provider: useProvider,
+    use_solio: useSolio,
     provider_weight: providerWeight,
     extrapolate,
     anchor_half_life: anchorHalfLife,
     custom_name: customName || "Imported CSV",
   };
   const active = plans.find((p) => p.id === activeId) ?? plans[0] ?? null;
-  const livePlanningRef = useRef({ plans, data, forecastArgs });
-  livePlanningRef.current = { plans, data, forecastArgs };
+  const livePlanningRef = useRef({
+    plans,
+    data,
+    forecastArgs,
+    activeId,
+    settings,
+    gw,
+    busy,
+    watch,
+  });
+  livePlanningRef.current = {
+    plans,
+    data,
+    forecastArgs,
+    activeId,
+    settings,
+    gw,
+    busy,
+    watch,
+  };
   const week = active?.weeks.find((w) => w.gw === gw) ?? null;
   const lookup = useMemo(
     () => new Map(data?.players.map((p) => [p.id, p]) ?? []),
@@ -357,6 +384,7 @@ export default function App() {
     setCustomPoints(configuration.custom_points);
     setBlendWeight(configuration.blend_weight);
     setUseProvider(configuration.use_provider);
+    setUseSolio(configuration.use_solio);
     setProviderWeight(configuration.provider_weight);
     setExtrapolate(configuration.extrapolate);
     setAnchorHalfLife(configuration.anchor_half_life);
@@ -377,18 +405,54 @@ export default function App() {
     );
   }
 
+  function sharedDocument(): SharedDocument {
+    return { version: 1, plans, configuration: forecastArgs, solver_settings: settings, active_id: activeId, watch };
+  }
+
+  async function adoptShared(document: SharedDocument, current: () => boolean) {
+    const fingerprint = () => { const { data: _data, ...state } = livePlanningRef.current; return JSON.stringify(state); };
+    const before = fingerprint();
+    if (livePlanningRef.current.busy) return false;
+    const restored = await loadPlanningState(document.plans, document.active_id, document.configuration,
+      document.solver_settings, configuration => configuration === undefined
+        ? forecastBaseline() : api<Bootstrap>("/projections", configuration));
+    if (!current() || fingerprint() !== before) return false;
+    archivePlanningInputs(livePlanningRef.current.plans, livePlanningRef.current.forecastArgs);
+    ++dataRequestRef.current;
+    loadedForecastArgsRef.current = JSON.stringify(restored.configuration);
+    applyForecastConfiguration(restored.configuration);
+    setSettings(restored.solver);
+    setData(restored.forecast);
+    setPlans(restored.plans);
+    setActiveId(restored.activeId);
+    setGw(restored.gw);
+    setWatch(document.watch);
+    setSolveResult(null);
+    setSolveContext(null);
+    setPlanHistory({});
+    return true;
+  }
+  const adoptSharedRef = useRef(adoptShared);
+  adoptSharedRef.current = adoptShared;
+
   useEffect(() => {
     let alive = true;
-    loadPlanningState(
-      plans,
-      activeId,
-      forecastArgs,
-      settings,
+    sharedRef.current!.initialize(sharedDocument()).then(document => {
+      if (!alive) throw new Error("Workspace loading cancelled.");
+      if (plans.length && JSON.stringify(document.plans) !== JSON.stringify(plans)) {
+        archivePlanningInputs(plans, forecastArgs);
+      }
+      setWatch(document.watch);
+      return loadPlanningState(
+      document.plans,
+      document.active_id,
+      document.configuration,
+      document.solver_settings,
       (configuration) =>
         configuration === undefined
           ? forecastBaseline()
           : api<Bootstrap>("/projections", configuration),
-    )
+    ); })
       .then((restored) => {
         if (!alive) return;
         if (
@@ -447,6 +511,26 @@ export default function App() {
       alive = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!loading && data) sharedRef.current!.queue(sharedDocument());
+  }, [loading, plans, activeId, watch, settings, JSON.stringify(forecastArgs)]);
+
+  useEffect(() => {
+    const resume = () => {
+      if (document.visibilityState === "visible") {
+        void sharedRef.current!.pull((document, current) => adoptSharedRef.current(document, current));
+      } else {
+        void sharedRef.current!.flush();
+      }
+    };
+    window.addEventListener("focus", resume);
+    document.addEventListener("visibilitychange", resume);
+    return () => {
+      window.removeEventListener("focus", resume);
+      document.removeEventListener("visibilitychange", resume);
+    };
+  }, []);
   useEffect(() => {
     localStorage.setItem(storageKey, JSON.stringify(plans));
   }, [plans]);
@@ -462,7 +546,10 @@ export default function App() {
       "open-fpl-team-strengths",
       JSON.stringify(teamStrengths),
     );
-    localStorage.setItem("open-fpl-fixture-moves", JSON.stringify(fixtureMoves));
+    localStorage.setItem(
+      "open-fpl-fixture-moves",
+      JSON.stringify(fixtureMoves),
+    );
     localStorage.setItem("open-fpl-minutes", JSON.stringify(overrides));
     localStorage.setItem(
       "open-fpl-minutes-schedule",
@@ -476,6 +563,7 @@ export default function App() {
     localStorage.setItem("open-fpl-blend", JSON.stringify(blendWeight));
     localStorage.setItem("open-fpl-custom-name", JSON.stringify(customName));
     localStorage.setItem("open-fpl-provider", JSON.stringify(useProvider));
+    localStorage.setItem("open-fpl-solio", JSON.stringify(useSolio));
     localStorage.setItem("open-fpl-market", JSON.stringify(useMarket));
     localStorage.setItem(
       "open-fpl-provider-weight",
@@ -497,6 +585,7 @@ export default function App() {
     blendWeight,
     customName,
     useProvider,
+    useSolio,
     providerWeight,
     extrapolate,
     anchorHalfLife,
@@ -504,6 +593,76 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("open-fpl-solver", JSON.stringify(settings));
   }, [settings]);
+  useEffect(() => {
+    let alive = true;
+    let checking = false;
+    async function check() {
+      const current = livePlanningRef.current;
+      if (checking || !current.data || current.busy || solveInFlightRef.current)
+        return;
+      checking = true;
+      try {
+        const status = await api<DataRefreshStatus>("/data-refresh");
+        if (
+          !status.loaded_at ||
+          Date.parse(status.loaded_at) <= Date.parse(current.data.loaded_at)
+        )
+          return;
+        const request = ++dataRequestRef.current;
+        const restored = await loadPlanningState(
+          current.plans,
+          current.activeId,
+          current.forecastArgs,
+          current.settings,
+          (configuration) =>
+            configuration === undefined
+              ? forecastBaseline()
+              : api<Bootstrap>("/projections", configuration),
+        );
+        const latest = livePlanningRef.current;
+        if (
+          !alive ||
+          request !== dataRequestRef.current ||
+          latest.busy ||
+          latest.plans !== current.plans ||
+          latest.activeId !== current.activeId ||
+          latest.settings !== current.settings ||
+          latest.gw !== current.gw ||
+          JSON.stringify(latest.forecastArgs) !==
+            JSON.stringify(current.forecastArgs)
+        )
+          return;
+        if (restored.notices.length)
+          archivePlanningInputs(current.plans, current.forecastArgs);
+        loadedForecastArgsRef.current = JSON.stringify(restored.configuration);
+        applyForecastConfiguration(restored.configuration);
+        setSettings(restored.solver);
+        setData(restored.forecast);
+        setPlans(restored.plans);
+        setActiveId(restored.activeId);
+        if (!restored.forecast.gameweeks.includes(current.gw))
+          setGw(restored.gw);
+        setSolveResult(null);
+        setSolveContext(null);
+        if (restored.notices.length) notify(restored.notices.join(" "));
+      } catch {
+        // Background failures retain the current plan. Sources/settings show
+        // server failures; the next poll retries without interrupting editing.
+      } finally {
+        checking = false;
+      }
+    }
+    const timer = window.setInterval(() => void check(), 60_000);
+    const visible = () => {
+      if (document.visibilityState === "visible") void check();
+    };
+    document.addEventListener("visibilitychange", visible);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", visible);
+    };
+  }, []);
   useEffect(() => {
     if (!toast) return;
     const t = setTimeout(() => setToast(null), toast.error ? 12000 : 5500);
@@ -584,6 +743,7 @@ export default function App() {
     customPoints,
     blendWeight,
     useProvider,
+    useSolio,
     providerWeight,
     extrapolate,
     anchorHalfLife,
@@ -640,6 +800,7 @@ export default function App() {
     fixtureMoves,
     useMarket,
     useProvider,
+    useSolio,
     providerWeight,
     customPoints,
     blendWeight,
@@ -1305,6 +1466,10 @@ export default function App() {
         ...forecasts,
         ...solverSettingsForHorizon(strategy, startGW, horizon),
         horizon,
+        seconds:
+          inPlace && horizon <= 14
+            ? Math.min(strategy.seconds, 5)
+            : strategy.seconds,
         squad,
         bank,
         free_transfers: freeTransfers,
@@ -1772,7 +1937,9 @@ export default function App() {
               Try again
             </button>
             <small>
-              Start the Python API on port 8000 and the Vite app on port 5173.
+              {window.location.hostname.endsWith("workers.dev")
+                ? "Your saved plans are retained. Retry shortly."
+                : "Start the Python API on port 8000 and the Vite app on port 5173."}
             </small>
           </>
         ) : (
@@ -1994,6 +2161,12 @@ export default function App() {
               ))}
             </select>
             <span>{data.season.replace("-", "/")}</span>
+            {saveStatus !== "local" && saveStatus !== "loading" && <button
+              className="icon-button"
+              aria-label={`Shared plans: ${saveStatus}`}
+              title={saveStatus === "saved" ? "Saved across devices" : saveStatus === "saving" ? "Saving shared plans…" : "Shared saving needs attention"}
+              onClick={() => { setSettingsTab("plans"); setModal("settings"); }}
+            >{saveStatus === "saving" ? <LoaderCircle size={15} className="spin" /> : saveStatus === "saved" ? <Check size={15} /> : <Info size={15} />}</button>}
             <button
               className="icon-button"
               onClick={() => setModal("team")}
@@ -2385,7 +2558,7 @@ export default function App() {
             </button>
             <p className="privacy-note">
               <ShieldCheck size={14} />
-              Plans are saved locally. No transfers are submitted to FPL.
+              {saveStatus === "local" ? "Plans stay in this browser." : "Plans save across your devices."} No transfers are submitted to FPL.
             </p>
           </div>
         </Modal>
@@ -2488,6 +2661,7 @@ export default function App() {
             />
             <div className="settings-body">
               <section hidden={settingsTab !== "plans"}>
+                {window.location.hostname.endsWith("workers.dev") && <form method="post" action="/auth/signout"><button className="button small" type="submit">Sign out</button></form>}
                 {deletedPlans.length ? (
                   <details className="compact-details deleted-plans">
                     <summary>Deleted plans · {deletedPlans.length}</summary>
@@ -2507,6 +2681,35 @@ export default function App() {
               </section>
               <section hidden={settingsTab !== "inputs"}>
                 <h3>Forecast inputs</h3>
+                <DataRefreshSettings />
+                <label className="toggle-row">
+                  <span>
+                    <b>Use available Solio predictions</b>
+                    <small>
+                      Use supplied points; extrapolate the full window when enabled
+                    </small>
+                  </span>
+                  <input
+                    type="checkbox"
+                    aria-label="Use Solio predictions"
+                    checked={useSolio}
+                    onChange={(e) => setUseSolio(e.target.checked)}
+                  />
+                </label>
+                <p className="help-text" role="status">
+                  {data.solio?.gameweek
+                    ? `Solio GW${data.solio.gameweek}${data.solio.weeks.length > 1 ? `–${data.solio.weeks[data.solio.weeks.length - 1]}` : ""}: ${data.solio.matched_players}/${data.solio.pool_players} players; ${data.solio.applied_forecasts} values applied. `
+                    : "Solio predictions unavailable. "}
+                  {data.solio?.full_planner_connected
+                    ? `Signed-in planner. ${data.solio.unpurchaseable_players ?? data.solio.omitted_players ?? 0} unpurchaseable${data.solio.unlisted_players ? `; ${data.solio.unlisted_players} not yet listed` : ""}. `
+                    : "Public next-week shortlist. Full planner unavailable. "}
+                  {data.solio?.status && !["shortlist_only", "planner"].includes(data.solio.status)
+                    ? ` ${data.solio.status.replaceAll("_", " ")}; using our model.`
+                    : ""}
+                  {data.solio?.source_status === "stale"
+                    ? " Source stale; using our model."
+                    : ""}
+                </p>
                 <label className="toggle-row">
                   <span>
                     <b>Market and Elevenify team inputs</b>
@@ -2646,6 +2849,17 @@ export default function App() {
                 </div>
               </section>
               <section hidden={settingsTab !== "plans"}>
+                <div className="setting-row">
+                  <span>
+                    <b>{({ local: "Saved in this browser", loading: "Connecting shared plans…", saved: "Saved across devices", saving: "Saving shared plans…", error: "Shared saving paused", conflict: "Plans changed on another device" })[saveStatus]}</b>
+                    {(saveStatus === "error" || saveStatus === "conflict") && <small>Your local copy is retained.</small>}
+                  </span>
+                  {saveStatus === "error" && <button className="button small" onClick={() => void sharedRef.current!.flush()}>Retry save</button>}
+                  {saveStatus === "conflict" && <button className="button small" onClick={() => {
+                    download("open-fpl-before-sync.json", JSON.stringify(createPlanExport(plans, forecastArgs, settings), null, 2));
+                    void sharedRef.current!.pull((document, current) => adoptSharedRef.current(document, current), true);
+                  }}>Back up &amp; load shared</button>}
+                </div>
                 <h3>Planning branches</h3>
                 <div className="button-row">
                   <button
@@ -2756,6 +2970,7 @@ export default function App() {
                       "fpl_fixtures",
                       "fpljoe",
                       "elevenify_sheet",
+                      "solio_public",
                       `fplform_${data.season}_gw${data.next_gw}`,
                       "archive_2025-26_gws",
                     ].includes(key),
@@ -2856,7 +3071,7 @@ export default function App() {
               calibrated.
             </p>
             <p>
-              The walk-forward benchmark and an ML challenger are visible in
+              The walk-forward benchmark against the previous model is in
               Analysis. A competitive paid-provider comparison needs forecasts
               from the same deadlines and has not been established.
             </p>

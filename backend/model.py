@@ -9,9 +9,12 @@ from collections import defaultdict
 
 import numpy as np
 
+from . import forecast_model
 from .data import get_data, number
+from .availability import (absence_censored_rows, fixture_availability, next_availability,
+                           parsed_time, selection_rows)
 
-VERSION = "open-fpl-components-0.1"
+VERSION = "open-fpl-components-0.3"
 POSITIONS = {1: "GKP", 2: "DEF", 3: "MID", 4: "FWD"}
 DEFAULT_SCORING = {
     "long_play": 2,
@@ -35,6 +38,34 @@ PARAMETERS = {
 _projections = None
 _projection_key = None
 _projection_lock = threading.RLock()
+
+
+def fitted_fixture_availability(assumption, player, features, lead, params=None):
+    """Swap declared flag percentages and recovery decay for the fitted flag curve.
+
+    Dated returns (0 before, 1 after), suspensions and unregistered players keep
+    their declared rules. The fitted value is the probability of being available;
+    selection given availability stays in the minutes model.
+    """
+    params = params or forecast_model.PARAMS
+    level = forecast_model.flag_category(
+        player["status"], player.get("chance_of_playing_next_round")
+    )
+    if (features is None or not params or not params.get("availability")
+            or level in (None, "available")
+            or player["status"] not in ("a", "d", "i")
+            or (assumption["source"] == "official news return-date assumption"
+                and assumption["value"] in (0, 1))):
+        return assumption
+    return {
+        **assumption,
+        "value": forecast_model.availability_factor(
+            lead, level, 1 - forecast_model.minutes_probabilities(features, lead, params)[0], params
+        ),
+        "source": "fitted flag availability model",
+        "flag": level,
+        "lead_gameweeks": lead,
+    }
 
 
 def weighted(rows, half_life):
@@ -85,15 +116,22 @@ def positional_priors(history, before_season):
     return result
 
 
-def appearance_profile(rows, availability=1.0, minutes_override=None):
-    """Appearance states only, allowing scenario profiles to reuse event rates."""
+def appearance_profile(rows, availability=1.0, minutes_override=None, probabilities=None):
+    """Appearance states only, allowing scenario profiles to reuse event rates.
+
+    `probabilities` = (P0, P1-59, P60+) from the fitted minutes model; without it
+    the declared recency-weighted heuristic of version 0.2 applies.
+    """
     recent = rows[-10:]
     wr = weighted(recent, PARAMETERS["minutes_half_life_matches"])
     total = sum(w for _, w in wr)
-    # A declared zero-appearance pseudocount prevents certainty from a few starts.
-    denominator = total + PARAMETERS["appearance_prior_matches"]
-    p60 = sum(w for r, w in wr if r["minutes"] >= 60) / denominator if wr else 0
-    pshort = sum(w for r, w in wr if 0 < r["minutes"] < 60) / denominator if wr else 0
+    if probabilities is not None:
+        pshort, p60 = probabilities[1], probabilities[2]
+    else:
+        # A declared zero-appearance pseudocount prevents certainty from a few starts.
+        denominator = total + PARAMETERS["appearance_prior_matches"]
+        p60 = sum(w for r, w in wr if r["minutes"] >= 60) / denominator if wr else 0
+        pshort = sum(w for r, w in wr if 0 < r["minutes"] < 60) / denominator if wr else 0
     long_rows = [(r, w) for r, w in wr if r["minutes"] >= 60]
     short_rows = [(r, w) for r, w in wr if 0 < r["minutes"] < 60]
     long_mean = (
@@ -122,8 +160,29 @@ def appearance_profile(rows, availability=1.0, minutes_override=None):
     }
 
 
-def player_profile(rows, pos, prior, availability=1.0, minutes_override=None):
-    appearance = appearance_profile(rows, availability, minutes_override)
+def player_profile(rows, pos, prior, availability=1.0, minutes_override=None, *,
+                   context=None, params=None):
+    """Event rates and a default appearance profile.
+
+    With `context` (season, price, team; optional minutes_rows) and fitted
+    parameters, attacking/bonus/save/card/DC rates and the minutes-model inputs
+    come from the fitted v0.3 sub-models. Without it the declared v0.2 rates apply.
+    """
+    params = params or forecast_model.PARAMS
+    fitted = None
+    if context is not None and params:
+        season, price = context["season"], context["price"]
+        minutes_rows = context.get("minutes_rows", rows)
+        minutes_state = forecast_model.player_state(minutes_rows, season)
+        changed = bool(minutes_state["last_team"]) and minutes_state["last_team"] != context["team"]
+        fitted = {
+            **forecast_model.fitted_rates(forecast_model.player_state(rows, season), pos, price, params),
+            "minutes_features": forecast_model.role_vector(minutes_state, price, pos, changed),
+        }
+    appearance = appearance_profile(
+        rows, availability, minutes_override,
+        forecast_model.minutes_probabilities(fitted["minutes_features"], 1, params) if fitted else None,
+    )
     rate_rows = weighted(rows[-45:], PARAMETERS["rate_half_life_matches"])
     minutes = sum(r["minutes"] * w for r, w in rate_rows)
     rates = {}
@@ -163,10 +222,10 @@ def player_profile(rows, pos, prior, availability=1.0, minutes_override=None):
     team_xg = sum(
         r.get("team_xg", r.get("team_goals", 0)) * w for r, w in team_rows
     ) / max(sum(w for _, w in team_rows), 1)
-    avg_points = sum(r["total_points"] for r in rows[-5:]) / max(len(rows[-5:]), 1)
+    avg_points = sum(r.get("total_points", 0) for r in rows[-5:]) / max(len(rows[-5:]), 1)
     played = [r for r in rows if r["minutes"] > 0]
-    ppg = sum(r["total_points"] for r in played) / max(len(played), 1)
-    return {
+    ppg = sum(r.get("total_points", 0) for r in played) / max(len(played), 1)
+    profile = {
         **appearance,
         "rates": rates,
         "dc_prob": dc_prob,
@@ -175,6 +234,18 @@ def player_profile(rows, pos, prior, availability=1.0, minutes_override=None):
         "form": avg_points,
         "ppg": ppg,
     }
+    if fitted:
+        for key in ("expected_goals", "expected_assists", "bonus", "saves", "yellow_cards"):
+            rates[key] = fitted[key]
+        profile.update(
+            team_xg=fitted["team_xg"], bonus_model=fitted["bonus_model"],
+            dc_rate=fitted["dc_rate"], dc_dispersion=fitted["dc_dispersion"],
+            minutes_features=fitted["minutes_features"],
+            raw_xg90=fitted["raw_xg90"], raw_xa90=fitted["raw_xa90"],
+        )
+        profile["dc_prob"] = forecast_model.dc_hit_probability(
+            fitted["dc_rate"], appearance["long_mean"], pos, fitted["dc_dispersion"])
+    return profile
 
 
 def components(profile, pos, team_goals, conceded, cs_probability=None, scoring=None):
@@ -222,16 +293,31 @@ def components(profile, pos, team_goals, conceded, cs_probability=None, scoring=
         else 0
     )
     rates = profile["rates"]
+    if "dc_rate" in profile:
+        # Fitted count model: hit probability depends on the minutes state.
+        dc_expectation = sum(
+            probability * forecast_model.dc_hit_probability(
+                profile["dc_rate"], duration, pos, profile["dc_dispersion"])
+            for probability, duration in ((p60, profile["long_mean"]), (ps, profile["short_mean"]))
+            if probability
+        )
+    else:
+        dc_expectation = profile["dc_prob"] * profile["pplay"]
+    if "bonus_model" in profile:
+        own, goal, assist, clean, long_play = profile["bonus_model"]
+        bonus = (own * rates["bonus"] * minutes / 90 + goal * xg + assist * xa
+                 + clean * cs * p60 + long_play * p60)
+    else:
+        bonus = rates["bonus"] * minutes / 90
     output = {
         "appearance": scoring.get("long_play", 2) * p60
         + scoring.get("short_play", 1) * ps,
         "goals": xg * scoring["goals_scored"][label],
         "assists": xa * scoring.get("assists", 3),
         "clean_sheet": cs * p60 * scoring["clean_sheets"][label],
-        "defensive": profile["dc_prob"]
-        * profile["pplay"]
+        "defensive": dc_expectation
         * scoring.get("defensive_contribution", {}).get(label, 0),
-        "bonus": rates["bonus"] * minutes / 90,
+        "bonus": bonus,
         "saves": save_points,
         "penalty_saves": rates["penalties_saved"] * minutes / 90 * 5,
         "deductions": -(
@@ -392,7 +478,8 @@ def fixture_projection(
     return {
         "gf": gf,
         "ga": ga,
-        "cs": math.exp(-ga),
+        # Historical team estimates are shrunk; the fitted logistic restores spread.
+        "cs": forecast_model.clean_sheet_probability(ga) if forecast_model.PARAMS else math.exp(-ga),
         "source": "Open FPL · historical fallback",
         "source_at": data["loaded_at"],
     }
@@ -498,6 +585,12 @@ def _build_projections(
     for r in sorted(history, key=lambda r: r["date"]):
         by_player[r["code"]].append(r)
     priors = positional_priors(history, data["season"])
+    # Minutes-model lead time counts from the last gameweek in the history, as in
+    # fitting. A skipped provisional or missing week therefore widens the lead.
+    last_gw = max(
+        (r["gw"] for r in history if r["season"] == data["season"] and "gw" in r),
+        default=start - 1,
+    )
     ratings, average = team_ratings(history)
     scoring = data["bootstrap"].get("game_config", {}).get("scoring", DEFAULT_SCORING)
     fixtures_by_team = defaultdict(list)
@@ -511,34 +604,51 @@ def _build_projections(
         if pos not in POSITIONS:
             continue
         chance = p.get("chance_of_playing_next_round")
-        availability = (
-            chance / 100
-            if chance is not None
-            else (0 if p["status"] in ("u", "i", "s", "n") else 1)
-        )
+        availability = next_availability(p)
         # Restrict minutes profile to current season if at least 3 games are observed.
         rows = by_player[p["code"]]
         current_rows = [r for r in rows if r["season"] == data["season"]]
         pid = str(p["id"])
         duration = overrides.get(pid)
-        rate_profile = player_profile(rows, pos, priors[pos], availability, duration)
-        appearance_rows = current_rows if len(current_rows) >= 3 else rows
-        profiles = {}
+        context = {
+            "season": data["season"],
+            "price": p["now_cost"] / 10,
+            "team": data["teams"][p["team"]]["short_name"],
+            # Selection conditional on return: a flagged player's current
+            # absence spell is handled by fixture availability instead.
+            "minutes_rows": absence_censored_rows(rows, p),
+        }
+        rate_profile = player_profile(
+            rows, pos, priors[pos], availability, duration, context=context
+        )
+        appearance_rows = selection_rows(rows, data["season"], p)
+        profiles, minutes_states = {}, {}
 
-        def resolved_profile(assumed_availability, conditional_minutes):
-            profile_key = (assumed_availability, conditional_minutes)
+        def minutes_state(lead, flag):
+            if "minutes_features" not in rate_profile:
+                return None
+            if (lead, flag) not in minutes_states:
+                minutes_states[(lead, flag)] = forecast_model.minutes_probabilities(
+                    rate_profile["minutes_features"], lead, flag=flag
+                )
+            return minutes_states[(lead, flag)]
+
+        def resolved_profile(assumed_availability, conditional_minutes, lead=1, flag="available"):
+            probabilities = minutes_state(lead, flag)
+            profile_key = (assumed_availability, conditional_minutes, probabilities)
             if profile_key not in profiles:
                 profiles[profile_key] = {
                     **rate_profile,
                     **appearance_profile(
-                        appearance_rows, assumed_availability, conditional_minutes
+                        appearance_rows, assumed_availability, conditional_minutes,
+                        probabilities,
                     ),
                 }
             return profiles[profile_key]
 
         profile = resolved_profile(availability, duration)
+        origin = parsed_time(data["loaded_at"])
         week_scenarios = minutes_schedule.get(pid, {})
-        week_profiles = {}
         per_gw = {
             str(gw): {
                 "points": 0,
@@ -554,9 +664,6 @@ def _build_projections(
             scenario = week_scenarios.get(gw, {})
             assumed_availability = scenario.get("availability", availability)
             conditional_minutes = scenario.get("conditional_minutes", duration)
-            week_profiles[gw] = resolved_profile(
-                assumed_availability, conditional_minutes
-            )
             if scenario or duration is not None:
                 item["minutes_scenario"] = {
                     "conditional_minutes": conditional_minutes,
@@ -567,16 +674,29 @@ def _build_projections(
                     else "automatic historical appearance profile",
                     "availability_source": "user-assumed"
                     if "availability" in scenario
-                    else "official current availability",
+                    else "automatic per-fixture availability",
                 }
         for f in fixtures_by_team[p["team"]]:
+            lead = max(1, f["event"] - last_gw)
+            assumption = fitted_fixture_availability(
+                fixture_availability(p, f["kickoff_time"], origin, next_week=f["event"] == start),
+                p, rate_profile.get("minutes_features"), lead,
+            )
+            scenario = week_scenarios.get(str(f["event"]), {})
+            fixture_profile = resolved_profile(
+                scenario.get("availability", assumption["value"]),
+                scenario.get("conditional_minutes", duration),
+                lead,
+                # An explicit availability assumption replaces the flag entirely.
+                "available" if "availability" in scenario else assumption.get("flag", "available"),
+            )
             context = fixture_projection(
                 data.get("_fixture_source_data", data),
                 data.get("_fixture_source_by_id", {}).get(f["id"], f),
                 p["team"], ratings, average, use_market
             )
             forecast = components(
-                week_profiles[str(f["event"])],
+                fixture_profile,
                 pos,
                 context["gf"],
                 context["ga"],
@@ -599,8 +719,31 @@ def _build_projections(
                 "source_at": context["source_at"],
                 "source_at_scope": context.get("source_at_scope"),
                 "source_extracted_at": context.get("source_extracted_at"),
+                "availability_assumption": assumption if "availability" not in scenario
+                else {"value": scenario["availability"], "source": "user-assumed"},
             }
+            if forecast["pplay"] == 0 and duration != 0:
+                # A supplied positive appearance probability can restore an
+                # unavailable/previously unseen player. Keep its conditional
+                # event/long-short basis; do not divide by a zero forecast.
+                basis_profile = dict(resolved_profile(1, duration, lead))
+                probability = basis_profile["pplay"]
+                if probability > 0:
+                    for field in ("p60", "pshort", "xmins", "pplay"):
+                        basis_profile[field] /= probability
+                else:
+                    basis_profile.update(p60=1, pshort=0, pplay=1,
+                                         xmins=PARAMETERS["long_minutes_prior"])
+                    basis_profile["long_mean"] = PARAMETERS["long_minutes_prior"]
+                fixture_row["appearance_basis"] = components(
+                    basis_profile, pos, context["gf"], context["ga"], context["cs"], scoring
+                )
             item = per_gw[str(f["event"])]
+            if "minutes_scenario" in item and "availability" not in scenario:
+                values = item["minutes_scenario"].setdefault("fixture_availability", [])
+                if not values:
+                    item["minutes_scenario"]["availability"] = assumption["value"]
+                values.append({"fixture_id": f["id"], **assumption})
             item["points"] += forecast["points"]
             item["xmins"] += forecast["xmins"]
             item["pplay"] = 1 - (1 - item["pplay"]) * (1 - forecast["pplay"])
@@ -667,11 +810,15 @@ def _build_projections(
         "sources": data["sources"],
         "history_rows": len(history),
         "parameters": PARAMETERS,
+        "model_fit": {
+            key: forecast_model.PARAMS.get(key)
+            for key in ("version", "fitted_at", "origin_seasons", "prior_seasons", "source")
+        } if forecast_model.PARAMS else None,
         "limitations": [
-            "Minutes and availability probabilities are estimates and have not yet been calibrated prospectively.",
-            "Bonus is a historical-rate approximation; 2026/27 BPS changes are not reconstructed.",
+            "Minutes probabilities come from a logit fitted on archived seasons and archived weekly availability flags; they are not yet validated prospectively.",
+            "Bonus is a fitted linear approximation; 2026/27 BPS changes are not reconstructed.",
             "No automatic press-conference or confirmed-lineup feed is connected.",
-            "Future gameweeks retain official current availability unless a user explicitly supplies a gameweek availability assumption; no recovery date is inferred. Conditional minutes alone never restores an unavailable player.",
+            "Flagged players use captured return dates where given, otherwise fitted flag-conditional recovery by lead time. Suspensions and unregistered players keep declared rules. Manual availability takes precedence.",
             "No head-to-head paid-provider accuracy claim is established.",
         ],
     }
@@ -716,11 +863,13 @@ def simulate_player(player, gw, trials=10000):
             * long
             * DEFAULT_SCORING["clean_sheets"][POSITIONS[pos]]
         )
-        scores += (
-            (rng.random(trials) < player["dc_probability"])
-            * plays
-            * (2 if pos != 1 else 0)
+        dc_points = DEFAULT_SCORING["defensive_contribution"][POSITIONS[pos]]
+        dc_hit = (
+            min(1, f["components"].get("defensive", 0) / (dc_points * f["pplay"]))
+            if dc_points and f["pplay"] > 0
+            else 0
         )
+        scores += (rng.random(trials) < dc_hit) * plays * dc_points
         if f["pplay"] > 0:
             for key in ["bonus", "saves", "penalty_saves"]:
                 scores += (
@@ -731,7 +880,7 @@ def simulate_player(player, gw, trials=10000):
             if player["gw"][str(gw)].get("stat_scenario"):
                 residual = sum(
                     f["components"].get(key, 0)
-                    for key in ("provider_adjustment", "imported_adjustment", "user_points_adjustment")
+                    for key in ("provider_adjustment", "imported_adjustment", "solio_adjustment", "solio_extrapolation", "user_points_adjustment")
                 )
                 scores += residual / f["pplay"] * plays
     histogram = [

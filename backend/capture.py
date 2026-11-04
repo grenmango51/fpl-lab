@@ -112,6 +112,21 @@ def capture_receipt(
         "Live ensemble": core
         + ([form_key] if request.use_provider and request.provider_weight > 0 else []),
     }
+    solio = dataset.get("solio", {})
+    solio_available = solio.get("usable") and any(
+        gw in row.get("points", {}) for row in solio.get("players", {}).values()
+    )
+    if solio_available:
+        solio_key = solio.get("source_key", "solio_public")
+        required["Solio"] = ["fpl_bootstrap", "fpl_fixtures", solio_key]
+        if getattr(request, "use_solio", False):
+            required["Live ensemble"].append(solio_key)
+    solio_projected = any(
+        player["gw"][gw].get("prediction_source", {}).get("name") == "Solio window projection"
+        for player in payload["players"]
+    )
+    if solio_projected and not solio_available:
+        required["Live ensemble"].append(solio.get("source_key", "solio_authenticated"))
     reasons = {}
     provider_available = any(
         gw in player.get("points", {})
@@ -119,6 +134,13 @@ def capture_receipt(
     )
     for name, keys in required.items():
         problems = []
+        if name == "Solio":
+            if not solio.get("full_planner_connected"):
+                problems.append("Selected public next-GW shortlist; complete five-week coverage is not established.")
+            elif solio.get("matched_players", 0) < solio.get("pool_players", 0):
+                problems.append("Signed-in planner omits some official players; use matched cohorts and disclose coverage.")
+        if name == "Live ensemble" and solio_available and getattr(request, "use_solio", False):
+            problems.append("Includes direct Solio point replacements; agreement with Solio is not an independent benchmark.")
         for key in keys:
             meta = sources.get(key, {})
             if meta.get("status") not in ("live", "cached"):
@@ -162,5 +184,7 @@ def capture_receipt(
         "eligible_primary": {name: not notes for name, notes in reasons.items()},
         "eligibility_reasons": reasons,
         "fixture_sources": sorted(fixture_sources),
+        "solio_target_role": "earlier-window extrapolation" if solio_projected else
+            "direct replacement" if solio_available and getattr(request, "use_solio", False) else "unused",
         "method": "One frozen dataset for all models. Primary input eligibility requires used live sources with validated live/cached status and extraction age at most 30 minutes. Eligibility does not establish model accuracy or an independent provider publication time.",
     }

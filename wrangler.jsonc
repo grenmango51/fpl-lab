@@ -1,0 +1,24 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "open-fpl",
+  "main": "hosting/worker.ts",
+  "compatibility_date": "2026-10-01",
+  "workers_dev": true,
+  "assets": {
+    "directory": "dist",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "open-fpl",
+      "database_id": "b4eb812f-e0f4-4fd7-b0c7-695d555f0dcf",
+      "migrations_dir": "hosting/migrations"
+    }
+  ],
+  "vars": {
+    "GOOGLE_CLIENT_ID": "671753832868-lcmuir3karf79kl7etdbogukfsv2k333.apps.googleusercontent.com",
+    "OWNER_EMAILS": "hoaianh517@gmail.com,lehtonenilmari5@gmail.com"
+  }
+}

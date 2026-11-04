@@ -7,6 +7,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 
 from .model import DEFAULT_SCORING, POSITIONS, appearance_profile, components
+from .availability import selection_rows
 from .scenarios import _shares
 
 
@@ -63,8 +64,7 @@ def apply_team_strengths(payload, strengths, dataset):
         own = strengths.get(str(original["team_code"]), {"attack": 1, "defence": 1})
         player = original
         rows = histories[original["code"]]
-        current = [r for r in rows if r["season"] == dataset["season"]]
-        appearance_rows = current if len(current) >= 3 else rows
+        appearance_rows = selection_rows(rows, dataset["season"], dataset["players"][original["id"]])
         for gw, old in original["gw"].items():
             affected = []
             for index, fixture in enumerate(old["fixtures"]):

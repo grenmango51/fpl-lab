@@ -1,10 +1,10 @@
 import {
   ArrowDown,
   ArrowUp,
+  CalendarDays,
   ChevronDown,
   Copy,
   GitBranch,
-  Minus,
   Plus,
   Settings2,
   Sparkles,
@@ -14,6 +14,7 @@ import { ActionMenu } from "./components";
 import { useViewState } from "./useViewState";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { fmt, money } from "./lib";
+import { fitTreeZoom, treeGameweeks } from "./planTreeLayout";
 import type { Bootstrap, Plan } from "./types";
 
 export function PlanTree({
@@ -59,14 +60,12 @@ export function PlanTree({
   onReorder: (direction: number) => void;
   busy: boolean;
 }) {
-  const [zoom, setZoom] = useState(1);
-  const [canvasSize, setCanvasSize] = useState("");
-  const [displayWeeks, setDisplayWeeks] = useViewState("tree.weeks", 5);
+  const [zoom, setZoom] = useState(0.65);
+  const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
   const [summaries, setSummaries] = useViewState("tree.summaries", true);
   const canvasRef = useRef<HTMLDivElement>(null);
   const mobileWeeksRef = useRef<HTMLDivElement>(null);
   const mobileSelectedWeekRef = useRef<HTMLButtonElement>(null);
-  const lastFitSize = useRef("");
   const drag = useRef<{
     x: number;
     y: number;
@@ -76,25 +75,29 @@ export function PlanTree({
   const lookup = new Map(data.players.map((player) => [player.id, player]));
   const firstGW = active?.weeks[0]?.gw ?? data.next_gw;
   const remaining = data.gameweeks.filter((week) => week >= firstGW).length;
-  const calendarWeeks = [
-    ...new Set(plans.flatMap((plan) => plan.weeks.map((week) => week.gw))),
-  ].sort((a, b) => a - b);
-  const shown = Math.max(1, Math.min(displayWeeks, calendarWeeks.length || 1));
-  const activeIndex = Math.max(0, calendarWeeks.indexOf(gw));
-  const windowStart = Math.floor(activeIndex / shown) * shown;
-  const visibleGameweeks = calendarWeeks.slice(
-    windowStart,
-    windowStart + shown,
-  );
+  const visibleGameweeks = treeGameweeks(plans, active);
+  const shown = visibleGameweeks.length;
+  const activeIndex = Math.max(0, visibleGameweeks.indexOf(gw));
   const visibleWeeks = (plan: Plan) =>
     plan.weeks.filter((week) => visibleGameweeks.includes(week.gw));
   const column = (gameweek: number) => visibleGameweeks.indexOf(gameweek);
   const horizonOptions = [
-    ...new Set([active?.weeks.length ?? 0, 3, 5, 6, 10, 14, 20, remaining]),
+    ...new Set([
+      active?.weeks.length ?? 0,
+      1,
+      3,
+      4,
+      5,
+      6,
+      10,
+      14,
+      20,
+      remaining,
+    ]),
   ]
     .sort((a, b) => a - b)
     .filter((n) => n > 0 && (n <= remaining || n === active?.weeks.length));
-  const width = 395 + shown * 146;
+  const width = 455 + shown * 146;
   const configure = (
     <ActionMenu
       label={
@@ -135,12 +138,17 @@ export function PlanTree({
       </button>
     </ActionMenu>
   );
-  const height = Math.max(650, plans.length * 270 + 170);
+  const height = 298 + Math.max(0, plans.length - 1) * 220;
+  const canvasTop = Math.max(
+    112,
+    (canvasSize.height - height * zoom - 68) * 0.8,
+  );
   function fit() {
     const node = canvasRef.current;
     if (node?.clientWidth) {
-      setZoom(Math.max(0.75, Math.min(1, node.clientWidth / (width + 25))));
+      setZoom(fitTreeZoom(node.clientWidth, node.clientHeight, width, height));
       node.scrollLeft = 0;
+      node.scrollTop = 0;
     }
   }
   useEffect(() => {
@@ -148,28 +156,27 @@ export function PlanTree({
     if (!node) return;
     const resize = () => {
       if (!node.clientWidth || !node.clientHeight) {
-        lastFitSize.current = "";
-        setCanvasSize("");
         return;
       }
-      const size = `${node.clientWidth}:${node.clientHeight}:${width}`;
-      if (size === lastFitSize.current) return;
-      lastFitSize.current = size;
-      setCanvasSize(size);
-      setZoom(Math.max(0.75, Math.min(1, node.clientWidth / (width + 25))));
+      setCanvasSize({ width: node.clientWidth, height: node.clientHeight });
+      setZoom(fitTreeZoom(node.clientWidth, node.clientHeight, width, height));
+      node.scrollLeft = 0;
+      node.scrollTop = 0;
     };
     resize();
     if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(resize);
-    observer.observe(node);
+    // Scrollbars change the content box when zooming. Only a panel resize
+    // should refit the tree; otherwise it would undo the user's zoom.
+    observer.observe(node, { box: "border-box" });
     return () => observer.disconnect();
-  }, [width]);
+  }, [width, height, pitchExpanded]);
   useEffect(() => {
     const node = canvasRef.current;
     if (!node?.clientWidth || !active) return;
     const planIndex = plans.findIndex((plan) => plan.id === active.id);
-    const left = (262 + (activeIndex - windowStart) * 146) * zoom;
-    const top = (150 + planIndex * 270 - 63) * zoom + 65;
+    const left = 24 + (262 + activeIndex * 146) * zoom;
+    const top = (128 + planIndex * 220 - 63) * zoom + canvasTop;
     const right = left + 120 * zoom;
     const bottom = top + 126 * zoom;
     if (
@@ -182,7 +189,7 @@ export function PlanTree({
       bottom > node.scrollTop + node.clientHeight - 50
     )
       node.scrollTop = Math.max(0, top - node.clientHeight * 0.3);
-  }, [active?.id, gw, zoom, windowStart, shown, canvasSize]);
+  }, [active?.id, gw, zoom, shown, canvasSize, canvasTop]);
   useEffect(() => {
     const timeline = mobileWeeksRef.current;
     const card = mobileSelectedWeekRef.current;
@@ -240,22 +247,41 @@ export function PlanTree({
             {busy ? "Optimising…" : "Optimise"}
           </button>
         ) : null}
-        <select
-          hidden={pitchExpanded}
-          aria-label="Tree gameweeks"
-          value={displayWeeks}
-          onChange={(event) => setDisplayWeeks(+event.target.value)}
-        >
-          {[3, 5, 8, 14, 38].map((n) => (
-            <option key={n} value={n}>
-              {n === 38 ? "Full season" : `${n} GWs`}
-            </option>
-          ))}
-        </select>
         <span className="tree-team-label">
           {active?.team_name ?? "My FPL team"}
         </span>
+        {active && !pitchExpanded ? (
+          <label className="tree-horizon-control">
+            <CalendarDays size={15} aria-hidden="true" />
+            <select
+              aria-label="Tree plan horizon"
+              value={active.weeks.length}
+              disabled={busy}
+              onChange={(event) => onHorizon(+event.target.value)}
+            >
+              {horizonOptions.map((n) => (
+                <option key={n} value={n}>
+                  {n} GWs
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
       </header>
+      <div className="tree-zoom" hidden={pitchExpanded}>
+        <input
+          aria-label="Planning tree zoom"
+          type="range"
+          min="2"
+          max="150"
+          step="1"
+          value={Math.round(zoom * 100)}
+          onChange={(event) => setZoom(+event.target.value / 100)}
+        />
+        <button aria-label="Fit planning tree" onClick={fit}>
+          Fit
+        </button>
+      </div>
       <div className="tree-mobile">
         <div className="tree-mobile-header">
           <label>
@@ -329,6 +355,7 @@ export function PlanTree({
                 <select
                   aria-label="Mobile plan horizon"
                   value={active.weeks.length}
+                  disabled={busy}
                   onChange={(event) => onHorizon(+event.target.value)}
                 >
                   {horizonOptions.map((n) => (
@@ -413,7 +440,11 @@ export function PlanTree({
       >
         <div
           className="tree-canvas-size"
-          style={{ width: width * zoom, height: height * zoom }}
+          style={{
+            width: width * zoom,
+            height: height * zoom,
+            marginTop: canvasTop,
+          }}
         >
           <div
             className="tree-canvas-inner"
@@ -426,7 +457,7 @@ export function PlanTree({
               aria-hidden="true"
             >
               {plans.map((plan, index) => {
-                const y = 150 + index * 270;
+                const y = 128 + index * 220;
                 const weeks = visibleWeeks(plan);
                 return (
                   <g key={plan.id}>
@@ -459,7 +490,7 @@ export function PlanTree({
               </small>
             </button>
             {plans.map((plan, index) => {
-              const y = 150 + index * 270;
+              const y = 128 + index * 220;
               const weeks = visibleWeeks(plan);
               return (
                 <div key={plan.id}>
@@ -499,6 +530,8 @@ export function PlanTree({
                         ) : null}
                         <button
                           className={`tree-gw-card ${chosen ? "active" : ""}`}
+                          aria-label={`${plan.name} GW${week.gw}`}
+                          aria-current={chosen ? "step" : undefined}
                           onClick={() => {
                             onPlan(plan.id);
                             onWeek(week.gw);
@@ -591,7 +624,7 @@ export function PlanTree({
             Delete
           </button>
         </div>
-        <div className="tree-zoom" hidden={pitchExpanded}>
+        <div className="tree-branch-order" hidden={pitchExpanded}>
           <button
             aria-label="Move branch up"
             disabled={busy || plans[0]?.id === active?.id}
@@ -606,40 +639,8 @@ export function PlanTree({
           >
             <ArrowDown size={13} />
           </button>
-          <button
-            aria-label="Zoom out planning tree"
-            onClick={() => setZoom(Math.max(0.25, zoom - 0.1))}
-          >
-            <Minus size={13} />
-          </button>
-          <button aria-label="Fit planning tree" onClick={fit}>
-            Fit
-          </button>
-          <button onClick={() => setZoom(1)}>{Math.round(zoom * 100)}%</button>
-          <button
-            aria-label="Zoom in planning tree"
-            onClick={() => setZoom(Math.min(1.5, zoom + 0.1))}
-          >
-            <Plus size={13} />
-          </button>
         </div>
       </div>
-      {active && !pitchExpanded ? (
-        <details className="tree-plan-config">
-          <summary>Plan horizon · {active.weeks.length} GWs</summary>
-          <select
-            aria-label="Tree plan horizon"
-            value={active.weeks.length}
-            onChange={(event) => onHorizon(+event.target.value)}
-          >
-            {horizonOptions.map((n) => (
-              <option key={n} value={n}>
-                {n} GWs
-              </option>
-            ))}
-          </select>
-        </details>
-      ) : null}
     </section>
   );
 }

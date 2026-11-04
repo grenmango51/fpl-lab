@@ -378,6 +378,7 @@ def test_default_capture_refreshes_real_acquisition_despite_all_fresh_caches(
             "{}",
         ),
         form_key: (form_url, json.dumps(before["fplform"]["players"])),
+        "solio_public": ("https://fpl.solioanalytics.com/api/data/latest.json", "{}"),
     }
     cache = tmp_path / "data" / "cache"
     cache.mkdir(parents=True)

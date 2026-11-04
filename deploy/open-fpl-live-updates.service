@@ -1,0 +1,12 @@
+[Unit]
+Description=Open FPL live inputs and Solio snapshot capture
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/projects/github/grenmango51/fpl-lab
+ExecStart=%h/projects/github/grenmango51/fpl-lab/.venv/bin/python -m backend.live_updates --tick
+Environment=OMP_NUM_THREADS=1
+Environment=OPENBLAS_NUM_THREADS=1
+TimeoutStartSec=300

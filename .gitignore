@@ -6,6 +6,7 @@ __pycache__/
 data/cache/
 data/raw/
 data/snapshots/
+data/validation/
 data/history/
 data/exports/
 data/prospective.json
@@ -14,3 +15,8 @@ data/*-qa.json
 *.log
 *.tsbuildinfo
 .env
+.env.*
+.dev.vars
+.wrangler/
+data/workspace*.sqlite3*
+data/cloud/

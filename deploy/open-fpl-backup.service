@@ -1,0 +1,9 @@
+[Unit]
+Description=Back up Open FPL personal plans
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/projects/github/grenmango51/fpl-lab
+EnvironmentFile=%h/.config/open-fpl/production.env
+ExecStart=%h/projects/github/grenmango51/fpl-lab/.venv/bin/python -m tools.backup_workspace
+UMask=0077

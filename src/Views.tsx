@@ -28,6 +28,7 @@ import type {
   Plan,
   SolveResult,
   Evaluation,
+  ProbabilityScore,
   Chip,
   Prospective,
 } from "./types";
@@ -179,6 +180,13 @@ export function OptimiseView({
       bench_weight: 0.04,
       risk: 0,
     },
+    "Max XI points": {
+      max_transfers: 15,
+      decay: 1,
+      ft_value: 0,
+      bench_weight: 0,
+      risk: 0,
+    },
     Safe: {
       max_transfers: 1,
       decay: 0.95,
@@ -292,7 +300,9 @@ export function OptimiseView({
                 ))}
               </div>
               <small className="preset-caption">
-                Ownership, transfer value and bench weighting
+                {preset === "Max XI points"
+                  ? "XI + captain − hits. Equal GW weights; no bench reward."
+                  : "Ownership, transfer value and bench weighting"}
               </small>
             </details>
             <div className="panel-heading">
@@ -338,7 +348,8 @@ export function OptimiseView({
                   value={settings.max_transfers}
                   onChange={(e) => change("max_transfers", +e.target.value)}
                 >
-                  {[0, 1, 2, 3, 4, 5].map((v) => (
+                  <option value={15}>Auto · hits allowed</option>
+                  {Array.from({ length: 15 }, (_, i) => i).map((v) => (
                     <option value={v} key={v}>
                       {v} transfers
                     </option>
@@ -566,7 +577,7 @@ export function OptimiseView({
                     value={settings.seconds}
                     onChange={(e) => change("seconds", +e.target.value)}
                   >
-                    {[5, 15, 30, 45].map((v) => (
+                    {[2, 5, 15, 30, 45].map((v) => (
                       <option value={v} key={v}>
                         {v} seconds
                       </option>
@@ -804,6 +815,36 @@ export function OptimiseView({
   );
 }
 
+const MODEL_LABELS: Record<string, string> = {
+  component: "Component model",
+  previous: "Previous v0.2",
+  form: "Recent form",
+  ppg: "Appearance PPG",
+};
+const FLAG_LABELS: [string, string][] = [
+  ["available", "Available"],
+  ["d75", "75%"],
+  ["d50", "50%"],
+  ["d25", "25%"],
+  ["out", "Out"],
+];
+type ScoreSet = Record<string, ProbabilityScore | null>;
+
+function appearanceRows(
+  appearance: NonNullable<Evaluation["appearance"]>,
+): [string, ScoreSet][] {
+  return [
+    ["All", appearance.next_gw.pplay],
+    ...FLAG_LABELS.filter(([key]) => appearance.by_flag[key]).map(
+      ([key, label]): [string, ScoreSet] => [label, appearance.by_flag[key].pplay],
+    ),
+  ];
+}
+
+function signedInterval(d: { difference: number; ci95: number[] }) {
+  const sign = (n: number) => `${n >= 0 ? "+" : ""}${fmt(n, 1)}`;
+  return `${sign(d.difference)} (95% CI ${sign(d.ci95[0])} to ${sign(d.ci95[1])})`;
+}
 export function AnalysisView({
   data,
   plans,
@@ -909,7 +950,7 @@ export function AnalysisView({
                 className={scope === "starters" ? "active" : ""}
                 onClick={() => setScope("starters")}
               >
-                Projected 45+ mins
+                Recent starters
               </button>
               <button
                 className={scope === "all" ? "active" : ""}
@@ -929,11 +970,11 @@ export function AnalysisView({
                   >
                     <span>{name}</span>
                     <strong>
-                      {fmt(m.mae, 3)}
-                      <small> MAE</small>
+                      {fmt(m.rmse, 3)}
+                      <small> RMSE</small>
                     </strong>
                     <p>
-                      RMSE {fmt(m.rmse, 3)} · bias {m.bias >= 0 ? "+" : ""}
+                      MAE {fmt(m.mae, 3)} · bias {m.bias >= 0 ? "+" : ""}
                       {fmt(m.bias, 3)}
                     </p>
                     <small>
@@ -949,26 +990,32 @@ export function AnalysisView({
                     <span>Lower is better</span>
                   </div>
                   <LineChart
-                    yLabel="MAE (points)"
+                    yLabel={`${evalData.gameweeks?.[0]?.rmse ? "RMSE" : "MAE"} (points)`}
                     series={[
                       {
                         name: "Component model",
-                        values: evalData.gameweeks!.map((v) => v.component),
+                        values: evalData.gameweeks!.map(
+                          (v) => v.rmse?.component ?? v.component,
+                        ),
                       },
                       {
-                        name: "ML challenger",
-                        values: evalData.gameweeks!.map((v) => v.ml),
+                        name: "Previous v0.2",
+                        values: evalData.gameweeks!.map(
+                          (v) => v.rmse?.previous ?? v.previous ?? v.ml ?? null,
+                        ),
                       },
                       {
                         name: "Recent form",
-                        values: evalData.gameweeks!.map((v) => v.form),
+                        values: evalData.gameweeks!.map(
+                          (v) => v.rmse?.form ?? v.form,
+                        ),
                       },
                     ]}
                     labels={evalData.gameweeks!.map((v) => `GW${v.gw}`)}
                   />
                   <p className="source-caption">
-                    Source: vaastav FPL archives · 2025/26 · projected 45+
-                    minutes cohort
+                    Source: vaastav FPL archives · 2025/26 · recent-starter
+                    cohort
                   </p>
                 </section>
                 <section className="panel">
@@ -981,18 +1028,87 @@ export function AnalysisView({
                       <div key={p.position}>
                         <span>{p.position}</span>
                         <div>
-                          <i style={{ width: `${(p.mae / 5) * 100}%` }} />
+                          <i style={{ width: `${(p.rmse / 5) * 100}%` }} />
                         </div>
-                        <b>{fmt(p.mae, 2)}</b>
+                        <b>{fmt(p.rmse, 2)}</b>
                         <small>{p.count.toLocaleString()} rows</small>
                       </div>
                     ))}
                   </div>
                   <p className="source-caption">
-                    MAE in points · same held-out starter cohort
+                    RMSE in points · same held-out starter cohort
                   </p>
                 </section>
               </div>
+              {evalData.budget_squads || evalData.appearance ? (
+                <div className="analysis-grid">
+                  {evalData.budget_squads ? (
+                    <section className="panel">
+                      <div className="panel-heading">
+                        <h3>Decisions</h3>
+                        <span>Actual points · higher is better</span>
+                      </div>
+                      <table className="data-table">
+                        <thead>
+                          <tr>
+                            <th>MODEL</th>
+                            <th>SQUAD PTS/GW</th>
+                            <th>CAPTAIN PTS</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {Object.entries(MODEL_LABELS).map(([key, name]) => (
+                            <tr key={key}>
+                              <td>{name}</td>
+                              <td>{fmt(evalData.budget_squads?.[key] ?? NaN, 1)}</td>
+                              <td>{fmt(evalData.captains?.[key] ?? NaN, 0)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      <p className="source-caption">
+                        Best £100m squad each GW, no transfers
+                        {evalData.decision_differences?.previous
+                          ? ` · vs v0.2 ${signedInterval(evalData.decision_differences.previous.budget_squad)} pts/GW`
+                          : ""}
+                      </p>
+                    </section>
+                  ) : null}
+                  {evalData.appearance ? (
+                    <section className="panel">
+                      <div className="panel-heading">
+                        <h3>Appearance probability</h3>
+                        <span>Log loss · lower is better</span>
+                      </div>
+                      <table className="data-table">
+                        <thead>
+                          <tr>
+                            <th>FLAG AT DEADLINE</th>
+                            <th>V0.3</th>
+                            <th>V0.2</th>
+                            <th>ROWS</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {appearanceRows(evalData.appearance).map(([label, s]) => (
+                            <tr key={label}>
+                              <td>{label}</td>
+                              <td>{fmt(s["Component model"]?.log_loss ?? NaN, 3)}</td>
+                              <td>{fmt(s["Previous v0.2"]?.log_loss ?? NaN, 3)}</td>
+                              <td>
+                                {s["Component model"]?.count.toLocaleString() ?? "—"}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      <p className="source-caption">
+                        Next-GW appearance · same archived flags for both models
+                      </p>
+                    </section>
+                  ) : null}
+                </div>
+              ) : null}
               <details className="panel methodology compact-details">
                 <summary>Method and limitations</summary>
                 <p>{evalData.method}</p>
@@ -1015,7 +1131,7 @@ export function AnalysisView({
                 <small>
                   Evaluation generated{" "}
                   {new Date(evalData.generated_at!).toLocaleString()} · Live
-                  model: {data.model_version}. ML challenger stays in research.
+                  model: {data.model_version}.
                 </small>
               </details>
             </>

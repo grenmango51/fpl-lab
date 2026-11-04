@@ -192,7 +192,7 @@ export function PlannerBoard({
           <span>GW{week.gw} xPts</span>
           <b className="orange">{fmt(week.net_points ?? week.points)}</b>
         </div>
-        <button onClick={onOptimise} disabled={busy} title="Optimise this plan">
+        <button onClick={onOptimise} disabled={busy} title="Quick optimise · short plans use up to 5s">
           <span>{weeks.length} GW total</span>
           <b>{fmt(total)}</b>
         </button>

@@ -23,6 +23,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CACHE = ROOT / "data" / "cache"
 FPL = "https://fantasy.premierleague.com/api"
 ARCHIVE = "https://raw.githubusercontent.com/vaastav/Fantasy-Premier-League/master/data"
+FLAG_ARCHIVE = "https://raw.githubusercontent.com/olbauday/FPL-Core-Insights/main/data"
 log = logging.getLogger(__name__)
 _lock = threading.RLock()
 _dataset = None
@@ -254,6 +255,8 @@ def load_archive(season: str):
                         "clearances_blocks_interceptions",
                         "tackles",
                         "recoveries",
+                        "clean_sheets",
+                        "goals_conceded",
                     ]
                 },
             }
@@ -267,6 +270,38 @@ def load_archive(season: str):
             (t for t in sides[row["fixture"]] if t != row["team"]), ""
         )
     return sorted(result, key=lambda r: (r["date"], r["code"]))
+
+
+def load_flag_archive(season: str):
+    """Archived official availability flags, {code: {gw: (status, chance, news)}}.
+
+    FPL-Core-Insights stores one bootstrap snapshot per gameweek. Its cumulative
+    points include that gameweek and never the next one, so row `gw` is known
+    before the following deadline. Validity of each week is checked by the fitter.
+    """
+    folder = f"{season[:4]}-20{season[-2:]}"
+    texts = {}
+    for kind in ("playerstats", "players"):
+        for index, path in enumerate((f"{folder}/{kind}.csv", f"{folder}/{kind}/{kind}.csv")):
+            texts[kind] = fetch(f"{FLAG_ARCHIVE}/{path}", f"flags_{season}_{kind}_{index}",
+                                365 * 86400, optional=True)
+            if texts[kind]:
+                break
+    if not texts["playerstats"] or not texts["players"]:
+        return {}
+    codes = {int(p["player_id"]): int(p["player_code"])
+             for p in csv.DictReader(io.StringIO(texts["players"]))}
+    result = defaultdict(dict)
+    for row in csv.DictReader(io.StringIO(texts["playerstats"])):
+        code = codes.get(int(row["id"]))
+        if code is None or not row.get("gw"):
+            continue
+        chance = row.get("chance_of_playing_next_round")
+        result[code][int(float(row["gw"]))] = (
+            row.get("status", ""), float(chance) if chance not in (None, "") else None,
+            row.get("news", "") or "",
+        )
+    return dict(result)
 
 
 def load_elevenify(joe, teams, *, refresh=False):
@@ -485,6 +520,56 @@ def load_elevenify_reference(season, start, players, teams, *, refresh=False):
     return reference
 
 
+def event_rows(event_id, live, fixtures, players, teams, season):
+    """Per-fixture rows from an event/live payload for finished matches only."""
+    gwfixtures = [
+        f for f in fixtures
+        if f["event"] == event_id and (f["finished"] or f.get("finished_provisional"))
+    ]
+    by_id = {f["id"]: f for f in gwfixtures}
+    rows = []
+    for entry in live["elements"]:
+        p = players.get(entry["id"])
+        if not p:
+            continue
+        explained = [
+            by_id[e["fixture"]] for e in entry.get("explain", []) if e["fixture"] in by_id
+        ]
+        matching = explained or [
+            f for f in gwfixtures if p["team"] in (f["team_h"], f["team_a"])
+        ]
+        # An aggregate live row cannot be disaggregated for double GWs.
+        # Fetch that player's fixture history instead of duplicating its totals.
+        if len(matching) > 1:
+            continue
+        for f in matching:
+            home = p["team"] == f["team_h"]
+            actual_team = f["team_h"] if home else f["team_a"]
+            rows.append(
+                {
+                    "code": p["code"],
+                    "season": season,
+                    "gw": event_id,
+                    "date": f["kickoff_time"],
+                    "fixture": f"{season}:{f['id']}",
+                    "team": teams[actual_team]["short_name"],
+                    "opponent": teams[f["team_a"] if home else f["team_h"]]["short_name"],
+                    "position": p["element_type"],
+                    "home": home,
+                    "price": p["now_cost"] / 10,
+                    "team_goals": f["team_h_score"] if home else f["team_a_score"],
+                    "opponent_goals": f["team_a_score"] if home else f["team_h_score"],
+                    "provisional": not f["finished"],
+                    **{
+                        k: number(v)
+                        for k, v in entry["stats"].items()
+                        if k not in ("in_dreamteam", "played")
+                    },
+                }
+            )
+    return rows
+
+
 def get_data(force=False, *, refresh_live=False):
     global _dataset, _loaded
     with _lock:
@@ -493,6 +578,10 @@ def get_data(force=False, *, refresh_live=False):
             and not force
             and not refresh_live
             and time.time() - _loaded < 900
+            and not (
+                (CACHE / "auto-refresh-status.json").exists()
+                and (CACHE / "auto-refresh-status.json").stat().st_mtime > _loaded
+            )
         ):
             return _dataset
         refresh = force or refresh_live
@@ -534,72 +623,27 @@ def get_data(force=False, *, refresh_live=False):
         elevenify_reference = load_elevenify_reference(
             season, next_event["id"], players, teams, refresh=refresh
         )
+        from .solio import load as load_solio
+        solio = load_solio(players, teams, bootstrap["events"], refresh=refresh)
         history = []
         for start in range(year - 3, year):
             history.extend(load_archive(f"{start}-{str(start + 1)[-2:]}"))
         current = []
         for event in bootstrap["events"]:
-            if not event.get("finished"):
+            # The in-progress event contributes its provisionally finished
+            # matches: the forecast should not ignore the latest minutes.
+            if not (event.get("finished") or event.get("is_current")):
                 continue
             raw = fetch(
                 f"{FPL}/event/{event['id']}/live/",
                 f"fpl_live_{season}_{event['id']}",
-                6 * 3600,
+                6 * 3600 if event.get("finished") else 900,
                 optional=True,
-                refresh=force,
+                refresh=force or (refresh_live and not event.get("finished")),
             )
-            if not raw:
-                continue
-            gwfixtures = [
-                f for f in fixtures if f["event"] == event["id"] and f["finished"]
-            ]
-            by_id = {f["id"]: f for f in gwfixtures}
-            for entry in json.loads(raw)["elements"]:
-                p = players.get(entry["id"])
-                if not p:
-                    continue
-                explained = [
-                    by_id[e["fixture"]]
-                    for e in entry.get("explain", [])
-                    if e["fixture"] in by_id
-                ]
-                matching = explained or [
-                    f for f in gwfixtures if p["team"] in (f["team_h"], f["team_a"])
-                ]
-                # An aggregate live row cannot be disaggregated for double GWs.
-                # Fetch that player's fixture history instead of duplicating its totals.
-                if len(matching) > 1:
-                    continue
-                for f in matching:
-                    home = p["team"] == f["team_h"]
-                    actual_team = f["team_h"] if home else f["team_a"]
-                    current.append(
-                        {
-                            "code": p["code"],
-                            "season": season,
-                            "gw": event["id"],
-                            "date": f["kickoff_time"],
-                            "fixture": f"{season}:{f['id']}",
-                            "team": teams[actual_team]["short_name"],
-                            "opponent": teams[f["team_a"] if home else f["team_h"]][
-                                "short_name"
-                            ],
-                            "position": p["element_type"],
-                            "home": home,
-                            "price": p["now_cost"] / 10,
-                            "team_goals": f["team_h_score"]
-                            if home
-                            else f["team_a_score"],
-                            "opponent_goals": f["team_a_score"]
-                            if home
-                            else f["team_h_score"],
-                            **{
-                                k: number(v)
-                                for k, v in entry["stats"].items()
-                                if k not in ("in_dreamteam", "played")
-                            },
-                        }
-                    )
+            if raw:
+                current.extend(event_rows(event["id"], json.loads(raw), fixtures,
+                                          players, teams, season))
         history.extend(current)
         _dataset = {
             "bootstrap": bootstrap,
@@ -609,6 +653,7 @@ def get_data(force=False, *, refresh_live=False):
             "joe": joe,
             "elevenify": elevenify,
             "fplform": fplform,
+            "solio": solio,
             "elevenify_reference": elevenify_reference,
             "history": history,
             "season": season,

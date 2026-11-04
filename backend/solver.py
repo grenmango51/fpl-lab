@@ -222,11 +222,15 @@ class Builder:
             # Preserve the validated incumbent if native presolve consumes the
             # entire budget before returning one. Its objective is explicit.
             values = candidate if valid and (seed is None or np.dot(self.cost, candidate) <= np.dot(self.cost, seed) + 1e-5) else seed
-            gap = float(info.mip_gap)
+            # A time-limit fallback may return our incumbent instead of the
+            # native candidate. Its gap must use that incumbent's objective.
+            bound = float(getattr(info, "mip_dual_bound", float("nan")))
+            value = float(np.dot(self.cost, values)) if values is not None else None
+            gap = max(0.0, (value - bound) / max(abs(value), 1e-10)) if value is not None and math.isfinite(bound) else None
             return SimpleNamespace(
-                x=values, fun=float(np.dot(self.cost, values)) if values is not None else None,
+                x=values, fun=value,
                 status=0 if status == highspy.HighsModelStatus.kOptimal else 1,
-                mip_gap=gap if math.isfinite(gap) else None,
+                mip_gap=gap,
                 engine="HiGHS · joint MILP", warm_start=seed is not None,
                 native_status=highs.modelStatusToString(status),
             )
@@ -344,7 +348,9 @@ def optimise(
             chips, purchase_prices, seconds, used_chips, transfer_limits,
             locked_by_gw, excluded_by_gw, captain_locks,
         )
-    elif _warm_held_seed and seed_plan is None:
+    elif seed_plan is None:
+        # A legal existing team is already an incumbent, even on a short solve.
+        # Do not spend the user's entire budget rediscovering feasibility.
         seed_plan = _held_seed_plan(
             players, squad, bank, weeks, free_transfers, chips, locked, excluded,
             locked_by_gw, excluded_by_gw, captain_locks,
@@ -364,7 +370,7 @@ def optimise(
             for p in players
             if p["position_id"] == pos
             and p["id"] not in excluded
-            and (any(appearance(p, gw) > 0.05 for gw in weeks) or p["id"] in locked)
+            and (any(points(p, gw) > 0 or appearance(p, gw) > 0.05 for gw in weeks) or p["id"] in locked)
         ]
         ranked = sorted(
             pool,
@@ -380,6 +386,21 @@ def optimise(
     ids = sorted(candidates)
     if len(ids) * horizon > 25000:
         raise ValueError("This request exceeds the local solver size limit; shorten the horizon or reduce weekly locks.")
+    if squad and horizon <= 14 and not _warm_held_seed and _initial_plan is None:
+        static = _rolling_seed_plan(
+            players, ids, squad, bank, weeks, initial_ft=min(5, max(0, free_transfers)),
+            max_transfers=max_transfers, decay=decay, ft_value=ft_value,
+            bench_weight=bench_weight, risk=risk, chips=chips,
+            purchase_prices=purchase_prices, locked=locked, excluded=excluded,
+            locked_by_gw=locked_by_gw, excluded_by_gw=excluded_by_gw,
+            captain_locks=captain_locks, transfer_limits=transfer_limits,
+            seconds=min(1.0, seconds * 0.4),
+        )
+        if static is not None and (seed_plan is None or _seed_objective(
+            static, lookup, decay, ft_value, bench_weight, risk, not squad,
+        ) > _seed_objective(seed_plan, lookup, decay, ft_value, bench_weight, risk, not squad)):
+            seed_plan = static
+        seed_seconds = time.monotonic() - seed_started
     b = Builder()
     x, y, cap, buys, sells, banks, ft, hits = {}, {}, {}, {}, {}, {}, {}, {}
     moves, hit_states, burns = {}, {}, {}
@@ -406,11 +427,12 @@ def optimise(
         prev = last_permanent
         weight = decay**w
         banks[w] = b.var(low=0, high=2000, integer=True)
-        hits[w] = b.var(cost=weight * (4 - ft_value), low=0, high=15)
+        move_limit = 15 if free else transfer_limits.get(gw, max_transfers)
+        hits[w] = b.var(cost=weight * (4 - ft_value), low=0, high=0 if free else move_limit)
         n = b.var(
             cost=weight * ft_value if not free else 0,
             low=0,
-            high=0 if free else transfer_limits.get(gw, max_transfers),
+            high=0 if free else move_limit,
         )
         moves[w] = n
         required = locked | set(locked_by_gw.get(gw, []))
@@ -492,9 +514,9 @@ def optimise(
             z = b.var()
             hit_states[w] = z
             b.constraint({hits[w]: 1, n: -1, ft[w]: 1}, low=0)
-            b.constraint({hits[w]: 1, n: -1, ft[w]: 1, z: 15}, high=15)
-            b.constraint({hits[w]: 1, z: -15}, high=0)
-            b.constraint({n: 1, ft[w]: -1, z: -15}, high=0)
+            b.constraint({hits[w]: 1, n: -1, ft[w]: 1, z: 5}, high=5)
+            b.constraint({hits[w]: 1, z: -move_limit}, high=0)
+            b.constraint({n: 1, ft[w]: -1, z: -move_limit}, high=0)
             b.constraint({n: 1, ft[w]: -1, z: -15}, low=-15)
         if chip in ("wildcard", "freehit"):
             # Preserve saved FTs exactly, including a user-supplied zero.
@@ -540,7 +562,8 @@ def optimise(
         if not b.feasible(initial_solution):
             initial_solution = None
     joint_started = time.monotonic()
-    result = b.solve(seconds, initial_solution=initial_solution, native_highs=horizon > 14 or _warm_held_seed)
+    joint_budget = seconds if horizon > 14 or _initial_plan is not None or _warm_held_seed else max(0.01, seconds - (time.monotonic() - started))
+    result = b.solve(joint_budget, initial_solution=initial_solution, native_highs=horizon > 14 or _warm_held_seed)
     if result.x is None:
         raise ValueError(
             "No feasible plan found within the time limit. Check budget, locks, exclusions and transfer limit."
@@ -601,7 +624,7 @@ def optimise(
     return {
         "weeks": output,
         "objective": -float(result.fun),
-        "status": "optimal within candidate pool"
+        "status": ("gap target reached within candidate pool" if getattr(result, "mip_gap", 0) else "optimal within candidate pool")
         if result.status == 0
         else "time limit · best feasible plan",
         "gap": float(result.mip_gap) if getattr(result, "mip_gap", None) is not None and math.isfinite(result.mip_gap) else None,
@@ -628,6 +651,7 @@ def optimise(
             "The optimisation objective uses a linear bench weight. Displayed totals separately include formation-aware autosubs and vice fallback under independent appearances.",
             "Chips are user-scheduled. Free Hit restores the previous permanent squad and bank.",
             "Forecast quality is independent of optimiser optimality.",
+            "Short existing-squad solves seed a legal held/rolling aggregate plan within the time budget; the joint search can change every week. The gap target is 1% within the screened pool.",
         ],
     }
 
@@ -677,7 +701,25 @@ def _held_week(
     if not required.issubset(owned) or prohibited & set(owned):
         return None
     chip = chips.get(gw, "none")
-    lineup = best_lineup(owned, players, gw, chip)
+    # Seeds only need a legal XI. Enumerating all autosub distributions and
+    # bench permutations here was more expensive than many short solves.
+    groups = {
+        pos: sorted((i for i in owned if lookup[i]["position_id"] == pos),
+                    key=lambda i: points(lookup[i], gw), reverse=True)
+        for pos in SQUAD_COUNTS
+    }
+    starting = max(
+        (groups[1][:1] + groups[2][:d] + groups[3][:m] + groups[4][:f]
+         for d, m, f in FORMATIONS),
+        key=lambda ids: sum(points(lookup[i], gw) for i in ids)
+        + max(points(lookup[i], gw) for i in ids),
+    )
+    leaders = sorted(starting, key=lambda i: points(lookup[i], gw), reverse=True)
+    lineup = {
+        "starters": starting, "captain": leaders[0], "vice": leaders[1],
+        "bench": sorted((i for i in owned if i not in starting),
+                        key=lambda i: (lookup[i]["position_id"] != 1, -points(lookup[i], gw))),
+    }
     if captain is not None and captain not in lineup["starters"]:
         same_position = [i for i in lineup["starters"] if lookup[i]["position_id"] == lookup[captain]["position_id"]]
         replaced = min(same_position, key=lambda i: points(lookup[i], gw))
@@ -712,6 +754,141 @@ def _held_seed_plan(
         result.append(week)
         transfers = week["next_free_transfers"]
     return result
+
+
+def _seed_objective(plan, lookup, decay, ft_value, bench_weight, risk, fresh=False):
+    """Score only the linear objective used by the joint MILP."""
+    total = 0.0
+    for offset, week in enumerate(plan):
+        gw, chip = week["gw"], week["chip"]
+        free = chip in ("wildcard", "freehit") or fresh and offset == 0
+        bench = 1 if chip == "benchboost" else bench_weight
+        score = sum(points(lookup[i], gw) * (bench + risk * lookup[i]["ownership"] / 100)
+                    for i in week["squad"])
+        score += (1 - bench) * sum(points(lookup[i], gw) for i in week["starters"])
+        score += (2 if chip == "triplecaptain" else 1) * points(lookup[week["captain"]], gw)
+        if not free:
+            score -= ft_value * len(week["transfers_in"]) + (4 - ft_value) * week["hits"] / 4
+        total += decay**offset * score
+    return total
+
+
+def _rolling_seed_plan(players, ids, squad, bank, weeks, *, initial_ft, seconds, **settings):
+    """Bound small surrogate solves together, retaining a legal held suffix."""
+    deadline = time.monotonic() + seconds
+    result = None
+    prefix = []
+    owned, cash, ft = squad, bank, initial_ft
+    for offset, gw in enumerate(weeks):
+        remaining = deadline - time.monotonic()
+        if remaining < 0.02:
+            break
+        suffix = _static_seed_plan(
+            players, ids, owned, cash, weeks[offset:], initial_ft=ft,
+            seconds=min(0.4, remaining * 0.6 if offset < len(weeks) - 1 else remaining), **settings,
+        )
+        if suffix is None:
+            break
+        result = prefix + suffix
+        first = suffix[0]
+        prefix.append(first)
+        owned, cash, ft = first["squad"], first["bank"], first["next_free_transfers"]
+    return result
+
+
+def _static_seed_plan(
+    players, ids, squad, bank, weeks, *, initial_ft, max_transfers, decay,
+    ft_value, bench_weight, risk, chips, purchase_prices, locked, excluded,
+    locked_by_gw, excluded_by_gw, captain_locks, transfer_limits, seconds,
+):
+    """Quick restricted MILP: change once, then hold; the joint solve can improve it.
+
+    A discounted aggregate-point surrogate removes the transfer-state search.
+    Each actual week then gets its own legal XI/captain. This is only an
+    incumbent, never a restriction on the final joint search or its objective.
+    """
+    if any(chip == "freehit" for chip in chips.values()):
+        return None
+    lookup = {p["id"]: p for p in players}
+    required = locked | set(captain_locks.values()) | {
+        i for weekly_ids in locked_by_gw.values() for i in weekly_ids
+    }
+    prohibited = excluded | {i for weekly_ids in excluded_by_gw.values() for i in weekly_ids}
+    if required & prohibited:
+        return None
+    b = Builder()
+    owned = set(squad)
+    x, y, cap = {}, {}, {}
+    first_free = chips.get(weeks[0]) == "wildcard"
+    limit = transfer_limits.get(weeks[0], 15 if first_free else max_transfers)
+    n = b.var(cost=0 if first_free else ft_value, high=limit)
+    hit = b.var(cost=0 if first_free else 4 - ft_value, high=0 if first_free else limit)
+    if not first_free:
+        b.constraint({hit: 1, n: -1}, low=-initial_ft)
+    for i in ids:
+        player = lookup[i]
+        reward = sum(decay**w * points(player, gw)
+                     * ((1 if chips.get(gw) == "benchboost" else bench_weight)
+                        + risk * player["ownership"] / 100)
+                     for w, gw in enumerate(weeks))
+        x[i] = b.var(cost=-reward, low=int(i in required), high=int(i not in prohibited))
+    b.constraint({x[i]: 1 for i in ids if i not in owned} | {n: -1}, low=0, high=0)
+    for pos, count in SQUAD_COUNTS.items():
+        b.constraint({x[i]: 1 for i in ids if lookup[i]["position_id"] == pos}, low=count, high=count)
+    for club in {lookup[i]["team"] for i in ids}:
+        b.constraint({x[i]: 1 for i in ids if lookup[i]["team"] == club}, high=3)
+    selling = {i: round(sale_price(lookup[i]["price"], purchase_prices.get(str(i), lookup[i]["price"])) * 10)
+               for i in squad}
+    costs = {i: selling[i] if i in owned else round(lookup[i]["price"] * 10) for i in ids}
+    cash = round(bank * 10) + sum(selling.values())
+    b.constraint({x[i]: costs[i] for i in ids}, high=cash)
+    for w, gw in enumerate(weeks[:1]):
+        for i in ids:
+            starter_reward = sum(decay**j * points(lookup[i], g)
+                                 * (0 if chips.get(g) == "benchboost" else 1 - bench_weight)
+                                 for j, g in enumerate(weeks))
+            captain_reward = sum(decay**j * points(lookup[i], g)
+                                 * (2 if chips.get(g) == "triplecaptain" else 1)
+                                 for j, g in enumerate(weeks))
+            y[i, w] = b.var(cost=-starter_reward)
+            cap[i, w] = b.var(cost=-captain_reward,
+                              low=int(captain_locks.get(gw) == i))
+            b.constraint({y[i, w]: 1, x[i]: -1}, high=0)
+            b.constraint({cap[i, w]: 1, y[i, w]: -1}, high=0)
+        b.constraint({y[i, w]: 1 for i in ids}, low=11, high=11)
+        b.constraint({cap[i, w]: 1 for i in ids}, low=1, high=1)
+        for pos, lo, hi in ((1, 1, 1), (2, 3, 5), (3, 2, 5), (4, 1, 3)):
+            b.constraint({y[i, w]: 1 for i in ids if lookup[i]["position_id"] == pos}, low=lo, high=hi)
+    seed = np.array(b.low, dtype=float)
+    for i in ids:
+        seed[x[i]] = int(i in owned)
+    for w, gw in enumerate(weeks[:1]):
+        week = _held_week(players, lookup, gw, squad, bank, initial_ft, chips,
+                          locked, excluded, locked_by_gw, excluded_by_gw, captain_locks)
+        if week is None:
+            break
+        for i in ids:
+            seed[y[i, w]] = int(i in week["starters"])
+            seed[cap[i, w]] = int(i == week["captain"])
+    result = b.solve(seconds, initial_solution=seed if b.feasible(seed) else None, native_highs=True)
+    if result.x is None:
+        return None
+    selected = [i for i in ids if result.x[x[i]] > 0.5]
+    bought, sold = [i for i in selected if i not in owned], [i for i in squad if i not in selected]
+    remaining_bank = (cash - sum(costs[i] for i in selected)) / 10
+    ft, output = initial_ft, []
+    for w, gw in enumerate(weeks):
+        week = _held_week(players, lookup, gw, selected, remaining_bank, ft, chips,
+                          locked, excluded, locked_by_gw, excluded_by_gw, captain_locks)
+        if week is None:
+            return None
+        if w == 0:
+            hits = 0 if first_free else max(0, len(bought) - ft)
+            week.update(transfers_in=bought, transfers_out=sold, hits=hits * 4,
+                        next_free_transfers=ft if first_free else min(5, max(0, ft - len(bought)) + 1))
+        ft = week["next_free_transfers"]
+        output.append(week)
+    return output
 
 
 def _long_seed_plan(

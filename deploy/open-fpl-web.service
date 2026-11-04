@@ -1,0 +1,21 @@
+[Unit]
+Description=Open FPL personal planning API
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/projects/github/grenmango51/fpl-lab
+EnvironmentFile=%h/.config/open-fpl/production.env
+Environment=OMP_NUM_THREADS=1
+Environment=OPENBLAS_NUM_THREADS=1
+ExecStart=%h/projects/github/grenmango51/fpl-lab/.venv/bin/python -m uvicorn backend.app:app --host 127.0.0.1 --port 18083 --workers 1 --no-access-log
+Restart=on-failure
+RestartSec=5
+MemoryHigh=1G
+MemoryMax=2G
+TasksMax=128
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+

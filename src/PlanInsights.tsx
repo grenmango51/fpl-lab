@@ -19,6 +19,8 @@ const componentLabels: Record<string, string> = {
   penalty_saves: "Penalty saves",
   deductions: "Cards / goals conceded",
   provider_adjustment: "Provider adjustment",
+  solio_adjustment: "Solio points adjustment",
+  solio_extrapolation: "Solio window extrapolation",
   imported_adjustment: "Imported points adjustment",
   user_points_adjustment: "Your points adjustment",
   unassigned_forecast: "Unassigned forecast residual",
@@ -114,6 +116,8 @@ export function PlanInsights({
       label: "Provider / your adjustments",
       keys: [
         "provider_adjustment",
+        "solio_adjustment",
+        "solio_extrapolation",
         "imported_adjustment",
         "user_points_adjustment",
       ],
@@ -133,6 +137,8 @@ export function PlanInsights({
     "penalty_saves",
     "deductions",
     "provider_adjustment",
+    "solio_adjustment",
+    "solio_extrapolation",
     "imported_adjustment",
     "user_points_adjustment",
   ]);

@@ -1,0 +1,11 @@
+[Unit]
+Description=Check the configurable Open FPL refresh schedule
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+AccuracySec=1s
+Persistent=true
+Unit=open-fpl-live-updates.service
+
+[Install]
+WantedBy=timers.target

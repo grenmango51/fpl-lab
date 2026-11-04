@@ -1,12 +1,14 @@
 # Open FPL
 
-Free, local-first Fantasy Premier League forecasting and planning web app: real forecasts through GW38, a constrained multi-week optimiser, and an honest evaluation view. Personal project; runs only on the Windows laptop. This folder is a local git repo with no remote.
+Free, local-first Fantasy Premier League forecasting and planning web app: real forecasts through GW38, a constrained multi-week optimiser, and an honest evaluation view. Personal website: https://open-fpl.hoaianh517.workers.dev (Cloudflare UI/auth; Ubuntu Python API, collector and shared plans). Local Windows use remains supported. GitHub origin: https://github.com/grenmango51/fpl-lab.
 
 ## Start here
 - `docs/STATUS.md`: current handover, what is delivered and verified. Read it first.
 - `docs/PLAN.md` (research and build plan), `docs/MODEL.md` (model derivation and limits), `docs/PROVIDER_ACCESS.md` (what each data provider gives and how it is accessed), `docs/SOLIO_UX.md` and `docs/ELEVENIFY_FIXTURE_VIEWS.md` (UI references).
 - Read STATUS, PLAN and MODEL before changing any modelling assumption.
 - `README.md`: run commands, CSV formats, evaluation and prospective scoring commands.
+- `docs/HOSTED.md`: free Cloudflare deployment, account setup, private origin, shared plans, services and backups.
+- Solio login: open https://fpl.solioanalytics.com/ in the existing signed-in Ilmari Chrome via Playwright/CDP `http://127.0.0.1:9222`. Reuse its Google session; no fresh profile or T3 browser. Details: `docs/PROVIDER_ACCESS.md`.
 
 ## Run and check
 - Needs Python 3.11+ and Node 20.19+/22.12+.

@@ -93,16 +93,25 @@ def forecast(result, pid=1, gw=6):
     return next(p for p in result["players"] if p["id"] == pid)["gw"][str(gw)]
 
 
-def test_duration_does_not_restore_official_zero_availability(data):
+def test_duration_does_not_restore_flagged_availability(data):
     result = model.projections(
         {"1": 90}, False, {"1": {"7": {"conditional_minutes": 90}}}
     )
-    assert forecast(result)["points"] == 0
-    assert forecast(result, gw=7)["xmins"] == 0
-    assert forecast(result, gw=7)["minutes_scenario"]["availability"] == 0
+    # The fitted flag model, not the duration, sets availability (out: ~2% next GW).
+    week6, week7 = forecast(result), forecast(result, gw=7)
+    assumption = week7["fixtures"][0]["availability_assumption"]
+    assert assumption["source"] == "fitted flag availability model"
+    assert assumption["flag"] == "out"
+    assert week6["pplay"] == pytest.approx(week6["fixtures"][0]["availability_assumption"]["value"])
+    assert week6["pplay"] < 0.05
+    assert week7["xmins"] == pytest.approx(
+        90 * sum(f["availability_assumption"]["value"] for f in week7["fixtures"])
+    )
+    assert week7["minutes_scenario"]["availability"] == pytest.approx(assumption["value"])
 
 
 def test_explicit_recovery_only_affects_selected_week_and_reconciles_components(data):
+    unchanged = model.projections({"1": 90}, False, {})
     result = model.projections({"1": 90}, False, {"1": {"7": {"availability": 1}}})
     week = forecast(result, gw=7)
     assert week["xmins"] == 180
@@ -110,7 +119,9 @@ def test_explicit_recovery_only_affects_selected_week_and_reconciles_components(
     assert week["points"] == pytest.approx(sum(week["components"].values()))
     assert week["points"] == pytest.approx(sum(f["points"] for f in week["fixtures"]))
     assert all(f["xmins"] == 90 and f["p60"] == 1 for f in week["fixtures"])
-    assert forecast(result)["points"] == forecast(result, gw=9)["points"] == 0
+    for gw in (6, 9):
+        assert forecast(result, gw=gw)["points"] == forecast(unchanged, gw=gw)["points"]
+    assert forecast(result)["pplay"] < 0.05
     scenario = week["minutes_scenario"]
     assert scenario["conditional_minutes"] == 90
     assert scenario["availability_source"] == "user-assumed"
@@ -227,7 +238,10 @@ def test_manual_weeks_bypass_direct_extrapolated_and_layered_probabilities(data)
     assert forecast(provider, 2, 6)["pplay"] == 0.2
     future = forecast(provider, 2, 11)
     assert future["prediction_source"]["kind"] == "extrapolated"
-    assert future["prediction_source"]["ratio"] == pytest.approx(2)
+    # The supplied high point total with low appearance probability implies a
+    # larger conditional scoring rate, bounded by the declared ratio cap.
+    assert future["prediction_source"]["ratio"] == 3
+    assert future["prediction_source"]["calibration"] == "conditional on appearance"
     assert future["prediction_source"]["anchor_gameweeks"] == [6]
     assert base == original
 

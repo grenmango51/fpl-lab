@@ -265,6 +265,22 @@ export type Bootstrap = {
   model_version: string;
   history_rows: number;
   sources: Record<string, Source>;
+  solio?: {
+    enabled: boolean;
+    applied_forecasts: number;
+    matched_players: number;
+    omitted_players?: number;
+    unpurchaseable_players?: number;
+    unlisted_players?: number;
+    pool_players: number;
+    gameweek?: number;
+    weeks: number[];
+    status: string;
+    source_status?: string;
+    source_at?: string;
+    generated_at?: string;
+    full_planner_connected: boolean;
+  };
   limitations: string[];
   parameters: Record<string, number>;
   reference_data?: ReferenceData;
@@ -331,7 +347,7 @@ export type SolveResult = {
   variable_count?: number;
   constraint_count?: number;
   engine?: string;
-  warm_start?: string;
+  warm_start?: boolean;
   warm_start_seconds?: number;
   joint_solve_seconds?: number;
   native_status?: string;
@@ -540,6 +556,13 @@ export type Prospective = {
     actual_data_checked?: boolean | null;
   } & Metric)[];
 };
+export type ProbabilityScore = {
+  log_loss: number;
+  brier: number;
+  predicted: number;
+  observed: number;
+  count: number;
+};
 export type Evaluation = {
   available: boolean;
   generated_at?: string;
@@ -555,11 +578,28 @@ export type Evaluation = {
   gameweeks?: {
     gw: number;
     component: number;
-    ml: number;
+    previous?: number;
+    ml?: number;
     form: number;
     ppg: number;
     count: number;
+    rmse?: Record<string, number>;
   }[];
+  headline_metric?: "rmse" | "mae";
+  budget_squads?: Record<string, number>;
+  budget_squad_method?: string;
+  decision_differences?: Record<
+    string,
+    Record<"budget_squad" | "captain", { difference: number; ci95: number[] }>
+  >;
+  appearance?: {
+    next_gw: Record<"pplay" | "p60", Record<string, ProbabilityScore | null>>;
+    by_flag: Record<
+      string,
+      Record<"pplay" | "p60", Record<string, ProbabilityScore | null>>
+    >;
+    method?: string;
+  };
   calibration?: {
     bin: string;
     predicted: number;

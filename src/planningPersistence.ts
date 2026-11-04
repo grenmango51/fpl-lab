@@ -34,6 +34,7 @@ export type ForecastConfiguration = {
   custom_points: Record<string, Record<string, number>>;
   blend_weight: number;
   use_provider: boolean;
+  use_solio: boolean;
   provider_weight: number;
   extrapolate: boolean;
   anchor_half_life: number;
@@ -49,6 +50,7 @@ export const defaultForecastConfiguration: ForecastConfiguration = {
   custom_points: {},
   blend_weight: 0,
   use_provider: true,
+  use_solio: true,
   provider_weight: 0.5,
   extrapolate: true,
   anchor_half_life: 6,
@@ -177,7 +179,12 @@ export function sanitizeForecastConfiguration(
         defence: value.defence,
       };
   }
-  for (const field of ["use_market", "use_provider", "extrapolate"] as const) {
+  for (const field of [
+    "use_market",
+    "use_provider",
+    "use_solio",
+    "extrapolate",
+  ] as const) {
     if (source[field] !== undefined) {
       if (typeof source[field] === "boolean") output[field] = source[field];
       else invalid(field);

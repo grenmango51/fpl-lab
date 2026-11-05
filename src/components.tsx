@@ -145,6 +145,7 @@ export function Pitch({
     const p = lookup.get(id);
     if (!p) return null;
     const f = p.gw[String(week.gw)];
+    const benchPriority = bench && week.bench.includes(dragged ?? selected ?? -1);
     return (
       <div
         className={`player-tile ${(dragged ?? selected) === id ? "player-selected" : ""} ${dragged === id ? "drag-source" : ""} ${bench ? "bench-player" : ""} ${targets?.includes(id) ? "swap-target" : ""}`}
@@ -191,7 +192,7 @@ export function Pitch({
           }
           aria-label={
             targets?.includes(id)
-              ? `Substitute ${p.name}`
+              ? `${benchPriority ? "Swap bench position with" : "Substitute"} ${p.name}`
               : interactionMode === "substitute"
                 ? `${selected === id ? "Deselect" : "Select"} ${p.name}`
                 : `Open ${p.name}`

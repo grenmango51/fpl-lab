@@ -85,6 +85,24 @@ describe("contextual planner decisions", () => {
     expect(canSwap(w, players[0], players[5], players)).toBe(false);
     expect(canSwap(w, players[0], players[1], players)).toBe(true);
   });
+  it("permits every pair of outfield reserve priorities without moving the goalkeeper", () => {
+    const w = week(7);
+    for (const from of w.bench)
+      for (const to of w.bench) {
+        expect(canSwap(w, players[from - 1], players[to - 1], players)).toBe(
+          from !== to && from !== w.bench[0] && to !== w.bench[0],
+        );
+      }
+    expect(canSwap(w, players[2], players[3], players)).toBe(false);
+    expect(canSwap(w, players[5], players[15], players)).toBe(false);
+  });
+  it("does not offer a priority swap for an outfield player in the goalkeeper slot", () => {
+    const w = week(7);
+    w.bench = [6, 2, 7, 12];
+    expect(canSwap(w, players[5], players[6], players)).toBe(false);
+    w.bench = [2, 3, 4, 12];
+    expect(canSwap(w, players[2], players[3], players)).toBe(false);
+  });
   it("keeps manual XI, captain, vice and bench roles across a transfer", () => {
     const p = plan(),
       next = replacePlayer(p, 8, 13, 16);
@@ -164,6 +182,13 @@ function boardPitch(selected: number | null, busy = false) {
 }
 
 describe("direct pitch selection", () => {
+  it("offers both other outfield reserves as priority targets and blocks their keeper", () => {
+    const active = boardPitch(6);
+    expect(active.pitch.swapTargets).toEqual(expect.arrayContaining([7, 12]));
+    expect(active.pitch.swapTargets).not.toContain(2);
+    active.pitch.onBenchSwap(7);
+    expect(active.onBenchSwap).toHaveBeenCalledExactlyOnceWith(7);
+  });
   it("selects, deselects and changes a source without opening details", () => {
     const first = boardPitch(null);
     first.pitch.onSelect(3);
@@ -229,6 +254,20 @@ describe("direct pitch selection", () => {
     onSwap: vi.fn(),
     swapTargets: [6, 7, 12],
   };
+
+  it("distinguishes a reserve-priority action from an XI substitution", () => {
+    const html = renderToStaticMarkup(
+      createElement(components.Pitch, {
+        ...pitchProps,
+        selected: 6,
+        swapTargets: [7, 12, 8],
+        interactionMode: "substitute",
+      }),
+    );
+    expect(html).toContain('aria-label="Swap bench position with Player 7"');
+    expect(html).toContain('aria-label="Swap bench position with Player 12"');
+    expect(html).toContain('aria-label="Substitute Player 8"');
+  });
 
   it("exposes selection, substitution and info as separate accessible actions", () => {
     const html = renderToStaticMarkup(

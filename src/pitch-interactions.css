@@ -39,7 +39,7 @@
 .planner-board .board-plan-header {
   position: sticky;
   top: 0;
-  z-index: 4;
+  z-index: 5; /* Above the scrolling gameweek controls (4). */
   background: #030712;
 }
 

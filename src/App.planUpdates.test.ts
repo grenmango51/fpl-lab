@@ -7,6 +7,7 @@ import {
   planValidationRequest,
 } from "./planningPersistence";
 import type { Plan, Week } from "./types";
+import { replacePlayer } from "./plannerInteractions";
 
 type History = Record<string, { past: Plan[]; future: Plan[] }>;
 type State = {
@@ -17,6 +18,11 @@ type State = {
   selected: number | null;
   planHistory: History;
   toast: { text: string; error?: boolean } | null;
+  tab: string;
+  detailId: number | null;
+  detailGW: number;
+  detailInline: boolean;
+  modal: string | null;
 };
 type Update<T> = T | ((current: T) => T);
 
@@ -33,19 +39,38 @@ const app = source.statements.find(
   (node): node is ts.FunctionDeclaration =>
     ts.isFunctionDeclaration(node) && node.name?.text === "App",
 )!;
-const names = ["validatedPlan", "updatePlan", "travelPlan"];
+const names = ["validatedPlan", "updatePlan", "travelPlan", "transferIn"];
 const functions = app.body!.statements.filter(
   (node) => ts.isFunctionDeclaration(node) && names.includes(node.name!.text),
 );
 if (functions.length !== names.length) throw new Error("Missing plan actions");
 const printer = ts.createPrinter();
+let transferCallback: ts.Expression | undefined;
+function findTransfer(node: ts.Node) {
+  if (
+    ts.isJsxAttribute(node) &&
+    node.name.getText(source) === "onTransfer" &&
+    node.initializer &&
+    ts.isJsxExpression(node.initializer) &&
+    node.initializer.expression
+      ?.getText(source)
+      .includes("const ok = await transferIn")
+  )
+    transferCallback = node.initializer.expression;
+  ts.forEachChild(node, findTransfer);
+}
+findTransfer(app);
+if (!transferCallback) throw new Error("Missing transfer completion action");
 const actions = ts.transpileModule(
   `const { plans, active, gw, busy, planHistory, forecastArgs,
     api, planValidationRequest, livePlanningRef,
-    setPlans, setPlanHistory, setBusy, setToast, setGw, setSelected, notify
+    setPlans, setPlanHistory, setBusy, setToast, setGw, setSelected, notify,
+    data, lookup, selected, detailId, playerGW, detailInline, replacePlayer,
+    transferView, liveTransferViewRef, setDetailId, setTab
   } = scope;
   ${functions.map((node) => printer.printNode(ts.EmitHint.Unspecified, node, source)).join("\n")}
-  return { updatePlan, travelPlan };`,
+  const transferCallback = ${printer.printNode(ts.EmitHint.Expression, transferCallback, source)};
+  return { updatePlan, travelPlan, transferIn, transferCallback };`,
   { compilerOptions: { target: ts.ScriptTarget.ES2022 } },
 ).outputText;
 const createActions = new Function("scope", actions) as (scope: object) => {
@@ -56,6 +81,7 @@ const createActions = new Function("scope", actions) as (scope: object) => {
     pendingMessage?: string,
   ) => Promise<Plan | boolean>;
   travelPlan: (direction: "past" | "future") => Promise<void>;
+  transferCallback: (id: number) => Promise<boolean>;
 };
 
 function branch(id: string, gameweeks = [7, 8, 9]): Plan {
@@ -97,8 +123,20 @@ function harness(plans = [branch("A"), branch("B", [12, 13])]) {
     selected: 3,
     planHistory: {},
     toast: { text: "Earlier message" },
+    tab: "projections",
+    detailId: 2,
+    detailGW: plans[0].weeks[0].gw,
+    detailInline: false,
+    modal: null,
   };
   const livePlanningRef = { current: { ...state } };
+  const liveTransferViewRef = { current: {} };
+  let viewKey = "";
+  const players = Array.from({ length: 16 }, (_, i) => ({
+    id: i + 1,
+    name: `Player ${i + 1}`,
+    position_id: 2,
+  }));
   const requests: {
     path: string;
     body: unknown;
@@ -121,12 +159,31 @@ function harness(plans = [branch("A"), branch("B", [12, 13])]) {
     };
   const render = () => {
     livePlanningRef.current = { ...state };
+    const nextKey = JSON.stringify([
+      state.activeId,
+      state.gw,
+      state.tab,
+      state.detailId,
+      state.detailGW,
+      state.detailInline,
+      state.modal,
+    ]);
+    if (nextKey !== viewKey) {
+      viewKey = nextKey;
+      liveTransferViewRef.current = {};
+    }
     return createActions({
       ...state,
       active:
         state.plans.find((p) => p.id === state.activeId) ?? state.plans[0],
       forecastArgs: defaultForecastConfiguration,
       livePlanningRef,
+      transferView: liveTransferViewRef.current,
+      liveTransferViewRef,
+      data: { players },
+      lookup: new Map(players.map((p) => [p.id, p])),
+      playerGW: state.detailGW || state.gw,
+      replacePlayer,
       api,
       planValidationRequest,
       setPlans: setter("plans"),
@@ -135,6 +192,8 @@ function harness(plans = [branch("A"), branch("B", [12, 13])]) {
       setToast: setter("toast"),
       setGw: setter("gw"),
       setSelected: setter("selected"),
+      setDetailId: setter("detailId"),
+      setTab: setter("tab"),
       notify: (text: string, error = false) => {
         state.toast = { text, error };
       },
@@ -144,6 +203,80 @@ function harness(plans = [branch("A"), branch("B", [12, 13])]) {
 }
 
 describe("deferred plan validation", () => {
+  it.each(["branch", "week", "player", "reopened player"])(
+    "keeps newer %s navigation after an accepted transfer",
+    async (navigation) => {
+      const h = harness();
+      h.state.gw = h.state.detailGW = 9;
+      const beforeB = structuredClone(h.state.plans[1]);
+      const pending = h.render().transferCallback(16);
+      if (navigation === "branch") {
+        h.state.activeId = "B";
+        h.state.gw = 13;
+      } else if (navigation === "week") h.state.gw = 8;
+      else if (navigation === "player") h.state.detailId = 5;
+      else {
+        h.state.detailId = null;
+        h.render();
+        h.state.detailId = 2;
+      }
+      h.state.selected = 5;
+      h.render();
+      const view = {
+        id: h.state.activeId,
+        gw: h.state.gw,
+        detail: h.state.detailId,
+        tab: h.state.tab,
+      };
+      const request = h.requests[0].body as { weeks: Week[] };
+      h.requests[0].resolve({ weeks: request.weeks });
+      expect(await pending).toBe(true);
+      expect({
+        id: h.state.activeId,
+        gw: h.state.gw,
+        detail: h.state.detailId,
+        tab: h.state.tab,
+      }).toEqual(view);
+      expect(h.state.selected).toBe(5);
+      expect(h.state.plans[1]).toEqual(beforeB);
+      expect(h.state.plans[0].weeks.find((w) => w.gw === 9)?.squad).toContain(
+        16,
+      );
+      expect(h.state.planHistory.A.past).toHaveLength(1);
+    },
+  );
+  it("closes the original transfer surface after success despite ordinary rerenders", async () => {
+    const h = harness();
+    h.state.detailGW = 9;
+    const pending = h.render().transferCallback(16);
+    h.state.plans[0].name = "New name";
+    h.render();
+    const request = h.requests[0].body as { weeks: Week[] };
+    h.requests[0].resolve({ weeks: request.weeks });
+    expect(await pending).toBe(true);
+    expect(h.state.detailId).toBeNull();
+    expect(h.state.tab).toBe("lineup");
+    expect(h.state.gw).toBe(9);
+    expect(h.state.selected).toBeNull();
+    expect(h.state.plans[0].name).toBe("New name");
+  });
+  it("retains a failed transfer surface and permits retry", async () => {
+    const h = harness();
+    const before = structuredClone(h.state.plans);
+    const pending = h.render().transferCallback(16);
+    h.requests[0].reject(new Error("Temporary validation failure"));
+    expect(await pending).toBe(false);
+    expect(h.state.plans).toEqual(before);
+    expect(h.state.detailId).toBe(2);
+    expect(h.state.tab).toBe("projections");
+    expect(h.state.planHistory).toEqual({});
+    const retry = h.render().transferCallback(16);
+    const request = h.requests[1].body as { weeks: Week[] };
+    h.requests[1].resolve({ weeks: request.weeks });
+    expect(await retry).toBe(true);
+    expect(h.state.detailId).toBeNull();
+    expect(h.state.planHistory.A.past).toHaveLength(1);
+  });
   it("keeps a newer name while adopting server weeks and requested resources", async () => {
     const h = harness();
     const before = structuredClone(h.state.plans[0]);

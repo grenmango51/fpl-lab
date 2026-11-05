@@ -360,6 +360,13 @@ export default function App() {
     busy,
     watch,
   };
+  // Navigation changes this identity; busy and accepted-plan renders do not.
+  const transferView = useMemo(
+    () => ({}),
+    [activeId, gw, tab, detailId, detailGW, detailInline, modal],
+  );
+  const liveTransferViewRef = useRef(transferView);
+  liveTransferViewRef.current = transferView;
   const week = active?.weeks.find((w) => w.gw === gw) ?? null;
   const lookup = useMemo(
     () => new Map(data?.players.map((p) => [p.id, p]) ?? []),
@@ -1206,6 +1213,7 @@ export default function App() {
     });
   }
   async function transferIn(id: number, from = selected, atGW = gw) {
+    const view = transferView;
     const transferWeek = active?.weeks.find((row) => row.gw === atGW);
     if (!data || !active || from === null || !transferWeek || busy)
       return false;
@@ -1225,7 +1233,8 @@ export default function App() {
         `${outgoing.name} → ${incoming.name}. Budget and transfers checked.`,
       )
     ) {
-      setSelected(null);
+      if (liveTransferViewRef.current === view)
+        setSelected((current) => current === selected ? null : current);
       return true;
     }
     return false;
@@ -3346,8 +3355,9 @@ export default function App() {
                   setDetailTab("overview");
                 }}
                 onTransfer={async (id) => {
+                  const view = transferView;
                   const ok = await transferIn(id, detailId, playerGW);
-                  if (ok) {
+                  if (ok && liveTransferViewRef.current === view) {
                     setDetailId(null);
                     if (!detailInline) {
                       setGw(playerGW);

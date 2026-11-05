@@ -30,3 +30,35 @@
 .planner-board:has(.pitch-dragging) .swap-banner {
   visibility: hidden;
 }
+
+.planner-board .board-plan-header input {
+  flex: 1;
+  min-width: 0;
+}
+
+.planner-board .board-plan-header {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  background: #030712;
+}
+
+.board-pending-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  max-width: 60%;
+  color: #ffc29b;
+  font-size: 11px;
+}
+
+.board-pending-status > svg {
+  flex-shrink: 0;
+}
+
+.board-pending-status > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

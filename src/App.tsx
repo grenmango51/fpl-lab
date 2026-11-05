@@ -315,12 +315,14 @@ export default function App() {
     ),
     [solveResult, setSolveResult] = useState<SolveResult | null>(null),
     [solveContext, setSolveContext] = useState<OptimiseContext | null>(null);
-  const initRef = useRef(false),
+  const initRef = useRef<Bootstrap | null>(null),
     analyticsRef = useRef<HTMLDivElement>(null),
     dataRequestRef = useRef(0),
     loadedForecastArgsRef = useRef(""),
     solveRequestRef = useRef(0),
     solveInFlightRef = useRef(false),
+    operationRef = useRef<symbol | null>(null),
+    operationVersionRef = useRef(0),
     fileRef = useRef<HTMLInputElement>(null);
   const notify = (text: string, error = false) => setToast({ text, error });
   const forecastArgs: ForecastConfiguration = {
@@ -412,11 +414,17 @@ export default function App() {
   async function adoptShared(document: SharedDocument, current: () => boolean) {
     const fingerprint = () => { const { data: _data, ...state } = livePlanningRef.current; return JSON.stringify(state); };
     const before = fingerprint();
-    if (livePlanningRef.current.busy) return false;
+    const version = operationVersionRef.current;
+    if (operationRef.current) return false;
     const restored = await loadPlanningState(document.plans, document.active_id, document.configuration,
       document.solver_settings, configuration => configuration === undefined
         ? forecastBaseline() : api<Bootstrap>("/projections", configuration));
-    if (!current() || fingerprint() !== before) return false;
+    if (
+      !current() ||
+      operationRef.current ||
+      version !== operationVersionRef.current ||
+      fingerprint() !== before
+    ) return false;
     archivePlanningInputs(livePlanningRef.current.plans, livePlanningRef.current.forecastArgs);
     ++dataRequestRef.current;
     loadedForecastArgsRef.current = JSON.stringify(restored.configuration);
@@ -598,9 +606,11 @@ export default function App() {
     let checking = false;
     async function check() {
       const current = livePlanningRef.current;
-      if (checking || !current.data || current.busy || solveInFlightRef.current)
-        return;
+      if (
+        checking || !current.data || operationRef.current || solveInFlightRef.current
+      ) return;
       checking = true;
+      const version = operationVersionRef.current;
       try {
         const status = await api<DataRefreshStatus>("/data-refresh");
         if (
@@ -623,7 +633,8 @@ export default function App() {
         if (
           !alive ||
           request !== dataRequestRef.current ||
-          latest.busy ||
+          operationRef.current ||
+          version !== operationVersionRef.current ||
           latest.plans !== current.plans ||
           latest.activeId !== current.activeId ||
           latest.settings !== current.settings ||
@@ -680,9 +691,12 @@ export default function App() {
     return () => document.removeEventListener("keydown", escape);
   }, []);
   useEffect(() => {
-    if (!data || plans.length || initRef.current) return;
-    initRef.current = true;
-    setBusy("Building a legal £100m starting squad…");
+    // Retry after other work settles, but only retry a failed initial solve
+    // when new data arrives (for example, after Refresh).
+    if (!data || plans.length || initRef.current === data) return;
+    const operation = beginOperation("Building a legal £100m starting squad…");
+    if (!operation) return;
+    initRef.current = data;
     api<SolveResult>("/optimise", {
       ...forecastArgs,
       start_gw: data.next_gw,
@@ -712,11 +726,10 @@ export default function App() {
         setActiveId(p.id);
       })
       .catch((e) => {
-        initRef.current = false;
         notify(e.message, true);
       })
-      .finally(() => setBusy(""));
-  }, [data, plans.length]);
+      .finally(() => finishOperation(operation));
+  }, [data, plans.length, busy]);
   useEffect(() => {
     if (!data) return;
     const serialized = JSON.stringify(forecastArgs);
@@ -904,6 +917,27 @@ export default function App() {
     return () => window.removeEventListener("popstate", back);
   }, [plans, data?.gameweeks, activeId]);
 
+  // The ref claims ownership before React renders disabled controls. Busy is
+  // display state only; a stale callback must not start or finish another job.
+  function beginOperation(message: string) {
+    if (operationRef.current) return null;
+    const operation = Symbol();
+    operationRef.current = operation;
+    // Also invalidate background reloads if this job starts and finishes
+    // before React has rendered its accepted state into livePlanningRef.
+    ++operationVersionRef.current;
+    setBusy(message);
+    return operation;
+  }
+  function finishOperation(operation: symbol) {
+    if (operationRef.current !== operation) return;
+    operationRef.current = null;
+    setBusy("");
+  }
+  function operationMessage(operation: symbol, message: string) {
+    if (operationRef.current === operation) setBusy(message);
+  }
+
   async function validatedPlan(p: Plan) {
     const result = await api<{ weeks: Week[] }>(
       "/plan/validate",
@@ -917,10 +951,10 @@ export default function App() {
     remember = true,
     pendingMessage = "Updating plan…",
   ) {
-    if (busy) return false;
+    const operation = beginOperation(pendingMessage);
+    if (!operation) return false;
     const before = plans.find((row) => row.id === p.id);
     setToast(null);
-    setBusy(pendingMessage);
     try {
       const valid = await validatedPlan(p);
       if (remember && before)
@@ -944,11 +978,11 @@ export default function App() {
       notify((e as Error).message, true);
       return false;
     } finally {
-      setBusy("");
+      finishOperation(operation);
     }
   }
   async function travelPlan(direction: "past" | "future") {
-    if (!active || busy) return;
+    if (!active || operationRef.current) return;
     const history = planHistory[active.id];
     const target = history?.[direction].at(-1);
     if (!target) return;
@@ -1036,7 +1070,7 @@ export default function App() {
       setGw(p.weeks[0].gw);
   }
   async function createPlan() {
-    if (!active || !data || busy) return;
+    if (!active || !data || operationRef.current) return;
     const p = planFromSquad(
       active.base_squad,
       data.players,
@@ -1049,7 +1083,8 @@ export default function App() {
     p.used_chips = structuredClone(active.used_chips ?? []);
     p.entry_id = active.entry_id;
     p.team_name = active.team_name;
-    setBusy("Creating scenario…");
+    const operation = beginOperation("Creating scenario…");
+    if (!operation) return;
     try {
       const valid = await validatedPlan(p);
       setPlans((current) => [...current, valid]);
@@ -1059,11 +1094,11 @@ export default function App() {
     } catch (error) {
       notify((error as Error).message, true);
     } finally {
-      setBusy("");
+      finishOperation(operation);
     }
   }
   function reorderPlan(direction: number) {
-    if (!active || busy) return;
+    if (!active || operationRef.current) return;
     setPlans((current) => {
       const next = [...current],
         index = next.findIndex((plan) => plan.id === active.id),
@@ -1074,8 +1109,11 @@ export default function App() {
     });
   }
   async function startBranchAt(start: number) {
-    if (!active || !data || busy || start === active.weeks[0]?.gw) return;
-    setBusy("Creating future branch…");
+    if (
+      !active || !data || operationRef.current || start === active.weeks[0]?.gw
+    ) return;
+    const operation = beginOperation("Creating future branch…");
+    if (!operation) return;
     try {
       const source = await validatedPlan(active),
         prefix = source.weeks.filter((row) => row.gw < start),
@@ -1116,7 +1154,7 @@ export default function App() {
     } catch (error) {
       notify((error as Error).message, true);
     } finally {
-      setBusy("");
+      finishOperation(operation);
     }
   }
   useEffect(() => {
@@ -1126,8 +1164,8 @@ export default function App() {
     );
   }, [deletedPlans]);
   async function restoreDeleted(plan: Plan) {
-    if (busy) return;
-    setBusy("Restoring plan…");
+    const operation = beginOperation("Restoring plan…");
+    if (!operation) return;
     try {
       const valid = await validatedPlan(plan);
       setPlans((current) =>
@@ -1144,7 +1182,7 @@ export default function App() {
     } catch (error) {
       notify((error as Error).message, true);
     } finally {
-      setBusy("");
+      finishOperation(operation);
     }
   }
   function lockTransfers() {
@@ -1181,7 +1219,7 @@ export default function App() {
     notify(`GW${gw} transfers locked in optimiser rules.`);
   }
   function clonePlan() {
-    if (!active) return;
+    if (!active || operationRef.current) return;
     const p = {
       ...structuredClone(active),
       id: uid(),
@@ -1193,7 +1231,7 @@ export default function App() {
     notify("New branch created. Explore another route.");
   }
   function deletePlan() {
-    if (!active || plans.length <= 1) return;
+    if (!active || plans.length <= 1 || operationRef.current) return;
     const rest = plans.filter((p) => p.id !== active.id);
     const removed = structuredClone(active);
     setDeletedPlans((current) => [...current, removed].slice(-20));
@@ -1207,7 +1245,7 @@ export default function App() {
   }
   async function transferIn(id: number, from = selected, atGW = gw) {
     const transferWeek = active?.weeks.find((row) => row.gw === atGW);
-    if (!data || !active || from === null || !transferWeek || busy)
+    if (!data || !active || from === null || !transferWeek || operationRef.current)
       return false;
     const incoming = lookup.get(id)!,
       outgoing = lookup.get(from)!;
@@ -1233,7 +1271,7 @@ export default function App() {
   function setCaptain(id: number, vice = false, atGW = gw) {
     if (
       !active ||
-      busy ||
+      operationRef.current ||
       !active.weeks.find((row) => row.gw === atGW)?.starters.includes(id)
     )
       return;
@@ -1252,7 +1290,7 @@ export default function App() {
     );
   }
   function swapPlayers(from: number, id: number) {
-    if (!active || !week || !data || busy) return;
+    if (!active || !week || !data || operationRef.current) return;
     const first = lookup.get(from),
       second = lookup.get(id);
     if (!first || !second || !canSwap(week, first, second, data.players)) {
@@ -1275,7 +1313,7 @@ export default function App() {
   }
   function moveBench(offset: number, player = selected, atGW = gw) {
     const targetWeek = active?.weeks.find((row) => row.gw === atGW);
-    if (!active || !targetWeek || player === null || busy) return;
+    if (!active || !targetWeek || player === null || operationRef.current) return;
     const index = targetWeek.bench.indexOf(player),
       target = index + offset;
     if (index < 1 || target < 1 || target > 3) return;
@@ -1342,7 +1380,8 @@ export default function App() {
     void updatePlan(p, "Gameweek restored to the preceding squad.");
   }
   async function importTeam() {
-    setBusy("Reading your public FPL squad…");
+    const operation = beginOperation("Reading your public FPL squad…");
+    if (!operation) return;
     try {
       const imported = await api<{
         squad: number[];
@@ -1380,7 +1419,7 @@ export default function App() {
     } catch (e) {
       notify((e as Error).message, true);
     } finally {
-      setBusy("");
+      finishOperation(operation);
     }
   }
   async function saveTeamSettings() {
@@ -1389,7 +1428,7 @@ export default function App() {
     await updatePlan(p, "Starting bank and free transfers updated.");
   }
   async function runSolve(fresh = false, inPlace = false) {
-    if (!data || busy || solveInFlightRef.current) return;
+    if (!data || operationRef.current || solveInFlightRef.current) return;
     const startGW =
       inPlace && active && !active.weeks.some((week) => week.gw === gw)
         ? active.weeks[0].gw
@@ -1415,6 +1454,10 @@ export default function App() {
             1,
             Math.min(strategy.horizon, data.gameweeks.at(-1)! - startGW + 1),
           );
+    const operation = beginOperation(
+      `Optimising GW${startGW}–${startGW + horizon - 1}…`,
+    );
+    if (!operation) return;
     const request = ++solveRequestRef.current;
     solveInFlightRef.current = true;
     if (!inPlace) {
@@ -1422,7 +1465,6 @@ export default function App() {
       setSolveContext(null);
     }
     setSelected(null);
-    setBusy(`Optimising GW${startGW}–${startGW + horizon - 1}…`);
     try {
       let prefix: Week[] = [];
       let baselinePlan: Plan | null = null;
@@ -1531,7 +1573,7 @@ export default function App() {
           startGW,
           horizon,
         );
-        setBusy("Checking optimised team…");
+        operationMessage(operation, "Checking optimised team…");
         const checked = await api<{ weeks: Week[] }>(
           "/plan/validate",
           planValidationRequest(candidate, forecasts),
@@ -1578,11 +1620,13 @@ export default function App() {
         notify((e as Error).message, true);
     } finally {
       solveInFlightRef.current = false;
-      if (request === solveRequestRef.current) setBusy("");
+      finishOperation(operation);
     }
   }
   async function applySolve() {
-    if (!data || !solveResult?.weeks.length || !solveContext || busy) return;
+    if (
+      !data || !solveResult?.weeks.length || !solveContext || operationRef.current
+    ) return;
     const context = solveContext;
     const resultWeeks = structuredClone(solveResult.weeks);
     let p: Plan;
@@ -1622,7 +1666,8 @@ export default function App() {
         weeks: [...structuredClone(context.prefix), ...resultWeeks],
       };
     }
-    setBusy("Saving branch…");
+    const operation = beginOperation("Saving branch…");
+    if (!operation) return;
     try {
       const valid = await validatedPlan(p);
       setPlans((ps) => [...ps, valid]);
@@ -1636,7 +1681,7 @@ export default function App() {
     } catch (e) {
       notify((e as Error).message, true);
     } finally {
-      setBusy("");
+      finishOperation(operation);
     }
   }
   async function applyStress(
@@ -1656,7 +1701,8 @@ export default function App() {
       weeks: structuredClone(weeks),
       created_at: new Date().toISOString(),
     };
-    setBusy("Checking the stress-test branch…");
+    const operation = beginOperation("Checking the stress-test branch…");
+    if (!operation) return;
     try {
       const valid = await validatedPlan(p);
       setPlans((ps) => [...ps, valid]);
@@ -1667,11 +1713,12 @@ export default function App() {
     } catch (e) {
       notify((e as Error).message, true);
     } finally {
-      setBusy("");
+      finishOperation(operation);
     }
   }
   async function refresh() {
-    setBusy("Refreshing public feeds…");
+    const operation = beginOperation("Refreshing public feeds…");
+    if (!operation) return;
     try {
       const baseline = await forecastBaseline(true);
       const restored = await loadPlanningState(
@@ -1708,11 +1755,14 @@ export default function App() {
     } catch (e) {
       notify((e as Error).message, true);
     } finally {
-      setBusy("");
+      finishOperation(operation);
     }
   }
   async function snapshot() {
-    setBusy("Refreshing live inputs and recording a pre-deadline snapshot…");
+    const operation = beginOperation(
+      "Refreshing live inputs and recording a pre-deadline snapshot…",
+    );
+    if (!operation) return;
     try {
       const r = await api<{ filename: string; captured_gameweeks: number[] }>(
         "/snapshot",
@@ -1736,7 +1786,7 @@ export default function App() {
     } catch (e) {
       notify((e as Error).message, true);
     } finally {
-      setBusy("");
+      finishOperation(operation);
     }
   }
   async function importCSV(file: File) {
@@ -1774,7 +1824,8 @@ export default function App() {
     }
   }
   async function scoreProspective() {
-    setBusy("Scoring completed gameweeks…");
+    const operation = beginOperation("Scoring completed gameweeks…");
+    if (!operation) return;
     try {
       const result = await api<Prospective>("/prospective/score", {});
       setProspective(result);
@@ -1786,7 +1837,7 @@ export default function App() {
     } catch (e) {
       notify((e as Error).message, true);
     } finally {
-      setBusy("");
+      finishOperation(operation);
     }
   }
   function exportCSV() {
@@ -1816,11 +1867,12 @@ export default function App() {
     notify("Current projections exported, including custom scenarios.");
   }
   async function importPlans(file: File) {
+    if (!data) return;
+    const operation = beginOperation("Checking imported planning branches…");
+    if (!operation) return;
     try {
-      if (!data) return;
       if (file.size > 5_000_000) throw new Error("Plan file is too large.");
       const value = JSON.parse(await file.text());
-      setBusy("Checking imported planning branches…");
       const prepared = await preparePlanImport(
         value,
         data,
@@ -1857,13 +1909,13 @@ export default function App() {
     } catch (e) {
       notify((e as Error).message, true);
     } finally {
-      setBusy("");
+      finishOperation(operation);
     }
   }
 
   async function applyChipPlan(source: Plan, weeks: Week[]) {
-    if (busy) return;
-    setBusy("Checking chip branch…");
+    const operation = beginOperation("Checking chip branch…");
+    if (!operation) return;
     try {
       const valid = await validatedPlan({
         ...structuredClone(source),
@@ -1877,7 +1929,7 @@ export default function App() {
       setGw(valid.weeks[0].gw);
       notify("Chip branch saved.");
     } finally {
-      setBusy("");
+      finishOperation(operation);
     }
   }
 
@@ -1886,8 +1938,8 @@ export default function App() {
     weeks: Week[],
     job: ChipStrategyJob,
   ) {
-    if (busy) return;
-    setBusy("Checking strategy branch…");
+    const operation = beginOperation("Checking strategy branch…");
+    if (!operation) return;
     try {
       const valid = await validatedPlan({
         ...structuredClone(source),
@@ -1902,7 +1954,7 @@ export default function App() {
       setTab("lineup");
       notify("Strategy branch saved and rescored with current forecasts.");
     } finally {
-      setBusy("");
+      finishOperation(operation);
     }
   }
 
@@ -2355,6 +2407,7 @@ export default function App() {
                 plans={plans}
                 active={active}
                 evalData={evalData}
+                busy={Boolean(busy)}
                 onSnapshot={snapshot}
                 prospective={prospective}
                 onScore={scoreProspective}

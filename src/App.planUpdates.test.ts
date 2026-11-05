@@ -4,9 +4,13 @@ import { describe, expect, it, vi } from "vitest";
 import appSource from "./App.tsx?raw";
 import {
   defaultForecastConfiguration,
+  defaultSolverSettings,
+  solverSettingsForHorizon,
   planValidationRequest,
 } from "./planningPersistence";
-import type { Plan, Week } from "./types";
+import { uid, chipNames, planFromSquad } from "./lib";
+import { quickSolveHorizon, planWithOptimisedSuffix } from "./quickOptimise";
+import type { Plan, Week, Prospective, SensitivityJob } from "./types";
 
 type History = Record<string, { past: Plan[]; future: Plan[] }>;
 type State = {
@@ -14,7 +18,12 @@ type State = {
   activeId: string;
   gw: number;
   busy: string;
+  prospective: Prospective | null;
   selected: number | null;
+  tab: string;
+  detailId: number | null;
+  deletedPlans: Plan[];
+  previewingDraft: boolean;
   planHistory: History;
   toast: { text: string; error?: boolean } | null;
 };
@@ -33,28 +42,91 @@ const app = source.statements.find(
   (node): node is ts.FunctionDeclaration =>
     ts.isFunctionDeclaration(node) && node.name?.text === "App",
 )!;
-const names = ["validatedPlan", "updatePlan", "travelPlan"];
+const names = [
+  "validatedPlan",
+  "updatePlan",
+  "travelPlan",
+  "scoreProspective",
+  "beginOperation",
+  "finishOperation",
+  "operationMessage",
+  "createPlan",
+  "startBranchAt",
+  "restoreDeleted",
+  "importTeam",
+  "runSolve",
+  "applySolve",
+  "applyStress",
+  "refresh",
+  "snapshot",
+  "importPlans",
+  "applyChipPlan",
+  "applyChipStrategy",
+  "clonePlan",
+  "deletePlan",
+  "reorderPlan",
+  "choosePlan",
+  "navigateTab",
+  "adoptShared",
+] as const;
 const functions = app.body!.statements.filter(
-  (node) => ts.isFunctionDeclaration(node) && names.includes(node.name!.text),
+  (node) =>
+    ts.isFunctionDeclaration(node) &&
+    names.some((name) => name === node.name!.text),
 );
 if (functions.length !== names.length) throw new Error("Missing plan actions");
 const printer = ts.createPrinter();
+const initialEffect = app.body!.statements.find(
+  (node) =>
+    ts.isExpressionStatement(node) &&
+    ts.isCallExpression(node.expression) &&
+    node.expression.expression.getText(source) === "useEffect" &&
+    node.expression.arguments[0]
+      .getText(source)
+      .includes("Building a legal £100m"),
+) as ts.ExpressionStatement & { expression: ts.CallExpression };
+let cancelTransfer: ts.Expression | undefined;
+function findCancel(node: ts.Node) {
+  if (
+    ts.isJsxAttribute(node) &&
+    node.name.getText(source) === "onCancelTransfer" &&
+    node.initializer &&
+    ts.isJsxExpression(node.initializer)
+  )
+    cancelTransfer = node.initializer.expression;
+  ts.forEachChild(node, findCancel);
+}
+findCancel(app);
+if (!cancelTransfer) throw new Error("Missing transfer cancellation action");
 const actions = ts.transpileModule(
-  `const { plans, active, gw, busy, planHistory, forecastArgs,
-    api, planValidationRequest, livePlanningRef,
-    setPlans, setPlanHistory, setBusy, setToast, setGw, setSelected, notify
+  `const { plans, active, gw, busy, tab, planHistory, forecastArgs,
+    api, planValidationRequest, livePlanningRef, operationRef, operationVersionRef, data,
+    settings, solveInFlightRef, solveRequestRef, forecastBaseline, uid, chipNames,
+    solverSettingsForHorizon, quickSolveHorizon, planWithOptimisedSuffix, initRef, planFromSquad, setTeamBank, setTeamFT, setModal,
+    loadPlanningState, archivePlanningInputs, dataRequestRef, loadedForecastArgsRef,
+    applyForecastConfiguration, setSettings, setData, setWatch,
+    setActiveId, setTab, setDetailId, setDeletedPlans, setPreviewingDraft,
+    pitchExpanded, wideLayout, treeHidden, solveResult, solveContext,
+    setSolveResult, setSolveContext, teamId,
+    setPlans, setPlanHistory, setBusy, setToast, setGw, setSelected, notify, setProspective
   } = scope;
   ${functions.map((node) => printer.printNode(ts.EmitHint.Unspecified, node, source)).join("\n")}
-  return { updatePlan, travelPlan };`,
+  return { ${names.join(", ")}, initialise: ${initialEffect.expression.arguments[0].getText(source)}, cancelTransfer: ${cancelTransfer.getText(source)} };`,
   { compilerOptions: { target: ts.ScriptTarget.ES2022 } },
 ).outputText;
-const createActions = new Function("scope", actions) as (scope: object) => {
+const createActions = new Function("scope", actions) as (
+  scope: object,
+) => Record<
+  (typeof names)[number] | "initialise" | "cancelTransfer",
+  (...args: any[]) => any
+> & {
   updatePlan: (
     plan: Plan,
     message?: string,
     remember?: boolean,
     pendingMessage?: string,
   ) => Promise<Plan | boolean>;
+  scoreProspective: () => Promise<void>;
   travelPlan: (direction: "past" | "future") => Promise<void>;
 };
 
@@ -71,10 +143,10 @@ function branch(id: string, gameweeks = [7, 8, 9]): Plan {
     weeks: gameweeks.map((gw): Week => ({
       gw,
       squad: [...squad],
-      starters: squad.slice(0, 11),
-      bench: squad.slice(11),
+      starters: [1, 3, 4, 5, 8, 9, 10, 11, 13, 14, 15],
+      bench: [2, 6, 7, 12],
       captain: 1,
-      vice: 2,
+      vice: 3,
       chip: "none",
       bank: 1,
       free_transfers: 2,
@@ -91,23 +163,45 @@ function branch(id: string, gameweeks = [7, 8, 9]): Plan {
 function harness(plans = [branch("A"), branch("B", [12, 13])]) {
   const state: State = {
     plans,
-    activeId: plans[0].id,
-    gw: plans[0].weeks[0].gw,
+    activeId: plans[0]?.id ?? "",
+    gw: plans[0]?.weeks[0].gw ?? 7,
     busy: "",
+    prospective: null,
     selected: 3,
+    tab: "lineup",
+    detailId: 3,
+    deletedPlans: [],
+    previewingDraft: false,
     planHistory: {},
     toast: { text: "Earlier message" },
   };
-  const livePlanningRef = { current: { ...state } };
+  const data = {
+    next_gw: 7,
+    gameweeks: [7, 8, 9],
+    players: branch("A").base_squad.map((id, i) => ({
+      id,
+      price: 6,
+      position_id: i < 2 ? 1 : i < 7 ? 2 : i < 12 ? 3 : 4,
+      gw: {},
+    })),
+  };
+  const initRef = { current: null as object | null };
+  const solveInFlightRef = { current: false };
+  const solveRequestRef = { current: 0 };
+  const operationVersionRef = { current: 0 };
+  const operationRef = { current: null as symbol | null };
+  const livePlanningRef = {
+    current: { ...state, data, forecastArgs: defaultForecastConfiguration },
+  };
   const requests: {
     path: string;
     body: unknown;
-    resolve: (result: { weeks: Week[] }) => void;
+    resolve: (result: unknown) => void;
     reject: (error: Error) => void;
   }[] = [];
   const api = vi.fn(
     (path: string, body: unknown) =>
-      new Promise<{ weeks: Week[] }>((resolve, reject) => {
+      new Promise<unknown>((resolve, reject) => {
         requests.push({ path, body, resolve, reject });
       }),
   );
@@ -119,17 +213,52 @@ function harness(plans = [branch("A"), branch("B", [12, 13])]) {
           ? (update as (current: State[K]) => State[K])(state[key])
           : update;
     };
-  const render = () => {
-    livePlanningRef.current = { ...state };
+  const render = (extra: object = {}) => {
+    livePlanningRef.current = {
+      ...state,
+      data,
+      forecastArgs: defaultForecastConfiguration,
+    };
     return createActions({
       ...state,
       active:
         state.plans.find((p) => p.id === state.activeId) ?? state.plans[0],
       forecastArgs: defaultForecastConfiguration,
       livePlanningRef,
+      operationRef,
+      operationVersionRef,
       api,
+      data,
+      settings: defaultSolverSettings,
+      solverSettingsForHorizon,
+      quickSolveHorizon,
+      planWithOptimisedSuffix,
+      initRef,
+      planFromSquad,
+      setTeamBank: vi.fn(),
+      setTeamFT: vi.fn(),
+      setModal: vi.fn(),
+      solveResult: { weeks: plans[0]?.weeks ?? [] },
+      solveContext: { fresh: false, sourcePlan: plans[0], prefix: [] },
+      solveInFlightRef,
+      solveRequestRef,
+      forecastBaseline: () => api("/refresh", {}),
+      uid,
+      chipNames,
+      teamId: "123",
+      pitchExpanded: false,
+      wideLayout: true,
+      treeHidden: false,
+      setActiveId: setter("activeId"),
+      setTab: setter("tab"),
+      setDetailId: setter("detailId"),
+      setDeletedPlans: setter("deletedPlans"),
+      setPreviewingDraft: setter("previewingDraft"),
+      setSolveResult: vi.fn(),
+      setSolveContext: vi.fn(),
       planValidationRequest,
       setPlans: setter("plans"),
+      setProspective: setter("prospective"),
       setPlanHistory: setter("planHistory"),
       setBusy: setter("busy"),
       setToast: setter("toast"),
@@ -138,9 +267,10 @@ function harness(plans = [branch("A"), branch("B", [12, 13])]) {
       notify: (text: string, error = false) => {
         state.toast = { text, error };
       },
+      ...extra,
     });
   };
-  return { state, requests, api, render };
+  return { state, requests, api, render, operationRef, solveInFlightRef, data };
 }
 
 describe("deferred plan validation", () => {
@@ -150,7 +280,7 @@ describe("deferred plan validation", () => {
     const candidate = { ...before, base_bank: 2, free_transfers: 4 };
     candidate.weeks = candidate.weeks.map((w) => ({
       ...w,
-      captain: 2,
+      captain: 3,
       vice: 1,
     }));
     const pending = h.render().updatePlan(candidate, "Updated.");
@@ -355,5 +485,381 @@ describe("deferred plan validation", () => {
     expect(h.state.busy).toBe("");
     await h.render().travelPlan("future");
     expect(h.api).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("operation ownership", () => {
+  it("does not let Score weeks unlock validation and lose a newer accepted decision", async () => {
+    const h = harness();
+    const original = structuredClone(h.state.plans[0]);
+    const decisionA = structuredClone(original);
+    decisionA.weeks[0].captain = 3;
+    decisionA.weeks[0].vice = 1;
+    const pendingA = h.render().updatePlan(decisionA);
+
+    // Plans/Benchmarks uses this actual App action. On the old code it
+    // completes while A is pending and clears A's global busy message.
+    const scoring = h.render().scoreProspective();
+    if (h.requests[1]) h.requests[1].resolve({ gameweeks: [] });
+    await scoring;
+    const pendingLabel = h.state.busy;
+    const decisionB = structuredClone(original);
+    decisionB.weeks[0].captain = 4;
+    const requestCount = h.requests.length;
+    const pendingB = h.render().updatePlan(decisionB);
+    if (h.requests[requestCount])
+      h.requests[requestCount].resolve({ weeks: decisionB.weeks });
+    const acceptedB = await pendingB;
+    h.render();
+    h.requests[0].resolve({ weeks: decisionA.weeks });
+    await pendingA;
+
+    expect(pendingLabel).toBe("Updating plan…");
+    expect(acceptedB).toBe(false);
+    expect(h.requests).toHaveLength(1);
+    expect(h.state.plans[0]).toEqual(decisionA);
+    expect(h.state.planHistory.A).toEqual({ past: [original], future: [] });
+
+    // Once A finishes, B can be submitted against the accepted plan.
+    const retryB = h.render().updatePlan(decisionB);
+    h.requests[1].resolve({ weeks: decisionB.weeks });
+    await retryB;
+    expect(h.state.plans[0]).toEqual(decisionB);
+    expect(h.state.planHistory.A).toEqual({
+      past: [original, decisionA],
+      future: [],
+    });
+  });
+});
+
+function deferred<T>() {
+  let resolve!: (result: T) => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<T>((yes, no) => {
+    resolve = yes;
+    reject = no;
+  });
+  return { promise, resolve, reject };
+}
+
+const stressJob = {
+  settings: {
+    name: "Stress",
+    solve: {
+      squad: branch("A").base_squad,
+      bank: 1,
+      free_transfers: 2,
+      purchase_prices: { "1": 4.5 },
+      used_chips: [],
+    },
+  },
+} as unknown as SensitivityJob;
+
+describe("adjacent global operations", () => {
+  it.each([
+    ["scoreProspective", []],
+    ["snapshot", []],
+    ["refresh", []],
+    ["importTeam", []],
+    ["importPlans", [{ size: 0, text: vi.fn() }]],
+    ["createPlan", []],
+    ["startBranchAt", [8]],
+    ["restoreDeleted", [branch("deleted")]],
+    ["runSolve", []],
+    ["applySolve", []],
+    ["applyStress", [stressJob, branch("A").weeks, "reference"]],
+    ["applyChipPlan", [branch("A"), branch("A").weeks]],
+    ["applyChipStrategy", [branch("A"), branch("A").weeks, {}]],
+  ] as const)(
+    "blocks stale %s callbacks while validation owns the operation",
+    async (name, args) => {
+      const h = harness();
+      const stale = h.render(); // busy was empty in this render
+      const pending = stale.updatePlan(h.state.plans[0]);
+      const owner = h.operationRef.current;
+      await stale[name](...args);
+      expect(h.api).toHaveBeenCalledTimes(1);
+      expect(h.state.busy).toBe("Updating plan…");
+      expect(h.operationRef.current).toBe(owner);
+      expect(h.state.planHistory).toEqual({});
+      expect(h.state.toast).toBeNull();
+      h.requests[0].resolve({ weeks: h.state.plans[0].weeks });
+      await pending;
+    },
+  );
+
+  it("guards two mutations in one render, including structural branch actions", async () => {
+    const h = harness();
+    const original = structuredClone(h.state.plans);
+    const stale = h.render();
+    const pending = stale.updatePlan(original[0]);
+    expect(await stale.updatePlan({ ...original[0], base_bank: 4 })).toBe(
+      false,
+    );
+    stale.clonePlan();
+    stale.deletePlan();
+    stale.reorderPlan(1);
+    expect(h.api).toHaveBeenCalledTimes(1);
+    expect(h.state.plans).toEqual(original);
+    expect(h.state.deletedPlans).toEqual([]);
+    h.requests[0].reject(new Error("Invalid lineup"));
+    await pending;
+    expect(h.state.plans).toEqual(original);
+    expect(h.state.planHistory).toEqual({});
+    expect(h.state.busy).toBe("");
+  });
+
+  it("holds ownership through navigation and closing player tools", async () => {
+    const h = harness();
+    const pending = h.render().updatePlan(h.state.plans[0]);
+    h.render().cancelTransfer();
+    expect(h.state.selected).toBeNull();
+    h.render().navigateTab("analysis");
+    h.render().choosePlan("B");
+    h.render().navigateTab("lineup");
+    expect(h.state.detailId).toBeNull();
+    expect(h.state.gw).toBe(12);
+    expect(h.state.busy).toBe("Updating plan…");
+    expect(await h.render().updatePlan(h.state.plans[1])).toBe(false);
+    h.requests[0].resolve({ weeks: h.state.plans[0].weeks });
+    await pending;
+    expect(h.state.activeId).toBe("B");
+    expect(h.state.gw).toBe(12);
+    expect(h.state.busy).toBe("");
+  });
+
+  it.each(["success", "failure"])(
+    "scoring %s cannot overlap another score or plan edit and permits retry",
+    async (outcome) => {
+      const h = harness();
+      const original = structuredClone(h.state.plans);
+      const stale = h.render();
+      const scoring = stale.scoreProspective();
+      await stale.scoreProspective();
+      expect(await stale.updatePlan(original[0])).toBe(false);
+      expect(h.state.busy).toBe("Scoring completed gameweeks…");
+      expect(h.requests).toHaveLength(1);
+      if (outcome === "success") h.requests[0].resolve({ gameweeks: [] });
+      else h.requests[0].reject(new Error("Scoring unavailable"));
+      await scoring;
+      expect(h.state.prospective).toEqual(
+        outcome === "success" ? { gameweeks: [] } : null,
+      );
+      expect(h.state.plans).toEqual(original);
+      expect(h.state.planHistory).toEqual({});
+      expect(h.state.busy).toBe("");
+      const retry = h.render().scoreProspective();
+      h.requests[1].resolve({ gameweeks: [] });
+      await retry;
+      expect(h.state.prospective).toEqual({ gameweeks: [] });
+      expect(h.state.busy).toBe("");
+    },
+  );
+
+  it.each(["snapshot", "refresh", "importTeam", "runSolve"] as const)(
+    "%s failure releases its operation without changing accepted plans",
+    async (name) => {
+      const h = harness();
+      const original = structuredClone(h.state.plans);
+      const pending = h.render()[name](true);
+      expect(h.state.busy).not.toBe("");
+      expect(await h.render().updatePlan(original[0])).toBe(false);
+      h.requests[0].reject(new Error("Request failed"));
+      await pending;
+      expect(h.state.toast).toEqual({ text: "Request failed", error: true });
+      expect(h.state.plans).toEqual(original);
+      expect(h.state.planHistory).toEqual({});
+      expect(h.state.busy).toBe("");
+      expect(h.solveInFlightRef.current).toBe(false);
+      const retry = h.render().updatePlan(original[0]);
+      h.requests[1].resolve({ weeks: original[0].weeks });
+      expect(await retry).toBeTruthy();
+    },
+  );
+
+  it("owns a pending file read, releases a failed read, and does not read a second import", async () => {
+    const h = harness();
+    const read = deferred<string>();
+    const file = { size: 1, text: vi.fn(() => read.promise) };
+    const stale = h.render();
+    const pending = stale.importPlans(file);
+    await stale.importPlans(file);
+    expect(await stale.updatePlan(h.state.plans[0])).toBe(false);
+    expect(file.text).toHaveBeenCalledTimes(1);
+    expect(h.state.busy).toBe("Checking imported planning branches…");
+    expect(h.api).not.toHaveBeenCalled();
+    read.reject(new Error("File read failed"));
+    await pending;
+    expect(h.state.busy).toBe("");
+    expect(h.state.planHistory).toEqual({});
+    // Parse/size rejection must also release ownership without an API call.
+    await h.render().importPlans({ size: 1, text: async () => "{" });
+    expect(h.state.busy).toBe("");
+    await h.render().importPlans({ size: 5_000_001 });
+    expect(h.state.toast).toEqual({
+      text: "Plan file is too large.",
+      error: true,
+    });
+    expect(h.state.busy).toBe("");
+    expect(h.api).not.toHaveBeenCalled();
+    const retry = h.render().updatePlan(h.state.plans[0]);
+    h.requests[0].resolve({ weeks: h.state.plans[0].weeks });
+    await retry;
+  });
+
+  it.each(["applyChipPlan", "applyChipStrategy"] as const)(
+    "%s releases ownership on propagated validation failure",
+    async (name) => {
+      const h = harness();
+      const original = structuredClone(h.state.plans);
+      const invoke = () =>
+        h.render()[name](original[0], original[0].weeks, {
+          settings: { auto_chip: "freehit" },
+          scope: { gameweeks: [7] },
+        });
+      const pending = invoke();
+      const failed = expect(pending).rejects.toThrow("Invalid branch");
+      h.requests[0].reject(new Error("Invalid branch"));
+      await failed;
+      expect(h.state.busy).toBe("");
+      expect(h.state.plans).toEqual(original);
+      const retry = invoke();
+      const canonical = original[0].weeks.map((w) => ({ ...w, bank: 0.8 }));
+      h.requests[1].resolve({ weeks: canonical });
+      await retry;
+      expect(h.state.plans).toHaveLength(3);
+      expect(h.state.plans[2].weeks).toEqual(canonical);
+      expect(h.state.plans[2].base_bank).toBe(1);
+      expect(h.state.plans[2].purchase_prices).toEqual({ "1": 4.5 });
+      expect(h.state.planHistory).toEqual({});
+      expect(h.state.busy).toBe("");
+    },
+  );
+
+  it("does not let an old finalizer or status update release a newer operation", async () => {
+    const h = harness();
+    const actions = h.render();
+    const pending = actions.updatePlan(h.state.plans[0]);
+    const oldOwner = h.operationRef.current;
+    h.requests[0].reject(new Error("Request aborted"));
+    await pending;
+    const scoring = h.render().scoreProspective();
+    actions.finishOperation(oldOwner);
+    actions.operationMessage(oldOwner, "Old message");
+    expect(h.state.busy).toBe("Scoring completed gameweeks…");
+    h.requests[1].resolve({ gameweeks: [] });
+    await scoring;
+  });
+});
+
+describe("automatic initial squad ownership", () => {
+  it("waits for another operation, releases failure, and retries only with new data", async () => {
+    const h = harness([]);
+    const scoring = h.render().scoreProspective();
+    h.render().initialise();
+    expect(h.requests).toHaveLength(1);
+    h.requests[0].resolve({ gameweeks: [] });
+    await scoring;
+    h.render().initialise();
+    expect(h.requests[1].path).toBe("/optimise");
+    expect(h.state.busy).toContain("Building a legal");
+    await h.render().scoreProspective();
+    expect(h.requests).toHaveLength(2);
+    h.requests[1].reject(new Error("Initial solve failed"));
+    await vi.waitFor(() => expect(h.state.busy).toBe(""));
+    h.render().initialise();
+    expect(h.requests).toHaveLength(2); // busy rendering must not cause a retry loop
+    // A refreshed Bootstrap object is a new attempt; mimic the new render's data.
+    const retry = { ...h.data };
+    h.render({ data: retry }).initialise();
+    expect(h.requests).toHaveLength(3);
+    h.requests[2].reject(new Error("Still unavailable"));
+    await vi.waitFor(() => expect(h.state.busy).toBe(""));
+    expect(h.state.plans).toEqual([]);
+  });
+
+  it("holds ownership until the generated squad receives canonical validation", async () => {
+    const h = harness([]);
+    h.render().initialise();
+    h.requests[0].resolve({ weeks: branch("seed").weeks });
+    await vi.waitFor(() => expect(h.requests).toHaveLength(2));
+    expect(h.requests[1].path).toBe("/plan/validate");
+    await h.render().scoreProspective();
+    expect(h.requests).toHaveLength(2);
+    expect(h.state.plans).toEqual([]);
+    const canonical = branch("server").weeks;
+    h.requests[1].resolve({ weeks: canonical });
+    await vi.waitFor(() => expect(h.state.busy).toBe(""));
+    expect(h.state.plans).toHaveLength(1);
+    expect(h.state.plans[0].weeks).toEqual(canonical);
+  });
+});
+
+describe("background shared-plan adoption", () => {
+  it.each(["pending", "success", "failure"])(
+    "rejects a reload spanning a %s validation even without an intervening render",
+    async (outcome) => {
+      const h = harness();
+      const original = structuredClone(h.state.plans);
+      const reload = deferred<unknown>();
+      const load = vi.fn(() => reload.promise);
+      const actions = h.render({ loadPlanningState: load });
+      const shared = actions.adoptShared({ plans: original }, () => true);
+      expect(load).toHaveBeenCalledTimes(1);
+      const candidate = { ...original[0], base_bank: 2 };
+      const pending = actions.updatePlan(candidate);
+      if (outcome === "success") {
+        h.requests[0].resolve({ weeks: candidate.weeks });
+        await pending;
+      } else if (outcome === "failure") {
+        h.requests[0].reject(new Error("Validation failed"));
+        await pending;
+      }
+      // The reload must be discarded before it can adopt old plans/resources,
+      // even though livePlanningRef still contains the previous render.
+      reload.resolve({ plans: original });
+      expect(await shared).toBe(false);
+      expect(h.state.plans[0].base_bank).toBe(outcome === "success" ? 2 : 1);
+      if (outcome === "pending") {
+        expect(h.state.busy).toBe("Updating plan…");
+        h.requests[0].resolve({ weeks: candidate.weeks });
+        await pending;
+      }
+    },
+  );
+});
+
+describe("optimiser operation ownership", () => {
+  it("keeps the same owner through solve and canonical adoption with one undo record", async () => {
+    const h = harness();
+    const original = structuredClone(h.state.plans[0]);
+    const actions = h.render();
+    const pending = actions.runSolve(false, true);
+    const owner = h.operationRef.current;
+    h.requests[0].resolve({ weeks: original.weeks });
+    await vi.waitFor(() => expect(h.requests).toHaveLength(2));
+    expect(h.requests[1].path).toBe("/optimise");
+    const solved = original.weeks.map((w) => ({ ...w, captain: 3 }));
+    h.requests[1].resolve({ weeks: solved });
+    await vi.waitFor(() => expect(h.requests).toHaveLength(3));
+    expect(h.state.busy).toBe("Checking optimised team…");
+    expect(h.operationRef.current).toBe(owner);
+    expect(h.requests[2].path).toBe("/plan/validate");
+    await actions.scoreProspective();
+    expect(await actions.updatePlan(original)).toBe(false);
+    expect(h.requests).toHaveLength(3);
+    expect(h.state.planHistory).toEqual({});
+    const canonical = solved.map((w) => ({
+      ...w,
+      bank: 0.8,
+      hits: 4,
+      next_free_transfers: 1,
+    }));
+    h.requests[2].resolve({ weeks: canonical });
+    await pending;
+    expect(h.state.plans[0]).toEqual({ ...original, weeks: canonical });
+    expect(h.state.planHistory.A).toEqual({ past: [original], future: [] });
+    expect(h.state.busy).toBe("");
+    expect(h.solveInFlightRef.current).toBe(false);
   });
 });

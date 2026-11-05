@@ -41,10 +41,15 @@ export function TransferPanel({
   const weeks = data.gameweeks.filter((gw) => gw >= week.gw).slice(0, horizon);
   const total = (player: Player) =>
     weeks.reduce((sum, gw) => sum + xp(player, gw), 0);
-  const { sale, budget } = transferAllowance(plan, week, outgoing);
+  const allowance = useMemo(
+    () => transferAllowance(plan, week, outgoing, data.players),
+    [plan, week, outgoing, data.players],
+  );
+  const { bank, sale, budget, cancelsBuy } = allowance;
+  const preview = target ? allowance.forTarget(target) : null;
   const lookup = new Map(data.players.map((player) => [player.id, player]));
   const reason = (player: Player) =>
-    player.price > budget + 0.001
+    allowance.forTarget(player).bankAfter < 0
       ? "Over budget"
       : week.squad.filter(
             (id) => id !== outgoing.id && lookup.get(id)?.team === player.team,
@@ -83,7 +88,7 @@ export function TransferPanel({
       query,
       sort,
       horizon,
-      budget,
+      allowance,
       includeUnavailable,
     ],
   );
@@ -99,16 +104,16 @@ export function TransferPanel({
     <section className="transfer-panel" aria-label={`Replace ${outgoing.name}`}>
       <div className="transfer-resources">
         <span>
-          Selling <b>{money(sale)}</b>
+          Released <b>{money(sale)}</b>
         </span>
         <span>
-          Bank <b>{money(week.bank)}</b>
+          Bank <b>{money(bank)}</b>
         </span>
         <span>
           Available <b className="orange">{money(budget)}</b>
         </span>
       </div>
-      {target ? (
+      {target && preview ? (
         <div className="transfer-confirm">
           <button
             className="button small"
@@ -125,19 +130,24 @@ export function TransferPanel({
             <div>
               <Badge player={outgoing} size={35} />
               <b>{outgoing.name}</b>
-              <small>{money(sale)} selling</small>
+              <small>
+                {money(sale)} {cancelsBuy ? "buy cancelled" : "selling"}
+              </small>
             </div>
             <ArrowRight size={22} />
             <div>
               <Badge player={target} size={35} />
               <b>{target.name}</b>
-              <small>{money(target.price)} buying</small>
+              <small>
+                {money(preview.cost)}{" "}
+                {preview.cancelsSale ? "sale cancelled" : "buying"}
+              </small>
             </div>
           </div>
           <div className="transfer-impact">
             <div>
               <small>Bank after</small>
-              <b>{money(budget - target.price)}</b>
+              <b>{money(preview.bankAfter)}</b>
             </div>
             <div>
               <small>GW{week.gw} Δ xPts</small>

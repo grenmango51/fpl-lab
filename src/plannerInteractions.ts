@@ -7,16 +7,73 @@ export function sellingPrice(current: number, purchase: number): number {
   return (now > paid ? paid + Math.floor((now - paid) / 2) : now) / 10;
 }
 
-export function transferAllowance(plan: Plan, week: Week, player: Player) {
-  const index = plan.weeks.findIndex((row) => row.gw === week.gw);
-  const previous = plan.weeks[index - 1];
-  const purchases =
-    week.purchase_prices ?? previous?.purchase_prices ?? plan.purchase_prices;
-  const sale = sellingPrice(
-    player.price,
-    purchases[String(player.id)] ?? player.price,
+export function transferAllowance(
+  plan: Plan,
+  week: Week,
+  player: Player,
+  players: Player[],
+) {
+  const prices = new Map(players.map((p) => [p.id, Math.round(p.price * 10)]));
+  let squad = new Set(plan.base_squad),
+    bank = Math.round(plan.base_bank * 10);
+  const purchases = new Map(
+    plan.base_squad.map((id) => [
+      id,
+      Math.round(
+        (plan.purchase_prices[String(id)] ?? prices.get(id)! / 10) * 10,
+      ),
+    ]),
   );
-  return { sale, budget: Math.round((week.bank + sale) * 10) / 10 };
+  const salePrice = (id: number) =>
+    Math.round(
+      sellingPrice(prices.get(id)! / 10, purchases.get(id)! / 10) * 10,
+    );
+  const bankFor = (next: Set<number>) =>
+    bank +
+    [...squad].reduce(
+      (sum, id) => sum + (next.has(id) ? 0 : salePrice(id)),
+      0,
+    ) -
+    [...next].reduce(
+      (sum, id) => sum + (squad.has(id) ? 0 : prices.get(id)!),
+      0,
+    );
+
+  // Reconstruct the entering permanent resources just as /plan/validate does.
+  // Post-decision receipts have already removed this week's sold players.
+  for (const previous of plan.weeks
+    .filter((row) => row.gw < week.gw)
+    .sort((a, b) => a.gw - b.gw)) {
+    if (previous.chip === "freehit") continue;
+    const next = new Set(previous.squad);
+    bank = bankFor(next);
+    for (const id of squad) if (!next.has(id)) purchases.delete(id);
+    for (const id of next)
+      if (!squad.has(id)) purchases.set(id, prices.get(id)!);
+    squad = next;
+  }
+  const current = new Set(week.squad);
+  const currentBank = bankFor(current);
+  const cancelsBuy = !squad.has(player.id);
+  const sale = cancelsBuy ? prices.get(player.id)! : salePrice(player.id);
+  return {
+    bank: currentBank / 10,
+    sale: sale / 10,
+    budget: (currentBank + sale) / 10,
+    cancelsBuy,
+    forTarget(target: Player) {
+      const final = new Set(current);
+      final.delete(player.id);
+      final.add(target.id);
+      const cancelsSale = squad.has(target.id);
+      return {
+        cost:
+          (cancelsSale ? salePrice(target.id) : prices.get(target.id)!) / 10,
+        bankAfter: bankFor(final) / 10,
+        cancelsSale,
+      };
+    },
+  };
 }
 
 export function canSwap(

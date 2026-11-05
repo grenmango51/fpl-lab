@@ -1,0 +1,20 @@
+{
+  "players": [[1, 1, 2, 6], [2, 1, 3, 6], [3, 2, 4, 6], [4, 2, 5, 6], [5, 2, 1, 6], [6, 2, 2, 6], [7, 2, 3, 6], [8, 3, 4, 6], [9, 3, 5, 6], [10, 3, 1, 6], [11, 3, 2, 6], [12, 3, 3, 6], [13, 4, 4, 6.5], [14, 4, 5, 6], [15, 4, 1, 6], [16, 4, 6, 6], [17, 2, 7, 5.5], [18, 4, 8, 6.1], [19, 4, 9, 6]],
+  "cases": [
+    {"name": "same-week cancellation", "weeks": [{"gw": 7, "swaps": [[13, 16]]}], "outgoing": 16, "target": 13, "expected": {"bank": 0, "sale": 6, "cost": 6, "bankAfter": 0}},
+    {"name": "wildcard cancellation", "weeks": [{"gw": 7, "swaps": [[13, 16]], "chip": "wildcard"}], "outgoing": 16, "target": 13, "expected": {"bank": 0, "sale": 6, "cost": 6, "bankAfter": 0}},
+    {"name": "Free Hit cancellation", "weeks": [{"gw": 7, "swaps": [[13, 16]], "chip": "freehit"}], "outgoing": 16, "target": 13, "expected": {"bank": 0, "sale": 6, "cost": 6, "bankAfter": 0}},
+    {"name": "genuinely unaffordable new buy", "weeks": [{"gw": 7, "swaps": [[13, 16]]}], "outgoing": 16, "target": 18, "expected": {"bank": 0, "sale": 6, "cost": 6.1, "bankAfter": -0.1}},
+    {"name": "other transfer remains after cancellation", "weeks": [{"gw": 7, "swaps": [[13, 16], [3, 17]]}], "outgoing": 16, "target": 13, "expected": {"bank": 0.5, "sale": 6, "cost": 6, "bankAfter": 0.5}},
+    {"name": "restoring a funding sale is unaffordable", "weeks": [{"gw": 7, "swaps": [[13, 16], [3, 17]]}], "outgoing": 16, "target": 13, "expected": {"bank": 0, "sale": 5.5, "cost": 6, "bankAfter": -0.5}, "prices": {"16": 5.5, "17": 6.5}},
+    {"name": "net accounting across different planned slots", "weeks": [{"gw": 7, "swaps": [[13, 16], [14, 19]]}], "outgoing": 19, "target": 13, "expected": {"bank": 0, "sale": 6, "cost": 6, "bankAfter": 0}},
+    {"name": "prior week sale is a real repurchase", "weeks": [{"gw": 7, "swaps": [[13, 16]]}, {"gw": 8, "swaps": [[13, 16]]}], "outgoing": 16, "target": 13, "expected": {"bank": 0, "sale": 6, "cost": 6.5, "bankAfter": -0.5}},
+    {"name": "prior purchase receipt replaces original receipt", "weeks": [{"gw": 7, "swaps": [[13, 16]]}, {"gw": 8, "swaps": []}], "outgoing": 13, "target": 16, "expected": {"bank": 0.5, "sale": 6.5, "cost": 6, "bankAfter": 1}, "bank": 1},
+    {"name": "earlier savings fund selected week", "weeks": [{"gw": 7, "swaps": [[3, 17]]}, {"gw": 8, "swaps": [[3, 17], [13, 16]]}], "outgoing": 16, "target": 18, "expected": {"bank": 0.5, "sale": 6, "cost": 6.1, "bankAfter": 0.4}},
+    {"name": "Free Hit restores permanent holdings", "weeks": [{"gw": 7, "swaps": [[13, 16]], "chip": "freehit"}, {"gw": 8, "swaps": [[13, 16]]}], "outgoing": 16, "target": 13, "expected": {"bank": 0, "sale": 6, "cost": 6, "bankAfter": 0}},
+    {"name": "Free Hit restores permanent bank", "weeks": [{"gw": 7, "swaps": [[3, 17]], "chip": "freehit"}, {"gw": 8, "swaps": [[13, 16]]}], "outgoing": 16, "target": 18, "expected": {"bank": 0, "sale": 6, "cost": 6.1, "bankAfter": -0.1}},
+    {"name": "missing base receipt uses current price", "weeks": [{"gw": 7, "swaps": [[13, 16]]}], "outgoing": 16, "target": 13, "expected": {"bank": 0.5, "sale": 6, "cost": 6.5, "bankAfter": 0}, "purchases": {}},
+    {"name": "loss receipt uses full current value", "weeks": [{"gw": 7, "swaps": [[13, 16]]}], "outgoing": 16, "target": 13, "expected": {"bank": 0.5, "sale": 6, "cost": 6.5, "bankAfter": 0}, "purchases": {"13": 7}},
+    {"name": "club limit still blocks an affordable cancellation", "weeks": [{"gw": 7, "swaps": [[13, 16], [4, 17]]}], "outgoing": 16, "target": 13, "expected": {"bank": 0.5, "sale": 6, "cost": 6, "bankAfter": 0.5}, "teams": {"17": 4}, "clubBlocked": true}
+  ]
+}

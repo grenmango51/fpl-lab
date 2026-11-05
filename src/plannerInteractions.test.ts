@@ -62,21 +62,28 @@ describe("contextual planner decisions", () => {
     expect(sellingPrice(5.9, 5.5)).toBe(5.7);
     expect(sellingPrice(5.2, 5.5)).toBe(5.2);
   });
-  it("uses the server purchase receipt for the selected week", () => {
+  it("uses the entering receipt rather than the post-decision receipt", () => {
     const p = plan(),
       w = p.weeks[0];
     w.purchase_prices = { "13": 5.7 };
-    expect(transferAllowance(p, w, { ...players[12], price: 6.2 })).toEqual({
-      sale: 5.9,
-      budget: 6.9,
+    const current = { ...players[12], price: 6.2 };
+    expect(
+      transferAllowance(p, w, current, [
+        ...players.slice(0, 12),
+        current,
+        ...players.slice(13),
+      ]),
+    ).toMatchObject({
+      sale: 5.8,
+      budget: 6.8,
     });
   });
-  it("previews an affordable temporary FH player's current-price sale", () => {
+  it("retains the permanent acquisition cost when selling on Free Hit", () => {
     const p = plan(),
       w = p.weeks[0];
     w.chip = "freehit";
     w.purchase_prices = {};
-    expect(transferAllowance(p, w, players[12]).budget).toBe(7);
+    expect(transferAllowance(p, w, players[12], players).budget).toBe(6.7);
   });
   it("rejects a substitution below the minimum defence and permits a legal formation change", () => {
     const w = week(7);

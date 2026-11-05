@@ -16,6 +16,7 @@ import {
 } from "react";
 import type { Player, Week } from "./types";
 import { clubColors, fmt, money, xp } from "./lib";
+import { canSwap } from "./plannerInteractions";
 
 export function Logo() {
   return (
@@ -131,20 +132,33 @@ export function Pitch({
 }) {
   const [dragged, setDragged] = useState<number | null>(null);
   const lookup = new Map(players.map((p) => [p.id, p]));
+  const source = dragged === null ? undefined : lookup.get(dragged);
+  const targets = disabled
+    ? []
+    : source
+      ? week.squad.filter((id) => {
+          const player = lookup.get(id);
+          return player && canSwap(week, source, player, players);
+        })
+      : swapTargets;
   const tile = (id: number, bench = false) => {
     const p = lookup.get(id);
     if (!p) return null;
     const f = p.gw[String(week.gw)];
     return (
       <div
-        className={`player-tile ${selected === id ? "player-selected" : ""} ${bench ? "bench-player" : ""} ${swapTargets?.includes(id) ? "swap-target" : ""}`}
+        className={`player-tile ${(dragged ?? selected) === id ? "player-selected" : ""} ${dragged === id ? "drag-source" : ""} ${bench ? "bench-player" : ""} ${targets?.includes(id) ? "swap-target" : ""}`}
         key={id}
         onDragOver={(event) => {
-          if (!disabled && onSwap && dragged !== null) event.preventDefault();
+          if (!disabled && onSwap && dragged !== null && targets?.includes(id)) {
+            event.preventDefault();
+            event.dataTransfer.dropEffect = "move";
+          } else if (dragged !== null) event.dataTransfer.dropEffect = "none";
         }}
         onDrop={(event) => {
           event.preventDefault();
-          if (!disabled && onSwap && dragged !== null) onSwap(dragged, id);
+          if (!disabled && onSwap && dragged !== null && targets?.includes(id))
+            onSwap(dragged, id);
           setDragged(null);
         }}
       >
@@ -160,6 +174,11 @@ export function Pitch({
             setDragged(id);
             event.dataTransfer.setData("text/plain", String(id));
             event.dataTransfer.effectAllowed = "move";
+            const shirt = event.currentTarget.querySelector(".player-shirt");
+            if (shirt) {
+              const box = shirt.getBoundingClientRect();
+              event.dataTransfer.setDragImage(shirt, box.width / 2, box.height / 2);
+            }
           }}
           onDragEnd={() => setDragged(null)}
           onClick={() => {
@@ -171,7 +190,7 @@ export function Pitch({
             interactionMode === "inspect" ? () => onDetail(id) : undefined
           }
           aria-label={
-            swapTargets?.includes(id)
+            targets?.includes(id)
               ? `Substitute ${p.name}`
               : interactionMode === "substitute"
                 ? `${selected === id ? "Deselect" : "Select"} ${p.name}`
@@ -218,7 +237,7 @@ export function Pitch({
   };
   return (
     <div
-      className={`pitch-wrap ${interactionMode === "substitute" ? "pitch-select-mode" : ""}`}
+      className={`pitch-wrap ${interactionMode === "substitute" ? "pitch-select-mode" : ""} ${dragged !== null ? "pitch-dragging" : ""}`}
     >
       <div className="pitch">
         <svg

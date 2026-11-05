@@ -38,6 +38,7 @@ export function PlanTree({
   onStart,
   onReorder,
   busy,
+  optimising = false,
 }: {
   data: Bootstrap;
   plans: Plan[];
@@ -59,6 +60,7 @@ export function PlanTree({
   onStart: (gw: number) => void;
   onReorder: (direction: number) => void;
   busy: boolean;
+  optimising?: boolean;
 }) {
   const [zoom, setZoom] = useState(0.65);
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
@@ -240,11 +242,11 @@ export function PlanTree({
           <button
             className="button tree-pitch-optimise"
             disabled={!active || busy}
-            aria-busy={busy}
+            aria-busy={optimising}
             onClick={onOptimise}
           >
             <Sparkles size={13} />
-            {busy ? "Optimising…" : "Optimise"}
+            {optimising ? "Optimising…" : "Optimise"}
           </button>
         ) : null}
         <span className="tree-team-label">
@@ -367,7 +369,7 @@ export function PlanTree({
               </label>
               <button onClick={onOptimise} disabled={busy}>
                 <Sparkles size={13} />
-                {busy ? "Optimising…" : `Optimise GW${gw}`}
+                {optimising ? "Optimising…" : `Optimise GW${gw}`}
               </button>
             </div>
           </>
@@ -522,10 +524,10 @@ export function PlanTree({
                             className="tree-node-optimise"
                             onClick={onOptimise}
                             disabled={busy}
-                            aria-busy={busy}
+                            aria-busy={optimising}
                           >
                             <Sparkles size={12} />
-                            {busy ? "Optimising…" : "Optimise"}
+                            {optimising ? "Optimising…" : "Optimise"}
                           </button>
                         ) : null}
                         <button

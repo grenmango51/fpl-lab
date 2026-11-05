@@ -911,10 +911,16 @@ export default function App() {
     );
     return { ...p, weeks: result.weeks };
   }
-  async function updatePlan(p: Plan, message?: string, remember = true) {
+  async function updatePlan(
+    p: Plan,
+    message?: string,
+    remember = true,
+    pendingMessage = "Updating plan…",
+  ) {
     if (busy) return false;
     const before = plans.find((row) => row.id === p.id);
-    setBusy("Checking your plan…");
+    setToast(null);
+    setBusy(pendingMessage);
     try {
       const valid = await validatedPlan(p);
       if (remember && before)
@@ -948,6 +954,7 @@ export default function App() {
         target,
         direction === "past" ? "Change undone." : "Change restored.",
         false,
+        direction === "past" ? "Undoing…" : "Redoing…",
       )
     ) {
       setPlanHistory((current) => ({
@@ -1251,7 +1258,7 @@ export default function App() {
     w.bench = w.bench.map((i) => (i === reserve ? starter : i));
     if (w.captain === starter) w.captain = reserve;
     if (w.vice === starter) w.vice = reserve;
-    void updatePlan(p, "Starting lineup updated.");
+    void updatePlan(p, "Starting lineup updated.", true, "Updating lineup…");
     setSelected(null);
   }
   function swapBench(id: number) {
@@ -1971,6 +1978,7 @@ export default function App() {
         week={week}
         selected={selected}
         busy={Boolean(busy)}
+        busyLabel={busy}
         onWeek={(value) => {
           setGw(value);
           setSelected(null);
@@ -2100,6 +2108,7 @@ export default function App() {
           onStart={(value) => void startBranchAt(value)}
           onReorder={reorderPlan}
           busy={Boolean(busy)}
+          optimising={solveInFlightRef.current}
           onDelete={deletePlan}
           onConfigure={() => {
             setTeamBank(active?.base_bank ?? 0);

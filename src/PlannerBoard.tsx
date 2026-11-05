@@ -11,6 +11,7 @@ import {
   Undo2,
   Redo2,
   X,
+  LoaderCircle,
 } from "lucide-react";
 import { ActionMenu, Pitch } from "./components";
 import { chipNames, fmt, money } from "./lib";
@@ -25,6 +26,7 @@ export function PlannerBoard({
   week,
   selected,
   busy,
+  busyLabel,
   onWeek,
   onName,
   onHorizon,
@@ -50,6 +52,7 @@ export function PlannerBoard({
   week: Week;
   selected: number | null;
   busy: boolean;
+  busyLabel?: string;
   onWeek: (gw: number) => void;
   onName: (name: string) => void;
   onHorizon: (horizon: number) => void;
@@ -154,6 +157,12 @@ export function PlannerBoard({
           value={plan.name}
           onChange={(event) => onName(event.target.value.slice(0, 70))}
         />
+        {busy && (
+          <span className="board-pending-status" role="status" aria-atomic="true">
+            <LoaderCircle size={13} className="spin" aria-hidden="true" />
+            <span>{busyLabel || "Updating plan…"}</span>
+          </span>
+        )}
         <button
           className="icon-button"
           aria-label="Undo plan change"

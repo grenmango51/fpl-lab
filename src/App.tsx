@@ -934,9 +934,12 @@ export default function App() {
             future: [],
           },
         }));
-      setPlans((ps) => ps.map((v) => (v.id === p.id ? valid : v)));
+      // Names can change while validation is pending, independently of decisions.
+      setPlans((ps) =>
+        ps.map((v) => (v.id === p.id ? { ...valid, name: v.name } : v)),
+      );
       if (message) notify(message);
-      return true;
+      return valid;
     } catch (e) {
       notify((e as Error).message, true);
       return false;
@@ -949,14 +952,13 @@ export default function App() {
     const history = planHistory[active.id];
     const target = history?.[direction].at(-1);
     if (!target) return;
-    if (
-      await updatePlan(
-        target,
-        direction === "past" ? "Change undone." : "Change restored.",
-        false,
-        direction === "past" ? "Undoing…" : "Redoing…",
-      )
-    ) {
+    const valid = await updatePlan(
+      target,
+      direction === "past" ? "Change undone." : "Change restored.",
+      false,
+      direction === "past" ? "Undoing…" : "Redoing…",
+    );
+    if (valid) {
       setPlanHistory((current) => ({
         ...current,
         [active.id]:
@@ -970,8 +972,15 @@ export default function App() {
                 future: history.future.slice(0, -1),
               },
       }));
-      if (!target.weeks.some((row) => row.gw === gw)) setGw(target.weeks[0].gw);
-      setSelected(null);
+      // History belongs to its source plan; selection belongs to the current view.
+      if (livePlanningRef.current.activeId === active.id) {
+        setGw((current) =>
+          valid.weeks.some((row) => row.gw === current)
+            ? current
+            : valid.weeks[0].gw,
+        );
+        setSelected(null);
+      }
     }
   }
   useEffect(() => {

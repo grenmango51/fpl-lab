@@ -713,31 +713,28 @@ export default function App() {
           1,
           "My first plan",
         );
-        const response = await api<{ weeks: Week[] }>("/plan/validate", {
-          ...forecastArgs,
-          base_squad: p.base_squad,
-          bank: p.base_bank,
-          free_transfers: 1,
-          purchase_prices: p.purchase_prices,
-          weeks: p.weeks,
-        });
-        p.weeks = response.weeks;
-        setPlans([p]);
-        setActiveId(p.id);
+        const valid = await validatedPlan(p, operation);
+        assertPlanInputs(operation);
+        setPlans([valid]);
+        setActiveId(valid.id);
       })
       .catch((e) => {
-        notify(e.message, true);
+        if (operationRef.current === operation) notify(e.message, true);
       })
       .finally(() => finishOperation(operation));
   }, [data, plans.length, busy]);
   useEffect(() => {
     if (!data) return;
     const serialized = JSON.stringify(forecastArgs);
-    if (loadedForecastArgsRef.current === serialized) return;
+    // Reverting to the loaded configuration must also invalidate a pending load.
     const request = ++dataRequestRef.current;
+    if (loadedForecastArgsRef.current === serialized) return;
+    const current = () =>
+      request === dataRequestRef.current &&
+      JSON.stringify(livePlanningRef.current.forecastArgs) === serialized;
     api<Bootstrap>("/projections", forecastArgs)
       .then((d) => {
-        if (request === dataRequestRef.current) {
+        if (current()) {
           loadedForecastArgsRef.current = serialized;
           setData((current) => ({
             ...d,
@@ -745,7 +742,12 @@ export default function App() {
           }));
         }
       })
-      .catch((e) => notify(e.message, true));
+      .catch((e) => {
+        if (current()) notify(e.message, true);
+      });
+    return () => {
+      if (request === dataRequestRef.current) ++dataRequestRef.current;
+    };
   }, [
     overrides,
     minutesSchedule,
@@ -938,11 +940,29 @@ export default function App() {
     if (operationRef.current === operation) setBusy(message);
   }
 
-  async function validatedPlan(p: Plan) {
+  // A receipt is valid only for this render's configuration and loaded inputs.
+  // Reject the entire attempt on drift: resources and history must come from a
+  // fresh server validation on retry, never from a locally repaired old receipt.
+  function assertPlanInputs(operation: symbol) {
+    if (operationRef.current !== operation)
+      throw new Error("Plan update expired. Try again.");
+    const live = livePlanningRef.current;
+    const configuration = JSON.stringify(forecastArgs);
+    if (
+      !data ||
+      live.data !== data ||
+      JSON.stringify(live.forecastArgs) !== configuration ||
+      loadedForecastArgsRef.current !== configuration
+    )
+      throw new Error("Forecasts changed. Try again.");
+  }
+  async function validatedPlan(p: Plan, operation: symbol) {
+    assertPlanInputs(operation);
     const result = await api<{ weeks: Week[] }>(
       "/plan/validate",
       planValidationRequest(p, forecastArgs),
     );
+    assertPlanInputs(operation);
     return { ...p, weeks: result.weeks };
   }
   async function updatePlan(
@@ -956,7 +976,8 @@ export default function App() {
     const before = plans.find((row) => row.id === p.id);
     setToast(null);
     try {
-      const valid = await validatedPlan(p);
+      const valid = await validatedPlan(p, operation);
+      assertPlanInputs(operation);
       if (remember && before)
         setPlanHistory((history) => ({
           ...history,
@@ -975,7 +996,7 @@ export default function App() {
       if (message) notify(message);
       return valid;
     } catch (e) {
-      notify((e as Error).message, true);
+      if (operationRef.current === operation) notify((e as Error).message, true);
       return false;
     } finally {
       finishOperation(operation);
@@ -1086,13 +1107,14 @@ export default function App() {
     const operation = beginOperation("Creating scenario…");
     if (!operation) return;
     try {
-      const valid = await validatedPlan(p);
+      const valid = await validatedPlan(p, operation);
+      assertPlanInputs(operation);
       setPlans((current) => [...current, valid]);
       setActiveId(p.id);
       setGw(valid.weeks[0].gw);
       notify("New scenario from the base team.");
     } catch (error) {
-      notify((error as Error).message, true);
+      if (operationRef.current === operation) notify((error as Error).message, true);
     } finally {
       finishOperation(operation);
     }
@@ -1115,8 +1137,9 @@ export default function App() {
     const operation = beginOperation("Creating future branch…");
     if (!operation) return;
     try {
-      const source = await validatedPlan(active),
-        prefix = source.weeks.filter((row) => row.gw < start),
+      const source = await validatedPlan(active, operation);
+      assertPlanInputs(operation);
+      const prefix = source.weeks.filter((row) => row.gw < start),
         receipt = prefix.at(-1);
       if (
         !receipt?.permanent_squad ||
@@ -1144,7 +1167,8 @@ export default function App() {
             .map((row) => ({ chip: row.chip, gw: row.gw })),
         ],
       };
-      const valid = await validatedPlan(next);
+      const valid = await validatedPlan(next, operation);
+      assertPlanInputs(operation);
       setPlans((current) => [...current, valid]);
       setActiveId(valid.id);
       setGw(start);
@@ -1152,7 +1176,7 @@ export default function App() {
       setSelected(null);
       notify(`Branch starts at GW${start}. Original plan retained.`);
     } catch (error) {
-      notify((error as Error).message, true);
+      if (operationRef.current === operation) notify((error as Error).message, true);
     } finally {
       finishOperation(operation);
     }
@@ -1167,7 +1191,8 @@ export default function App() {
     const operation = beginOperation("Restoring plan…");
     if (!operation) return;
     try {
-      const valid = await validatedPlan(plan);
+      const valid = await validatedPlan(plan, operation);
+      assertPlanInputs(operation);
       setPlans((current) =>
         current.some((row) => row.id === valid.id)
           ? current
@@ -1180,7 +1205,7 @@ export default function App() {
       setGw(valid.weeks[0].gw);
       notify("Plan restored.");
     } catch (error) {
-      notify((error as Error).message, true);
+      if (operationRef.current === operation) notify((error as Error).message, true);
     } finally {
       finishOperation(operation);
     }
@@ -1406,7 +1431,8 @@ export default function App() {
       p.entry_id = imported.entry_id;
       p.team_name = imported.name;
       p.used_chips = imported.used_chips ?? [];
-      const valid = await validatedPlan(p);
+      const valid = await validatedPlan(p, operation);
+      assertPlanInputs(operation);
       setPlans((ps) => [...ps, valid]);
       setActiveId(valid.id);
       setGw(data.next_gw);
@@ -1417,7 +1443,7 @@ export default function App() {
         `Imported ${imported.name}. Verify bank and saved FTs in team settings.`,
       );
     } catch (e) {
-      notify((e as Error).message, true);
+      if (operationRef.current === operation) notify((e as Error).message, true);
     } finally {
       finishOperation(operation);
     }
@@ -1555,6 +1581,8 @@ export default function App() {
         const unchanged = () => {
           const live = livePlanningRef.current;
           return (
+            operationRef.current === operation &&
+            live.data === data &&
             JSON.stringify(
               live.plans.find((plan) => plan.id === sourcePlan.id),
             ) === JSON.stringify(sourcePlan) &&
@@ -1574,14 +1602,11 @@ export default function App() {
           horizon,
         );
         operationMessage(operation, "Checking optimised team…");
-        const checked = await api<{ weeks: Week[] }>(
-          "/plan/validate",
-          planValidationRequest(candidate, forecasts),
-        );
+        const valid = await validatedPlan(candidate, operation);
+        assertPlanInputs(operation);
         if (request !== solveRequestRef.current) return;
         if (!unchanged())
           throw new Error("Plan or forecasts changed. Optimise again.");
-        const valid = { ...candidate, weeks: checked.weeks };
         setPlanHistory((history) => ({
           ...history,
           [sourcePlan.id]: {
@@ -1616,7 +1641,7 @@ export default function App() {
       });
       notify(`Plan ready · GW${startGW}–${startGW + horizon - 1}.`);
     } catch (e) {
-      if (request === solveRequestRef.current)
+      if (request === solveRequestRef.current && operationRef.current === operation)
         notify((e as Error).message, true);
     } finally {
       solveInFlightRef.current = false;
@@ -1669,7 +1694,8 @@ export default function App() {
     const operation = beginOperation("Saving branch…");
     if (!operation) return;
     try {
-      const valid = await validatedPlan(p);
+      const valid = await validatedPlan(p, operation);
+      assertPlanInputs(operation);
       setPlans((ps) => [...ps, valid]);
       setActiveId(p.id);
       setGw(context.startGW);
@@ -1679,7 +1705,7 @@ export default function App() {
       setTab("lineup");
       notify(`Branch saved · through GW${resultWeeks.at(-1)!.gw}.`);
     } catch (e) {
-      notify((e as Error).message, true);
+      if (operationRef.current === operation) notify((e as Error).message, true);
     } finally {
       finishOperation(operation);
     }
@@ -1704,14 +1730,15 @@ export default function App() {
     const operation = beginOperation("Checking the stress-test branch…");
     if (!operation) return;
     try {
-      const valid = await validatedPlan(p);
+      const valid = await validatedPlan(p, operation);
+      assertPlanInputs(operation);
       setPlans((ps) => [...ps, valid]);
       setActiveId(valid.id);
       setGw(valid.weeks[0].gw);
       setTab("lineup");
       notify("New branch saved and rescored using your current forecasts.");
     } catch (e) {
-      notify((e as Error).message, true);
+      if (operationRef.current === operation) notify((e as Error).message, true);
     } finally {
       finishOperation(operation);
     }
@@ -1917,13 +1944,17 @@ export default function App() {
     const operation = beginOperation("Checking chip branch…");
     if (!operation) return;
     try {
-      const valid = await validatedPlan({
-        ...structuredClone(source),
-        id: uid(),
-        name: `${source.name} · chips`,
-        weeks,
-        created_at: new Date().toISOString(),
-      });
+      const valid = await validatedPlan(
+        {
+          ...structuredClone(source),
+          id: uid(),
+          name: `${source.name} · chips`,
+          weeks,
+          created_at: new Date().toISOString(),
+        },
+        operation,
+      );
+      assertPlanInputs(operation);
       setPlans((current) => [...current, valid]);
       setActiveId(valid.id);
       setGw(valid.weeks[0].gw);
@@ -1941,13 +1972,17 @@ export default function App() {
     const operation = beginOperation("Checking strategy branch…");
     if (!operation) return;
     try {
-      const valid = await validatedPlan({
-        ...structuredClone(source),
-        id: uid(),
-        name: `${source.name} · ${chipNames[job.settings.auto_chip]} timing`,
-        weeks: structuredClone(weeks),
-        created_at: new Date().toISOString(),
-      });
+      const valid = await validatedPlan(
+        {
+          ...structuredClone(source),
+          id: uid(),
+          name: `${source.name} · ${chipNames[job.settings.auto_chip]} timing`,
+          weeks: structuredClone(weeks),
+          created_at: new Date().toISOString(),
+        },
+        operation,
+      );
+      assertPlanInputs(operation);
       setPlans((current) => [...current, valid]);
       setActiveId(valid.id);
       setGw(job.scope.gameweeks[0] ?? valid.weeks[0].gw);

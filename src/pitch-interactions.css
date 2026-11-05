@@ -22,3 +22,11 @@
   outline: 2px solid #ff996d;
   outline-offset: 2px;
 }
+
+.planner-board .pitch-dragging .player-tile:not(.drag-source):not(.swap-target) {
+  opacity: 0.35;
+}
+
+.planner-board:has(.pitch-dragging) .swap-banner {
+  visibility: hidden;
+}

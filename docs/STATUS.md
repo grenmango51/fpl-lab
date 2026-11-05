@@ -1,5 +1,13 @@
 # Current handover
 
+## Jam interaction ladder — 5 November (in progress)
+
+- [Horizon PR #3](https://github.com/grenmango51/fpl-lab/pull/3) is ready for review with independent code **PASS** and blind workflow **PASS**. Its changes remain on the separate horizon branch; this branch contains only the next drag-substitution fix. Neither PR is deployed, and whole-app parity remains unproven.
+- Native shirt dragging previously showed no legal destinations, although click substitutions did. The pitch now highlights destinations for the actual dragged player, dims other players, and permits drops only for a legal starter/bench exchange. A compact shirt drag image leaves target names readable. Cancel restores prior click-selection feedback; an old click-selection hint is hidden during a different drag. Moves still validate on the server before adoption.
+- **571 backend tests, 137 frontend/gateway tests, production build and hosting typecheck pass** on the independent drag branch. Fresh coverage passes for both source configurations: **670 players × GW10–38 = 19,430/19,430 cells**, including fixture membership, finite/reconciled values and probability bounds.
+- Opened and inspected desktop target feedback, a validated swap/Undo, reserve-first dragging, cancellation, illegal drops, goalkeeper-only targets, dragging a different player from a prior click selection, and mobile click/keyboard swaps with Undo. The 390px layout has no document overflow. Recorded before/after pitch interactions and fresh signed-in Solio forward/reverse drags in Ilmari Chrome. QA uses isolated app copies and retains the shared workspace. Raw recordings and receipts remain ignored under `data/exports/qa/ladder-20261104/`.
+- The drag fix is pending a separate PR plus independent code and blind video verdicts. Transfers, branching and the remaining Solio workflows still need their own audit; no complete ladder closeout is claimed.
+
 Updated 2026-10-26. **The original mission to reproduce all eight Solio tutorial areas is unfinished.** The earlier review closeouts below cover bounded checks, not complete Solio workflow parity. The private Cloudflare website is live with verified Google sign-in, the Python API and shared plans on Ubuntu. Windows local use remains supported, but its existing browser plans have not been migrated.
 
 ## Planner horizon and timeline layout — 26 October

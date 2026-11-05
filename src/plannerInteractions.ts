@@ -31,8 +31,16 @@ export function canSwap(
     !week.squad.includes(to.id)
   )
     return false;
-  if (week.starters.includes(from.id) === week.starters.includes(to.id))
-    return false;
+  const fromStarts = week.starters.includes(from.id),
+    toStarts = week.starters.includes(to.id);
+  if (fromStarts === toStarts)
+    return (
+      !fromStarts &&
+      week.bench.indexOf(from.id) > 0 &&
+      week.bench.indexOf(to.id) > 0 &&
+      from.position_id !== 1 &&
+      to.position_id !== 1
+    );
   if (from.position_id === 1 || to.position_id === 1)
     return from.position_id === to.position_id;
   const xi = week.starters.map((id) =>

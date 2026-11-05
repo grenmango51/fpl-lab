@@ -1247,11 +1247,22 @@ export default function App() {
     const first = lookup.get(from),
       second = lookup.get(id);
     if (!first || !second || !canSwap(week, first, second, data.players)) {
-      notify("Choose a legal starter / bench substitution.", true);
+      notify("Choose a legal player swap.", true);
       return;
     }
     const p = structuredClone(active),
       w = p.weeks.find((v) => v.gw === gw)!;
+    const fromBench = w.bench.indexOf(from),
+      toBench = w.bench.indexOf(id);
+    if (fromBench > 0 && toBench > 0) {
+      [w.bench[fromBench], w.bench[toBench]] = [
+        w.bench[toBench],
+        w.bench[fromBench],
+      ];
+      void updatePlan(p, "Bench order updated.", true, "Updating bench…");
+      setSelected(null);
+      return;
+    }
     const starter = week.starters.includes(from) ? from : id,
       reserve = starter === from ? id : from;
     w.starters = w.starters.map((i) => (i === starter ? reserve : i));
@@ -1273,7 +1284,7 @@ export default function App() {
     const p = structuredClone(active),
       w = p.weeks.find((v) => v.gw === atGW)!;
     [w.bench[index], w.bench[target]] = [w.bench[target], w.bench[index]];
-    void updatePlan(p, "Bench substitution priority updated.");
+    void updatePlan(p, "Bench order updated.", true, "Updating bench…");
   }
   function changeHorizon(count: number) {
     if (!active || !data) return;

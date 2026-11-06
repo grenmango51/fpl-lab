@@ -195,6 +195,17 @@ export default function App() {
     [loadError, setLoadError] = useState(""),
     [loading, setLoading] = useState(true),
     [tab, setTab] = useState<Tab>(locationTab);
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const [loadStage, setLoadStage] = useState("Connecting saved plans…");
+  const [loadSlow, setLoadSlow] = useState(false);
+  const [forecastRetry, setForecastRetry] = useState(0);
+  const forecastRetryRef = useRef(0);
+  // Forecast reads have their own generation; they never own operation busy.
+  const [forecastUpdate, setForecastUpdate] = useState<{
+    request: number;
+    configuration: string;
+    error: string;
+  } | null>(null);
   const [marketMode, setMarketMode] = useViewState(
     "market.section",
     "fixtures",
@@ -407,6 +418,45 @@ export default function App() {
   const detailSquad = detailWeek?.squad.includes(detailId ?? 0) ?? false;
   const currentHorizon = active?.weeks ?? [];
 
+  function rescorePlans(current: Plan[], forecast: Bootstrap) {
+    const latest = new Map(forecast.players.map((p) => [p.id, p]));
+    return current.map((p) => ({
+      ...p,
+      weeks: p.weeks.map((w) => {
+        if (!forecast.gameweeks.includes(w.gw)) return w;
+        const score = teamPoints(w.starters, w.bench, w.captain, w.vice,
+          latest, w.gw, w.chip);
+        return { ...w, ...score, net_points: score.points - w.hits };
+      }),
+    }));
+  }
+  function adoptForecast(forecast: Bootstrap, nextPlans?: (current: Plan[]) => Plan[]) {
+    // React batches these updates in the same commit. Score the latest plans,
+    // not the decisions captured when the forecast request started.
+    setData(forecast);
+    setPlans((current) => rescorePlans(nextPlans ? nextPlans(current) : current, forecast));
+  }
+  function forecastStatus() {
+    const configuration = JSON.stringify(forecastArgs);
+    const update = forecastUpdate?.configuration === configuration &&
+      forecastUpdate.request === dataRequestRef.current ? forecastUpdate : null;
+    const stale = loadedForecastArgsRef.current !== configuration || !!update;
+    return { stale, pending: stale && !update?.error, error: update?.error ?? "" };
+  }
+  function retryForecasts() {
+    const request = ++dataRequestRef.current;
+    setForecastUpdate({ request, configuration: JSON.stringify(livePlanningRef.current.forecastArgs), error: "" });
+    setForecastRetry((attempt) => attempt + 1);
+  }
+  function retryLoading() {
+    ++dataRequestRef.current;
+    setLoadError("");
+    setLoading(true);
+    setLoadSlow(false);
+    setLoadStage("Connecting saved plans…");
+    setLoadAttempt((attempt) => attempt + 1);
+  }
+
   function applyForecastConfiguration(configuration: ForecastConfiguration) {
     setOverrides(configuration.overrides);
     setMinutesSchedule(configuration.minutes_schedule);
@@ -446,7 +496,7 @@ export default function App() {
     const fingerprint = () => { const { data: _data, ...state } = livePlanningRef.current; return JSON.stringify(state); };
     const before = fingerprint();
     const version = operationVersionRef.current;
-    if (!canStartOperation()) return false;
+    if (!data || !canStartOperation()) return false;
     const restored = await loadPlanningState(document.plans, document.active_id, document.configuration,
       document.solver_settings, configuration => configuration === undefined
         ? forecastBaseline() : api<Bootstrap>("/projections", configuration));
@@ -462,8 +512,7 @@ export default function App() {
     loadedForecastArgsRef.current = JSON.stringify(restored.configuration);
     applyForecastConfiguration(restored.configuration);
     setSettings(restored.solver);
-    setData(restored.forecast);
-    setPlans(restored.plans);
+    adoptForecast(restored.forecast, () => restored.plans);
     setActiveId(restored.activeId);
     setGw(restored.gw);
     setWatch(document.watch);
@@ -477,8 +526,13 @@ export default function App() {
 
   useEffect(() => {
     let alive = true;
-    sharedRef.current!.initialize(sharedDocument()).then(document => {
-      if (!alive) throw new Error("Workspace loading cancelled.");
+    const request = ++dataRequestRef.current;
+    const current = () => alive && request === dataRequestRef.current;
+    const slowTimer = setTimeout(() => {
+      if (current()) setLoadSlow(true);
+    }, 8000);
+    sharedRef.current!.initialize(sharedDocument(), current).then(document => {
+      if (!current()) throw new Error("Workspace loading cancelled.");
       if (plans.length && JSON.stringify(document.plans) !== JSON.stringify(plans)) {
         archivePlanningInputs(plans, forecastArgs);
       }
@@ -488,13 +542,17 @@ export default function App() {
       document.active_id,
       document.configuration,
       document.solver_settings,
-      (configuration) =>
-        configuration === undefined
+      (configuration) => {
+        if (!current()) throw new Error("Workspace loading cancelled.");
+        setLoadStage(configuration === undefined
+          ? "Loading current player pool…" : "Applying saved assumptions…");
+        return configuration === undefined
           ? forecastBaseline()
-          : api<Bootstrap>("/projections", configuration),
+          : api<Bootstrap>("/projections", configuration);
+      },
     ); })
       .then((restored) => {
-        if (!alive) return;
+        if (!current()) return;
         if (
           restored.notices.length ||
           (Array.isArray(plans) &&
@@ -510,7 +568,7 @@ export default function App() {
         loadedForecastArgsRef.current = JSON.stringify(restored.configuration);
         applyForecastConfiguration(restored.configuration);
         setSettings(restored.solver);
-        setData(restored.forecast);
+        adoptForecast(restored.forecast, () => restored.plans);
         const params = new URLSearchParams(window.location.search);
         const requestedPlan = restored.plans.find(
           (plan) => plan.id === params.get("plan"),
@@ -527,12 +585,13 @@ export default function App() {
             : (requestedPlan?.weeks[0]?.gw ?? restored.gw),
         );
         setActiveId(requestedPlan?.id ?? restored.activeId);
-        setPlans(restored.plans);
+        clearTimeout(slowTimer);
         setLoading(false);
         if (restored.notices.length) notify(restored.notices.join(" "));
       })
       .catch((e) => {
-        if (alive) {
+        if (current()) {
+          clearTimeout(slowTimer);
           setLoadError(e.message);
           setLoading(false);
         }
@@ -549,8 +608,9 @@ export default function App() {
       .catch(() => {});
     return () => {
       alive = false;
+      clearTimeout(slowTimer);
     };
-  }, []);
+  }, [loadAttempt]);
 
   useEffect(() => {
     if (!loading && data) sharedRef.current!.queue(sharedDocument());
@@ -640,13 +700,24 @@ export default function App() {
       const current = livePlanningRef.current;
       if (
         checking || !current.data || operationRef.current || solveInFlightRef.current ||
-        current.renderedOperationVersion !== operationVersionRef.current
+        current.renderedOperationVersion !== operationVersionRef.current ||
+        loadedForecastArgsRef.current !== JSON.stringify(current.forecastArgs)
       ) return;
       checking = true;
       const version = operationVersionRef.current;
+      const unchanged = () => {
+        const latest = livePlanningRef.current;
+        return alive && !operationRef.current &&
+          version === operationVersionRef.current &&
+          latest.data === current.data &&
+          latest.plans === current.plans && latest.activeId === current.activeId &&
+          latest.settings === current.settings && latest.gw === current.gw &&
+          JSON.stringify(latest.forecastArgs) === JSON.stringify(current.forecastArgs);
+      };
       try {
         const status = await api<DataRefreshStatus>("/data-refresh");
         if (
+          !unchanged() ||
           !status.loaded_at ||
           Date.parse(status.loaded_at) <= Date.parse(current.data.loaded_at)
         )
@@ -662,19 +733,7 @@ export default function App() {
               ? forecastBaseline()
               : api<Bootstrap>("/projections", configuration),
         );
-        const latest = livePlanningRef.current;
-        if (
-          !alive ||
-          request !== dataRequestRef.current ||
-          operationRef.current ||
-          version !== operationVersionRef.current ||
-          latest.plans !== current.plans ||
-          latest.activeId !== current.activeId ||
-          latest.settings !== current.settings ||
-          latest.gw !== current.gw ||
-          JSON.stringify(latest.forecastArgs) !==
-            JSON.stringify(current.forecastArgs)
-        )
+        if (request !== dataRequestRef.current || !unchanged())
           return;
         if (restored.notices.length)
           archivePlanningInputs(current.plans, current.forecastArgs);
@@ -682,8 +741,7 @@ export default function App() {
         loadedForecastArgsRef.current = JSON.stringify(restored.configuration);
         applyForecastConfiguration(restored.configuration);
         setSettings(restored.solver);
-        setData(restored.forecast);
-        setPlans(restored.plans);
+        adoptForecast(restored.forecast, () => restored.plans);
         setActiveId(restored.activeId);
         if (!restored.forecast.gameweeks.includes(current.gw))
           setGw(restored.gw);
@@ -747,39 +805,51 @@ export default function App() {
           1,
           "My first plan",
         );
-        const response = await api<{ weeks: Week[] }>("/plan/validate", {
-          ...forecastArgs,
-          base_squad: p.base_squad,
-          bank: p.base_bank,
-          free_transfers: 1,
-          purchase_prices: p.purchase_prices,
-          weeks: p.weeks,
-        });
-        p.weeks = response.weeks;
-        setPlans([p]);
-        setActiveId(p.id);
+        const valid = await validatedPlan(p, operation);
+        assertPlanInputs(operation);
+        setPlans([valid]);
+        setActiveId(valid.id);
       })
       .catch((e) => {
-        notify(e.message, true);
+        if (operationRef.current === operation) notify(e.message, true);
       })
       .finally(() => finishOperation(operation));
   }, [data, plans.length, busy]);
   useEffect(() => {
     if (!data) return;
     const serialized = JSON.stringify(forecastArgs);
-    if (loadedForecastArgsRef.current === serialized) return;
+    const retry = forecastRetry !== forecastRetryRef.current;
+    forecastRetryRef.current = forecastRetry;
+    // Reverting to the loaded configuration must also invalidate a pending load.
     const request = ++dataRequestRef.current;
+    if (loadedForecastArgsRef.current === serialized && !retry) {
+      setForecastUpdate(null);
+      return;
+    }
+    const current = () =>
+      request === dataRequestRef.current &&
+      JSON.stringify(livePlanningRef.current.forecastArgs) === serialized;
+    setForecastUpdate({ request, configuration: serialized, error: "" });
     api<Bootstrap>("/projections", forecastArgs)
       .then((d) => {
-        if (request === dataRequestRef.current) {
+        if (current()) {
           loadedForecastArgsRef.current = serialized;
-          setData((current) => ({
+          adoptForecast({
             ...d,
-            official_fixture_catalog: current?.official_fixture_catalog,
-          }));
+            official_fixture_catalog: livePlanningRef.current.data?.official_fixture_catalog,
+          });
+          setForecastUpdate(null);
         }
       })
-      .catch((e) => notify(e.message, true));
+      .catch((e) => {
+        if (current()) {
+          setForecastUpdate({ request, configuration: serialized, error: e.message });
+          notify(e.message, true);
+        }
+      });
+    return () => {
+      if (request === dataRequestRef.current) ++dataRequestRef.current;
+    };
   }, [
     overrides,
     minutesSchedule,
@@ -795,29 +865,8 @@ export default function App() {
     extrapolate,
     anchorHalfLife,
     customName,
+    forecastRetry,
   ]);
-  useEffect(() => {
-    if (!data) return;
-    const latest = new Map(data.players.map((p) => [p.id, p]));
-    setPlans((ps) =>
-      ps.map((p) => ({
-        ...p,
-        weeks: p.weeks.map((w) => {
-          if (!data.gameweeks.includes(w.gw)) return w;
-          const score = teamPoints(
-            w.starters,
-            w.bench,
-            w.captain,
-            w.vice,
-            latest,
-            w.gw,
-            w.chip,
-          );
-          return { ...w, ...score, net_points: score.points - w.hits };
-        }),
-      })),
-    );
-  }, [data]);
   useEffect(() => {
     if (!data || detailId === null) {
       setDetail(null);
@@ -987,11 +1036,29 @@ export default function App() {
     const name = live.plans.find((plan) => plan.id === origin.id)?.name ?? origin.name;
     return `${name}${origin.gw === null ? "" : ` · GW${origin.gw}`}: ${message}`;
   }
-  async function validatedPlan(p: Plan) {
+  // A receipt is valid only for this render's configuration and loaded inputs.
+  // Reject the entire attempt on drift: resources and history must come from a
+  // fresh server validation on retry, never from a locally repaired old receipt.
+  function assertPlanInputs(operation: symbol) {
+    if (operationRef.current !== operation)
+      throw new Error("Plan update expired. Try again.");
+    const live = livePlanningRef.current;
+    const configuration = JSON.stringify(forecastArgs);
+    if (
+      !data ||
+      live.data !== data ||
+      JSON.stringify(live.forecastArgs) !== configuration ||
+      loadedForecastArgsRef.current !== configuration
+    )
+      throw new Error("Forecasts changed. Try again.");
+  }
+  async function validatedPlan(p: Plan, operation: symbol) {
+    assertPlanInputs(operation);
     const result = await api<{ weeks: Week[] }>(
       "/plan/validate",
       planValidationRequest(p, forecastArgs),
     );
+    assertPlanInputs(operation);
     return { ...p, weeks: result.weeks };
   }
   async function updatePlan(
@@ -1007,7 +1074,8 @@ export default function App() {
     const before = plans.find((row) => row.id === p.id);
     setToast(null);
     try {
-      const valid = await validatedPlan(p);
+      const valid = await validatedPlan(p, operation);
+      assertPlanInputs(operation);
       if (remember && before)
         setPlanHistory((history) => ({
           ...history,
@@ -1026,7 +1094,7 @@ export default function App() {
       if (message) notify(message, false, origin);
       return valid;
     } catch (e) {
-      notify((e as Error).message, true, origin);
+      if (operationRef.current === operation) notify((e as Error).message, true, origin);
       return false;
     } finally {
       finishOperation(operation);
@@ -1138,13 +1206,14 @@ export default function App() {
     const operation = beginOperation("Creating scenario…");
     if (!operation) return;
     try {
-      const valid = await validatedPlan(p);
+      const valid = await validatedPlan(p, operation);
+      assertPlanInputs(operation);
       setPlans((current) => [...current, valid]);
       setActiveId(p.id);
       setGw(valid.weeks[0].gw);
       notify("New scenario from the base team.");
     } catch (error) {
-      notify((error as Error).message, true);
+      if (operationRef.current === operation) notify((error as Error).message, true);
     } finally {
       finishOperation(operation);
     }
@@ -1170,8 +1239,9 @@ export default function App() {
     const operation = beginOperation("Creating future branch…");
     if (!operation) return;
     try {
-      const source = await validatedPlan(active),
-        prefix = source.weeks.filter((row) => row.gw < start),
+      const source = await validatedPlan(active, operation);
+      assertPlanInputs(operation);
+      const prefix = source.weeks.filter((row) => row.gw < start),
         receipt = prefix.at(-1);
       if (
         !receipt?.permanent_squad ||
@@ -1199,7 +1269,8 @@ export default function App() {
             .map((row) => ({ chip: row.chip, gw: row.gw })),
         ],
       };
-      const valid = await validatedPlan(next);
+      const valid = await validatedPlan(next, operation);
+      assertPlanInputs(operation);
       setPlans((current) => [...current, valid]);
       setActiveId(valid.id);
       setGw(start);
@@ -1207,7 +1278,7 @@ export default function App() {
       setSelected(null);
       notify(`Branch starts at GW${start}. Original plan retained.`);
     } catch (error) {
-      notify((error as Error).message, true);
+      if (operationRef.current === operation) notify((error as Error).message, true);
     } finally {
       finishOperation(operation);
     }
@@ -1222,7 +1293,8 @@ export default function App() {
     const operation = beginOperation("Restoring plan…");
     if (!operation) return;
     try {
-      const valid = await validatedPlan(plan);
+      const valid = await validatedPlan(plan, operation);
+      assertPlanInputs(operation);
       setPlans((current) =>
         current.some((row) => row.id === valid.id)
           ? current
@@ -1235,7 +1307,7 @@ export default function App() {
       setGw(valid.weeks[0].gw);
       notify("Plan restored.");
     } catch (error) {
-      notify((error as Error).message, true);
+      if (operationRef.current === operation) notify((error as Error).message, true);
     } finally {
       finishOperation(operation);
     }
@@ -1471,7 +1543,8 @@ export default function App() {
       p.entry_id = imported.entry_id;
       p.team_name = imported.name;
       p.used_chips = imported.used_chips ?? [];
-      const valid = await validatedPlan(p);
+      const valid = await validatedPlan(p, operation);
+      assertPlanInputs(operation);
       setPlans((ps) => [...ps, valid]);
       setActiveId(valid.id);
       setGw(data.next_gw);
@@ -1482,7 +1555,7 @@ export default function App() {
         `Imported ${imported.name}. Verify bank and saved FTs in team settings.`,
       );
     } catch (e) {
-      notify((e as Error).message, true);
+      if (operationRef.current === operation) notify((e as Error).message, true);
     } finally {
       finishOperation(operation);
     }
@@ -1620,6 +1693,8 @@ export default function App() {
         const unchanged = () => {
           const live = livePlanningRef.current;
           return (
+            operationRef.current === operation &&
+            live.data === data &&
             JSON.stringify(
               live.plans.find((plan) => plan.id === sourcePlan.id),
             ) === JSON.stringify(sourcePlan) &&
@@ -1639,14 +1714,11 @@ export default function App() {
           horizon,
         );
         operationMessage(operation, "Checking optimised team…");
-        const checked = await api<{ weeks: Week[] }>(
-          "/plan/validate",
-          planValidationRequest(candidate, forecasts),
-        );
+        const valid = await validatedPlan(candidate, operation);
+        assertPlanInputs(operation);
         if (request !== solveRequestRef.current) return;
         if (!unchanged())
           throw new Error("Plan or forecasts changed. Optimise again.");
-        const valid = { ...candidate, weeks: checked.weeks };
         setPlanHistory((history) => ({
           ...history,
           [sourcePlan.id]: {
@@ -1681,7 +1753,7 @@ export default function App() {
       });
       notify(`Plan ready · GW${startGW}–${startGW + horizon - 1}.`);
     } catch (e) {
-      if (request === solveRequestRef.current)
+      if (request === solveRequestRef.current && operationRef.current === operation)
         notify((e as Error).message, true);
     } finally {
       if (operationRef.current === operation) solveInFlightRef.current = false;
@@ -1734,7 +1806,8 @@ export default function App() {
     const operation = beginOperation("Saving branch…");
     if (!operation) return;
     try {
-      const valid = await validatedPlan(p);
+      const valid = await validatedPlan(p, operation);
+      assertPlanInputs(operation);
       setPlans((ps) => [...ps, valid]);
       setActiveId(p.id);
       setGw(context.startGW);
@@ -1744,7 +1817,7 @@ export default function App() {
       setTab("lineup");
       notify(`Branch saved · through GW${resultWeeks.at(-1)!.gw}.`);
     } catch (e) {
-      notify((e as Error).message, true);
+      if (operationRef.current === operation) notify((e as Error).message, true);
     } finally {
       finishOperation(operation);
     }
@@ -1769,14 +1842,15 @@ export default function App() {
     const operation = beginOperation("Checking the stress-test branch…");
     if (!operation) return;
     try {
-      const valid = await validatedPlan(p);
+      const valid = await validatedPlan(p, operation);
+      assertPlanInputs(operation);
       setPlans((ps) => [...ps, valid]);
       setActiveId(valid.id);
       setGw(valid.weeks[0].gw);
       setTab("lineup");
       notify("New branch saved and rescored using your current forecasts.");
     } catch (e) {
-      notify((e as Error).message, true);
+      if (operationRef.current === operation) notify((e as Error).message, true);
     } finally {
       finishOperation(operation);
     }
@@ -1807,8 +1881,7 @@ export default function App() {
       loadedForecastArgsRef.current = JSON.stringify(restored.configuration);
       applyForecastConfiguration(restored.configuration);
       setSettings(restored.solver);
-      setData(restored.forecast);
-      setPlans(restored.plans);
+      adoptForecast(restored.forecast, () => restored.plans);
       setActiveId(restored.activeId);
       if (!restored.forecast.gameweeks.includes(gw)) setGw(restored.gw);
       setSolveResult(null);
@@ -1842,7 +1915,7 @@ export default function App() {
           api<Bootstrap>("/projections", forecastArgs),
         ]);
         setProspective(receipt);
-        setData(forecasts);
+        adoptForecast(forecasts);
       } catch {
         notify(
           "Forecast saved. Refresh the app to reload its capture receipt and forecasts.",
@@ -1962,8 +2035,7 @@ export default function App() {
       loadedForecastArgsRef.current = JSON.stringify(prepared.configuration);
       applyForecastConfiguration(prepared.configuration);
       setSettings(prepared.solver);
-      setData(prepared.forecast);
-      setPlans((ps) => [...ps, ...prepared.plans]);
+      adoptForecast(prepared.forecast, (ps) => [...ps, ...prepared.plans]);
       setActiveId(prepared.plans[0].id);
       setGw(prepared.plans[0].weeks[0].gw);
       setSolveResult(null);
@@ -1982,13 +2054,17 @@ export default function App() {
     const operation = beginOperation("Checking chip branch…");
     if (!operation) return;
     try {
-      const valid = await validatedPlan({
-        ...structuredClone(source),
-        id: uid(),
-        name: `${source.name} · chips`,
-        weeks,
-        created_at: new Date().toISOString(),
-      });
+      const valid = await validatedPlan(
+        {
+          ...structuredClone(source),
+          id: uid(),
+          name: `${source.name} · chips`,
+          weeks,
+          created_at: new Date().toISOString(),
+        },
+        operation,
+      );
+      assertPlanInputs(operation);
       setPlans((current) => [...current, valid]);
       setActiveId(valid.id);
       setGw(valid.weeks[0].gw);
@@ -2006,13 +2082,17 @@ export default function App() {
     const operation = beginOperation("Checking strategy branch…");
     if (!operation) return;
     try {
-      const valid = await validatedPlan({
-        ...structuredClone(source),
-        id: uid(),
-        name: `${source.name} · ${chipNames[job.settings.auto_chip]} timing`,
-        weeks: structuredClone(weeks),
-        created_at: new Date().toISOString(),
-      });
+      const valid = await validatedPlan(
+        {
+          ...structuredClone(source),
+          id: uid(),
+          name: `${source.name} · ${chipNames[job.settings.auto_chip]} timing`,
+          weeks: structuredClone(weeks),
+          created_at: new Date().toISOString(),
+        },
+        operation,
+      );
+      assertPlanInputs(operation);
       setPlans((current) => [...current, valid]);
       setActiveId(valid.id);
       setGw(job.scope.gameweeks[0] ?? valid.weeks[0].gw);
@@ -2064,21 +2144,25 @@ export default function App() {
             <p>{loadError}</p>
             <button
               className="button primary"
-              onClick={() => location.reload()}
+              onClick={retryLoading}
             >
               <RefreshCw size={15} />
-              Try again
+              Retry
             </button>
             <small>
-              {window.location.hostname.endsWith("workers.dev")
-                ? "Your saved plans are retained. Retry shortly."
-                : "Start the Python API on port 8000 and the Vite app on port 5173."}
+              Your saved plans and assumptions are retained.
             </small>
           </>
         ) : (
           <>
             <LoaderCircle className="spin" size={25} />
-            <p>Loading forecasts…</p>
+            <p role="status">{loadStage}</p>
+            {loadSlow && <>
+              <small>Still waiting for data. Saved plans and assumptions are retained.</small>
+              <button className="button" onClick={retryLoading}>
+                <RefreshCw size={15} />Retry
+              </button>
+            </>}
           </>
         )}
       </div>
@@ -2096,6 +2180,20 @@ export default function App() {
   });
   const showLeftPitch =
     pitchExpanded && wideLayout && !treeHidden && tab !== "data";
+  const forecastState = forecastStatus();
+  const forecastFeedback = forecastState.stale ? (
+    <div className="forecast-feedback" role={forecastState.error ? "alert" : "status"}>
+      {forecastState.pending ? <LoaderCircle size={15} className="spin" /> : <Info size={15} />}
+      <span>
+        <b>{forecastState.error ? "Forecast update failed." : "Updating forecasts…"}</b>{" "}
+        Previous player figures and plan totals shown.
+        {forecastState.error && <small>{forecastState.error}</small>}
+      </span>
+      {forecastState.error && <button className="button small" onClick={retryForecasts}>
+        <RefreshCw size={14} />Retry
+      </button>}
+    </div>
+  ) : null;
   const plannerBoard =
     active && week ? (
       <PlannerBoard
@@ -2139,7 +2237,7 @@ export default function App() {
     ) : null;
 
   return (
-    <div className="app-shell solio-studio">
+    <div className={`app-shell solio-studio ${forecastState.stale ? "forecasts-stale" : ""}`}>
       <aside className="app-rail" aria-label="App navigation">
         <button
           className="rail-brand"
@@ -2207,9 +2305,11 @@ export default function App() {
           </button>
         </div>
       </aside>
+      {forecastFeedback}
       <div
         className={`workspace solio-workspace workspace-${tab} ${treeHidden || tab === "data" ? "tree-hidden" : ""}`}
         style={{ "--panel-split": `${split}%` } as CSSProperties}
+        aria-busy={forecastState.pending}
       >
         <PlanTree
           data={data}
@@ -3269,6 +3369,7 @@ export default function App() {
           }
         >
           <div className={`modal-body player-detail detail-tab-${detailTab}`}>
+            {forecastFeedback}
             <div className="player-context-bar">
               {detailReadOnly ? (
                 <span className="subtle-tag">Draft preview</span>

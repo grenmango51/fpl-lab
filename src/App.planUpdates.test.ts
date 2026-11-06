@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 import ts from "typescript";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import appSource from "./App.tsx?raw";
 import {
   defaultForecastConfiguration,
@@ -10,11 +10,19 @@ import {
 } from "./planningPersistence";
 import { replacePlayer } from "./plannerInteractions";
 import { uid, chipNames, planFromSquad } from "./lib";
+import { teamPoints } from "./scoring";
 import { quickSolveHorizon, planWithOptimisedSuffix } from "./quickOptimise";
 import type { Plan, Week, Prospective, SensitivityJob } from "./types";
 
 type History = Record<string, { past: Plan[]; future: Plan[] }>;
 type State = {
+  forecastUpdate: { request: number; configuration: string; error: string } | null;
+  forecastRetry: number;
+  loading: boolean;
+  loadError: string;
+  loadStage: string;
+  loadSlow: boolean;
+  loadAttempt: number;
   plans: Plan[];
   activeId: string;
   gw: number;
@@ -42,7 +50,7 @@ type Origin = { id: string; name: string; gw: number | null };
 type Update<T> = T | ((current: T) => T);
 
 // Run the actual App closures with deferred API responses and React-style
-// state setters. No DOM, bootstrap requests, timers or shared workspace needed.
+// state setters. No DOM needed; loader cases control bootstrap responses/timers.
 const source = ts.createSourceFile(
   "App.tsx",
   appSource,
@@ -55,6 +63,8 @@ const app = source.statements.find(
     ts.isFunctionDeclaration(node) && node.name?.text === "App",
 )!;
 const names = [
+  "rescorePlans", "adoptForecast", "forecastStatus", "retryForecasts", "retryLoading",
+  "assertPlanInputs",
   "setBusy",
   "planMessage",
   "transferIn",
@@ -114,6 +124,16 @@ function findCancel(node: ts.Node) {
 }
 findCancel(app);
 if (!cancelTransfer) throw new Error("Missing transfer cancellation action");
+function effectContaining(text: string) {
+  const effect = app.body!.statements.find(
+    (node) => ts.isExpressionStatement(node) &&
+      ts.isCallExpression(node.expression) &&
+      node.expression.expression.getText(source) === "useEffect" &&
+      node.expression.arguments[0].getText(source).includes(text),
+  ) as ts.ExpressionStatement & { expression: ts.CallExpression };
+  if (!effect) throw new Error(`Missing App effect: ${text}`);
+  return effect.expression.arguments[0].getText(source);
+}
 const pendingLabel = app
   .body!.statements.flatMap((node) =>
     ts.isVariableStatement(node) ? [...node.declarationList.declarations] : [],
@@ -160,7 +180,7 @@ const reloadCheck = reloadBody.statements.find(
 )!;
 const actions = ts.transpileModule(
   `const { plans, active, gw, busy, tab, planHistory, forecastArgs,
-    api, planValidationRequest, livePlanningRef, operationRef, operationVersionRef, renderedOperationVersion, data,
+    api, teamPoints, planValidationRequest, livePlanningRef, operationRef, operationVersionRef, renderedOperationVersion, data,
     settings, solveInFlightRef, solveRequestRef, forecastBaseline, uid, chipNames,
     solverSettingsForHorizon, quickSolveHorizon, planWithOptimisedSuffix, initRef, planFromSquad, setTeamBank, setTeamFT, setModal,
     loadPlanningState, archivePlanningInputs, dataRequestRef, loadedForecastArgsRef,
@@ -170,7 +190,10 @@ const actions = ts.transpileModule(
     setSolveResult, setSolveContext, teamId, restoreDeletedRef, setEvalData,
     setPlans, setPlanHistory, setBusyStatus, setToast, setGw, setSelected, setProspective,
     lookup, selected, detailId, playerGW, detailInline, replacePlayer,
-    transferView, liveTransferViewRef, busyStatus, toast, feedbackSurfaceRef
+    transferView, liveTransferViewRef, busyStatus, toast, feedbackSurfaceRef,
+    forecastUpdate, setForecastUpdate, forecastRetry, setForecastRetry, forecastRetryRef,
+    setLoadAttempt, setLoading, setLoadError, setLoadSlow, setLoadStage, sharedRef, sharedDocument,
+    window, locationTab
   } = scope;
   const notify = ${printer.printNode(ts.EmitHint.Expression, notify, source)};
   ${functions.map((node) => printer.printNode(ts.EmitHint.Unspecified, node, source)).join("\n")}
@@ -181,7 +204,7 @@ const actions = ts.transpileModule(
     return check;
   })();
   const transferCallback = ${printer.printNode(ts.EmitHint.Expression, transferCallback, source)};
-  return { backgroundCheck, pendingLabel: () => ${printer.printNode(ts.EmitHint.Expression, pendingLabel, source)},
+  return { loadForecasts: ${effectContaining("const serialized = JSON.stringify(forecastArgs)")}, rescore: () => adoptForecast(data), bootstrap: ${effectContaining("const slowTimer")}, backgroundCheck, pendingLabel: () => ${printer.printNode(ts.EmitHint.Expression, pendingLabel, source)},
     toastText: () => ${printer.printNode(ts.EmitHint.Expression, toastText, source)}, transferCallback, ${names.join(", ")}, initialise: ${initialEffect.expression.arguments[0].getText(source)}, cancelTransfer: ${cancelTransfer.getText(source)} };`,
   { compilerOptions: { target: ts.ScriptTarget.ES2022 } },
 ).outputText;
@@ -192,7 +215,10 @@ const createActions = new Function("scope", actions) as (
   | "initialise"
   | "cancelTransfer"
   | "transferCallback"
-  | "backgroundCheck",
+  | "backgroundCheck"
+  | "loadForecasts"
+  | "rescore"
+  | "bootstrap",
   (...args: any[]) => any
 > & {
   updatePlan: (
@@ -240,6 +266,9 @@ function branch(id: string, gameweeks = [7, 8, 9]): Plan {
 
 function harness(plans = [branch("A"), branch("B", [12, 13])]) {
   const state: State = {
+    forecastUpdate: null,
+    forecastRetry: 0,
+    loading: true, loadError: "", loadStage: "Connecting saved plans…", loadSlow: false, loadAttempt: 0,
     plans,
     activeId: plans[0]?.id ?? "",
     gw: plans[0]?.weeks[0].gw ?? 7,
@@ -258,7 +287,7 @@ function harness(plans = [branch("A"), branch("B", [12, 13])]) {
     planHistory: {},
     toast: { text: "Earlier message" },
   };
-  const data = {
+  let data = {
     loaded_at: "2026-11-05T12:00:00Z",
     next_gw: 7,
     gameweeks: [7, 8, 9],
@@ -267,9 +296,14 @@ function harness(plans = [branch("A"), branch("B", [12, 13])]) {
       id,
       price: 6,
       position_id: i < 2 || id === 16 ? 1 : i < 7 ? 2 : i < 12 ? 3 : 4,
-      gw: {},
+      pplay: 1,
+      gw: Object.fromEntries([7, 8, 9].map((gw) => [String(gw), { points: 2, pplay: 1 }])),
     })),
   };
+  let forecastArgs = structuredClone(defaultForecastConfiguration);
+  const loadedForecastArgsRef = { current: JSON.stringify(forecastArgs) };
+  const dataRequestRef = { current: 0 };
+  const forecastRetryRef = { current: 0 };
   const restoreDeletedRef = { current: (_plan: Plan) => Promise.resolve() };
   const initRef = { current: null as object | null };
   const solveInFlightRef = { current: false };
@@ -280,7 +314,7 @@ function harness(plans = [branch("A"), branch("B", [12, 13])]) {
     current: {
       ...state,
       data,
-      forecastArgs: defaultForecastConfiguration,
+      forecastArgs,
       renderedOperationVersion: operationVersionRef.current,
     },
   };
@@ -310,6 +344,8 @@ function harness(plans = [branch("A"), branch("B", [12, 13])]) {
           : update;
     };
   const render = (extra: object = {}) => {
+    if ("data" in extra) data = extra.data as typeof data;
+    if ("forecastArgs" in extra) forecastArgs = extra.forecastArgs as typeof forecastArgs;
     if (state.busy !== state.busyStatus.message)
       state.busyStatus = { message: state.busy };
     feedbackSurfaceRef.current =
@@ -333,22 +369,40 @@ function harness(plans = [branch("A"), branch("B", [12, 13])]) {
     livePlanningRef.current = {
       ...state,
       data,
-      forecastArgs: defaultForecastConfiguration,
+      forecastArgs,
       renderedOperationVersion: operationVersionRef.current,
     };
     const actions = createActions({
       ...state,
       active:
         state.plans.find((p) => p.id === state.activeId) ?? state.plans[0],
-      forecastArgs: defaultForecastConfiguration,
+      forecastArgs,
       livePlanningRef,
+      loadedForecastArgsRef,
+      dataRequestRef,
+      forecastRetryRef,
+      setForecastUpdate: setter("forecastUpdate"),
+      setForecastRetry: setter("forecastRetry"),
+      setLoadAttempt: setter("loadAttempt"),
+      setLoadStage: setter("loadStage"),
+      setLoading: setter("loading"),
+      setLoadError: setter("loadError"),
+      setLoadSlow: setter("loadSlow"),
+      sharedRef: { current: { initialize: () => api("/workspace", {}) } },
+      sharedDocument: () => ({ plans: state.plans, configuration: forecastArgs }),
+      window: { location: { search: "" } },
+      locationTab: () => state.tab,
+      teamPoints,
+      setData: (update: Update<typeof data>) => {
+        data = typeof update === "function" ? update(data) : update;
+      },
       operationRef,
       operationVersionRef,
       renderedOperationVersion: operationVersionRef.current,
       transferView: liveTransferViewRef.current,
       liveTransferViewRef,
       feedbackSurfaceRef,
-      lookup: new Map(data.players.map((p) => [p.id, p])),
+      lookup: new Map(data?.players.map((p) => [p.id, p]) ?? []),
       playerGW: state.detailGW || state.gw,
       replacePlayer,
       api,
@@ -369,11 +423,8 @@ function harness(plans = [branch("A"), branch("B", [12, 13])]) {
       solveRequestRef,
       forecastBaseline: () => api("/refresh", {}),
       archivePlanningInputs: vi.fn(),
-      dataRequestRef: { current: 0 },
-      loadedForecastArgsRef: { current: "" },
       applyForecastConfiguration: vi.fn(),
       setSettings: vi.fn(),
-      setData: vi.fn(),
       setWatch: vi.fn(),
       uid,
       chipNames,
@@ -405,8 +456,10 @@ function harness(plans = [branch("A"), branch("B", [12, 13])]) {
     restoreDeletedRef.current = actions.restoreDeleted;
     return actions;
   };
-  return { state, requests, api, render, operationRef, solveInFlightRef, data };
+  return { state, requests, api, render, operationRef, solveInFlightRef, loadedForecastArgsRef, livePlanningRef, get data() { return data; } };
 }
+
+afterEach(() => vi.useRealTimers());
 
 describe("deferred plan validation", () => {
   it.each(["week", "draft preview"])(
@@ -1375,5 +1428,743 @@ describe("optimiser operation ownership", () => {
     expect(h.state.planHistory.A).toEqual({ past: [original], future: [] });
     expect(h.state.busy).toBe("");
     expect(h.solveInFlightRef.current).toBe(false);
+  });
+});
+
+describe("validation forecast/input coherence", () => {
+  it.each(["configuration", "same-config dataset"])(
+    "rejects a transfer after %s drift and retries without losing names, views or ownership",
+    async (drift) => {
+      const h = harness();
+      h.state.detailId = 1;
+      h.state.selected = 1;
+      const stale = h.render();
+      const pending = stale.transferCallback(16);
+      const original = structuredClone(h.state.plans);
+      h.state.plans[0] = { ...h.state.plans[0], name: "Renamed source" };
+      h.state.activeId = "B";
+      h.state.gw = h.state.detailGW = 13;
+      h.state.detailId = 9;
+      h.state.selected = 10;
+      h.state.tab = "market";
+      const projections = {
+        ...h.data,
+        players: h.data.players.map((p) => ({
+          ...p,
+          gw: Object.fromEntries(
+            [7, 8, 9].map((gw) => [String(gw), { points: 5, pplay: 1 }]),
+          ),
+        })),
+      };
+      const configuration = drift === "configuration"
+        ? { ...defaultForecastConfiguration, provider_weight: 0.8 }
+        : defaultForecastConfiguration;
+      if (drift === "configuration") {
+        h.render({ forecastArgs: configuration }).loadForecasts();
+        h.requests[1].resolve(projections);
+        await vi.waitFor(() => expect(h.data.players[0].gw["7"].points).toBe(5));
+      } else h.render({ data: projections });
+      h.render().rescore();
+      const rescored = structuredClone(h.state.plans);
+      const requestCount = h.requests.length;
+      await h.render().scoreProspective();
+      expect(h.requests).toHaveLength(requestCount);
+      expect(h.render().pendingLabel()).toBe("Renamed source · GW7: Updating plan…");
+      h.requests[0].resolve({ weeks: original[0].weeks });
+      await pending;
+      expect(h.state.plans).toEqual(rescored);
+      expect(h.state.planHistory).toEqual({});
+      expect(h.render().toastText()).toBe("Renamed source · GW7: Forecasts changed. Try again.");
+      expect(h.state).toMatchObject({
+        activeId: "B", gw: 13, detailId: 9, selected: 10, tab: "market", busy: "",
+      });
+
+      h.state.activeId = "A";
+      h.state.gw = h.state.detailGW = 7;
+      h.state.detailId = h.state.selected = 1;
+      const beforeRetry = structuredClone(h.state.plans[0]);
+      const retry = h.render().transferCallback(16);
+      const candidate = replacePlayer(beforeRetry, 7, 1, 16);
+      expect(h.requests[requestCount].body).toEqual(planValidationRequest(candidate, configuration));
+      const canonical = candidate.weeks.map((w) => ({ ...w, bank: 0.7, points: 61, net_points: 57, hits: 4 }));
+      h.state.plans[0] = { ...h.state.plans[0], name: "Latest source" };
+      h.state.activeId = "B";
+      h.state.gw = h.state.detailGW = 13;
+      h.state.detailId = 9;
+      h.state.selected = 10;
+      h.render();
+      h.requests[requestCount].resolve({ weeks: canonical });
+      await retry;
+      expect(h.state.plans[0]).toEqual({ ...candidate, name: "Latest source", weeks: canonical });
+      expect(h.state.plans[1]).toEqual(rescored[1]);
+      expect(h.state.planHistory.A).toEqual({ past: [beforeRetry], future: [] });
+      expect(h.state).toMatchObject({
+        activeId: "B", gw: 13, detailId: 9, selected: 10, tab: "market", busy: "",
+      });
+      expect(h.render().toastText()).toBe("Latest source · GW7: Player 1 → Player 16.");
+      await stale.scoreProspective();
+      expect(h.requests).toHaveLength(requestCount + 1);
+    },
+  );
+
+  it.each([
+    ["createPlan", []],
+    ["restoreDeleted", [branch("deleted")]],
+    ["applySolve", []],
+    ["applyStress", [stressJob, branch("A").weeks, "reference"]],
+    ["applyChipPlan", [branch("A"), branch("A").weeks]],
+    [
+      "applyChipStrategy",
+      [
+        branch("A"),
+        branch("A").weeks,
+        { settings: { auto_chip: "wildcard" }, scope: { gameweeks: [7] } },
+      ],
+    ],
+  ] as const)("rejects input drift during %s adoption", async (name, args) => {
+    const h = harness();
+    const before = structuredClone(h.state.plans);
+    const pending = h
+      .render()
+      [name](...args)
+      .catch((error: Error) => error);
+    expect(h.requests[0].path).toBe("/plan/validate");
+    h.render({ data: structuredClone(h.data) });
+    h.requests[0].resolve({ weeks: before[0].weeks });
+    await pending;
+    expect(h.state.plans).toEqual(before);
+    expect(h.state.activeId).toBe("A");
+    expect(h.state.planHistory).toEqual({});
+    expect(h.state.busy).toBe("");
+  });
+
+  it("does not adopt a future branch built from a receipt preceding an input change", async () => {
+    const h = harness();
+    const before = structuredClone(h.state.plans);
+    const pending = h.render().startBranchAt(8);
+    h.requests[0].resolve({
+      weeks: before[0].weeks.map((w) => ({
+        ...w,
+        permanent_squad: w.squad,
+        permanent_bank: 0.8,
+        purchase_prices: { "1": 4.5 },
+      })),
+    });
+    await vi.waitFor(() => expect(h.requests).toHaveLength(2));
+    h.render({ data: structuredClone(h.data) });
+    h.requests[1].resolve({ weeks: before[0].weeks.slice(1) });
+    await pending;
+    expect(h.state.plans).toEqual(before);
+    expect(h.state.planHistory).toEqual({});
+    expect(h.state.busy).toBe("");
+  });
+
+  it("does not adopt an initial squad if inputs change during canonical validation", async () => {
+    const h = harness([]);
+    h.render().initialise();
+    h.requests[0].resolve({ weeks: branch("seed").weeks });
+    await vi.waitFor(() => expect(h.requests).toHaveLength(2));
+    h.render({ data: structuredClone(h.data) });
+    h.requests[1].resolve({ weeks: branch("server").weeks });
+    await vi.waitFor(() => expect(h.state.busy).toBe(""));
+    expect(h.state.plans).toEqual([]);
+    h.render().initialise(); // new data permits the existing automatic retry
+    expect(h.requests[2].path).toBe("/optimise");
+    h.requests[2].reject(new Error("Unavailable"));
+    await vi.waitFor(() => expect(h.state.busy).toBe(""));
+  });
+
+  it("does not import a squad whose validation inputs changed", async () => {
+    const h = harness();
+    const before = structuredClone(h.state.plans);
+    const pending = h.render().importTeam();
+    h.requests[0].resolve({
+      squad: before[0].base_squad,
+      bank: 1,
+      free_transfers: 2,
+      purchase_prices: {},
+      name: "Imported",
+    });
+    await vi.waitFor(() => expect(h.requests).toHaveLength(2));
+    h.render({ data: structuredClone(h.data) });
+    h.requests[1].resolve({ weeks: before[0].weeks });
+    await pending;
+    expect(h.state.plans).toEqual(before);
+    expect(h.state.activeId).toBe("A");
+    expect(h.state.busy).toBe("");
+  });
+
+  it("rejects a quick solve receipt after same-config data replacement", async () => {
+    const h = harness();
+    const before = structuredClone(h.state.plans);
+    const pending = h.render().runSolve(false, true);
+    h.requests[0].resolve({ weeks: before[0].weeks });
+    await vi.waitFor(() => expect(h.requests).toHaveLength(2));
+    h.requests[1].resolve({ weeks: before[0].weeks });
+    await vi.waitFor(() => expect(h.requests).toHaveLength(3));
+    h.render({ data: structuredClone(h.data) });
+    h.requests[2].resolve({ weeks: before[0].weeks });
+    await pending;
+    expect(h.state.plans).toEqual(before);
+    expect(h.state.planHistory).toEqual({});
+    expect(h.state.busy).toBe("");
+  });
+
+  it.each(["before effect", "loading", "failed load"])(
+    "rejects changed settings %s without changing resources or history",
+    async (phase) => {
+      const h = harness();
+      const before = structuredClone(h.state.plans);
+      h.state.planHistory.A = {
+        past: [branch("past")],
+        future: [branch("future")],
+      };
+      const history = structuredClone(h.state.planHistory);
+      const candidate = { ...before[0], base_bank: 2 };
+      const pending = h.render().updatePlan(candidate);
+      const changed = { ...defaultForecastConfiguration, use_market: false };
+      const actions = h.render({ forecastArgs: changed });
+      if (phase !== "before effect") actions.loadForecasts();
+      if (phase === "failed load") {
+        h.requests[1].reject(new Error("Offline"));
+        await vi.waitFor(() => expect(h.state.toast?.text).toBe("Offline"));
+      }
+      h.requests[0].resolve({ weeks: candidate.weeks });
+      expect(await pending).toBe(false);
+      expect(h.state.plans).toEqual(before);
+      expect(h.state.planHistory).toEqual(history);
+      expect(h.state.busy).toBe("");
+      const count = h.requests.length;
+      // The current settings still have no matching projections. A retry must
+      // not send a validation against the old displayed input data.
+      expect(await h.render().updatePlan(candidate)).toBe(false);
+      expect(h.requests).toHaveLength(count);
+      if (phase === "loading") {
+        h.requests[1].resolve({ ...h.data });
+        await vi.waitFor(() =>
+          expect(h.loadedForecastArgsRef.current).toBe(JSON.stringify(changed)),
+        );
+      }
+    },
+  );
+
+  it("invalidates a receipt when new data arrives under unchanged settings", async () => {
+    const h = harness();
+    const candidate = { ...h.state.plans[0], base_bank: 2 };
+    const pending = h.render().updatePlan(candidate);
+    h.render({ data: structuredClone(h.data) }).rescore();
+    const rescored = structuredClone(h.state.plans);
+    h.requests[0].resolve({ weeks: candidate.weeks });
+    expect(await pending).toBe(false);
+    expect(h.state.plans).toEqual(rescored);
+    expect(h.state.planHistory).toEqual({});
+    const retry = h.render().updatePlan(candidate);
+    h.requests[1].resolve({ weeks: candidate.weeks });
+    expect(await retry).toBeTruthy();
+    expect(h.state.planHistory.A).toEqual({ past: [rescored[0]], future: [] });
+  });
+
+  it.each(["past", "future"] as const)(
+    "keeps %s history intact on input drift, then validates the retry once",
+    async (direction) => {
+      const h = harness();
+      const target = branch("A");
+      target.weeks[0].captain = 3;
+      h.state.planHistory.A = { past: [], future: [], [direction]: [target] };
+      const history = structuredClone(h.state.planHistory);
+      const pending = h.render().travelPlan(direction);
+      h.render({ data: structuredClone(h.data) }).rescore();
+      const beforeRetry = structuredClone(h.state.plans[0]);
+      h.requests[0].resolve({ weeks: target.weeks });
+      await pending;
+      expect(h.state.planHistory).toEqual(history);
+      expect(h.state.plans[0]).toEqual(beforeRetry);
+      const retry = h.render().travelPlan(direction);
+      const canonical = target.weeks.map((w) => ({
+        ...w,
+        bank: 0.7,
+        points: 59,
+      }));
+      h.requests[1].resolve({ weeks: canonical });
+      await retry;
+      expect(h.state.plans[0].weeks).toEqual(canonical);
+      expect(h.state.planHistory.A).toEqual(
+        direction === "past"
+          ? { past: [], future: [beforeRetry] }
+          : { past: [beforeRetry], future: [] },
+      );
+    },
+  );
+
+  it.each(["success", "failure"])(
+    "ignores an obsolete validation %s without releasing a newer owner",
+    async (outcome) => {
+      const h = harness();
+      const actions = h.render();
+      const original = structuredClone(h.state.plans);
+      const pending = actions.updatePlan(
+        { ...original[0], base_bank: 2 },
+        "Old success",
+      );
+      actions.finishOperation(h.operationRef.current);
+      const edited = structuredClone(original[1]);
+      edited.weeks[0].captain = 3;
+      const accepted = h.render().updatePlan(edited, "Accepted edit");
+      h.requests[1].resolve({ weeks: edited.weeks });
+      expect(await accepted).toEqual(edited);
+      const plans = structuredClone(h.state.plans);
+      const history = structuredClone(h.state.planHistory);
+      const newer = h.render().scoreProspective();
+      const owner = h.operationRef.current;
+      expect(owner).not.toBeNull();
+      h.state.toast = { text: "New feedback" };
+      if (outcome === "success")
+        h.requests[0].resolve({ weeks: original[0].weeks });
+      else h.requests[0].reject(new Error("Old failure"));
+      expect(await pending).toBe(false);
+      expect(h.state.plans).toEqual(plans);
+      expect(h.state.planHistory).toEqual(history);
+      expect(h.operationRef.current).toBe(owner);
+      expect(h.state.busy).toBe("Scoring completed gameweeks…");
+      expect(h.state.busyStatus.origin).toBeUndefined();
+      expect(h.state.toast).toEqual({ text: "New feedback" });
+      h.requests[2].resolve({ gameweeks: [] });
+      await newer;
+    },
+  );
+
+  it("does not replace F1 scores with a late, valid F0 receipt", async () => {
+    const h = harness();
+    h.render().rescore();
+    expect(h.state.plans[0].weeks[0].points).toBe(24);
+    const before = structuredClone(h.state.plans[0]);
+    const candidate = {
+      ...before,
+      base_bank: 2,
+      free_transfers: 4,
+      weeks: before.weeks.map((w) => ({ ...w, captain: 3, vice: 1 })),
+    };
+    const pending = h.render().updatePlan(candidate, "Updated.");
+    const changed = { ...defaultForecastConfiguration, provider_weight: 0.8 };
+    h.render({ forecastArgs: changed }).loadForecasts();
+    expect(h.requests[1].path).toBe("/projections");
+    const f1 = {
+      ...h.data,
+      players: h.data.players.map((p) => ({
+        ...p,
+        gw: Object.fromEntries(
+          [7, 8, 9].map((gw) => [String(gw), { points: 5, pplay: 1 }]),
+        ),
+      })),
+    };
+    h.requests[1].resolve(f1);
+    await vi.waitFor(() => expect(h.data.players[0].gw["7"].points).toBe(5));
+    // Dataset adoption already rescored every plan; no later effect is needed.
+    expect(h.state.plans[0].weeks[0].points).toBe(60);
+    h.requests[0].resolve({ weeks: candidate.weeks });
+    expect(await pending).toBe(false);
+    expect(h.state.plans[0].weeks[0].points).toBe(60);
+    expect(h.state.plans[0].weeks[0].captain).toBe(1);
+    expect(h.state.plans[0].base_bank).toBe(1);
+    expect(h.state.planHistory).toEqual({});
+    expect(h.state.busy).toBe("");
+    expect(h.state.toast).toEqual({
+      text: "Forecasts changed. Try again.",
+      error: true,
+      origin: { id: "A", name: "A", gw: 7 },
+    });
+    expect(h.livePlanningRef.current.forecastArgs).toEqual(changed);
+    const beforeRetry = structuredClone(h.state.plans[0]);
+    const retry = h.render().updatePlan(candidate, "Updated.");
+    expect(h.requests[2].body).toEqual(
+      planValidationRequest(candidate, changed),
+    );
+    const canonical = candidate.weeks.map((w) => ({
+      ...w,
+      points: 60,
+      net_points: 56,
+      hits: 4,
+      bank: 1.6,
+      next_free_transfers: 1,
+      permanent_squad: w.squad,
+      permanent_bank: 1.6,
+      purchase_prices: { "1": 4.5 },
+    }));
+    h.requests[2].resolve({ weeks: canonical });
+    expect(await retry).toEqual({ ...candidate, weeks: canonical });
+    expect(h.state.plans[0]).toEqual({ ...candidate, weeks: canonical });
+    expect(h.state.planHistory.A).toEqual({ past: [beforeRetry], future: [] });
+  });
+});
+
+describe("projection request coherence", () => {
+  it.each(["success", "failure"])(
+    "ignores an obsolete %s even when rapid reversion requests the same configuration again",
+    async (outcome) => {
+      const h = harness();
+      const original = h.data;
+      const changed = { ...defaultForecastConfiguration, provider_weight: 0.8 };
+      h.render({ forecastArgs: changed }).loadForecasts();
+      h.render({ forecastArgs: defaultForecastConfiguration }).loadForecasts();
+      h.render({ forecastArgs: changed }).loadForecasts();
+      expect(h.requests).toHaveLength(2);
+      if (outcome === "success") h.requests[0].resolve({ ...original, players: [] });
+      else h.requests[0].reject(new Error("Obsolete load failed"));
+      await h.api.mock.results[0].value.catch(() => {});
+      await Promise.resolve(); // flush the load's guarded error callback
+      expect(h.data).toBe(original);
+      expect(h.loadedForecastArgsRef.current).toBe(JSON.stringify(defaultForecastConfiguration));
+      expect(h.state.toast?.text).toBe("Earlier message");
+      const latest = { ...original, loaded_at: "2026-11-06T15:00:00Z" };
+      h.requests[1].resolve(latest);
+      await vi.waitFor(() => expect(h.data.loaded_at).toBe(latest.loaded_at));
+      expect(h.loadedForecastArgsRef.current).toBe(JSON.stringify(changed));
+      expect(h.data.players).toEqual(original.players);
+    },
+  );
+
+  it("accepts a still-current F0 receipt after settings revert and discards the pending F1 load", async () => {
+    const h = harness();
+    const original = structuredClone(h.state.plans[0]);
+    const candidate = { ...original, base_bank: 2 };
+    const pending = h.render().updatePlan(candidate);
+    h.render({
+      forecastArgs: { ...defaultForecastConfiguration, use_provider: false },
+    }).loadForecasts();
+    h.render({ forecastArgs: defaultForecastConfiguration }).loadForecasts();
+    const canonical = candidate.weeks.map((w) => ({ ...w, points: 24, bank: 1.8 }));
+    h.requests[0].resolve({ weeks: canonical });
+    expect(await pending).toEqual({ ...candidate, weeks: canonical });
+    h.requests[1].resolve({ ...h.data, players: [] });
+    await Promise.allSettled(h.api.mock.results.map((r) => r.value));
+    expect(h.data.players).toHaveLength(16);
+    expect(h.state.plans[0].weeks).toEqual(canonical);
+    expect(h.state.planHistory.A).toEqual({ past: [original], future: [] });
+  });
+
+  it.each(["success", "failure"])(
+    "ignores obsolete %s receipts across repeated edits and reversion to loaded settings",
+    async (outcome) => {
+      const h = harness();
+      const original = h.data;
+      const f1 = { ...defaultForecastConfiguration, provider_weight: 0.8 };
+      const f2 = { ...defaultForecastConfiguration, provider_weight: 0.2 };
+      h.render({ forecastArgs: f1 }).loadForecasts();
+      h.render({ forecastArgs: f2 }).loadForecasts();
+      h.render({ forecastArgs: defaultForecastConfiguration }).loadForecasts();
+      expect(h.requests).toHaveLength(2); // F0 is already loaded
+      for (const request of [...h.requests].reverse()) {
+        if (outcome === "success")
+          request.resolve({ ...original, players: [] });
+        else request.reject(new Error("Obsolete error"));
+      }
+      await Promise.allSettled(h.api.mock.results.map((r) => r.value));
+      expect(h.data).toBe(original);
+      expect(h.loadedForecastArgsRef.current).toBe(
+        JSON.stringify(defaultForecastConfiguration),
+      );
+      expect(h.state.toast?.text).toBe("Earlier message");
+      h.render().rescore();
+      expect(h.state.plans[0].weeks.map((w) => w.points)).toEqual([24, 24, 24]);
+    },
+  );
+
+  it("rejects an obsolete projection before the newer render's effect runs", async () => {
+    const h = harness();
+    const original = h.data;
+    h.render({
+      forecastArgs: { ...defaultForecastConfiguration, use_provider: false },
+    }).loadForecasts();
+    h.render({ forecastArgs: defaultForecastConfiguration });
+    h.requests[0].resolve({ ...original, players: [] });
+    await Promise.allSettled(h.api.mock.results.map((r) => r.value));
+    expect(h.data).toBe(original);
+  });
+
+  it("discards a projection receipt after effect cleanup", async () => {
+    const h = harness();
+    const original = h.data;
+    const cleanup = h
+      .render({
+        forecastArgs: { ...defaultForecastConfiguration, use_provider: false },
+      })
+      .loadForecasts();
+    cleanup();
+    h.requests[0].resolve({ ...original, players: [] });
+    await Promise.allSettled(h.api.mock.results.map((r) => r.value));
+    expect(h.data).toBe(original);
+  });
+});
+
+// These assertions observe the request's complete adoption without running a
+// subsequent effect. The harness executes App's real adoption/state closures;
+// a browser still needs to verify the resulting paint and responsive layout.
+describe("forecast update feedback and atomic adoption", () => {
+  const changed = { ...defaultForecastConfiguration, stat_schedule: { "1": { "7": { expected_points: 5 } } } };
+  const settle = async (h: ReturnType<typeof harness>, index: number) => {
+    await h.api.mock.results[index].value.catch(() => {});
+    await Promise.resolve();
+  };
+  const updated = (h: ReturnType<typeof harness>) => ({
+    ...h.data,
+    players: h.data.players.map((p) => ({
+      ...p,
+      gw: Object.fromEntries([7, 8, 9, 12, 13].map((gw) => [String(gw), { points: 5, pplay: 1 }])),
+    })),
+    gameweeks: [7, 8, 9, 12, 13],
+  });
+
+  it("marks figures stale before the request effect, then adopts players and every plan total together", async () => {
+    const h = harness();
+    const oldData = h.data;
+    const before = structuredClone(h.state.plans);
+    const actions = h.render({ forecastArgs: changed });
+    expect(actions.forecastStatus()).toEqual({ stale: true, pending: true, error: "" });
+    actions.loadForecasts();
+    expect(h.data).toBe(oldData);
+    expect(h.state.plans).toEqual(before);
+    const forecasts = updated(h);
+    h.requests[0].resolve(forecasts);
+    await settle(h, 0);
+    expect(h.data.players[0].gw["7"].points).toBe(5);
+    expect(h.state.plans.map((p) => p.weeks.map((w) => w.net_points))).toEqual([[60, 60, 60], [60, 60]]);
+    expect(h.render().forecastStatus()).toEqual({ stale: false, pending: false, error: "" });
+    expect(h.state.planHistory).toEqual({});
+    expect(h.state.busy).toBe("");
+  });
+
+  it.each(["success", "failure"])("does not let an obsolete %s settle a newer request's feedback", async (outcome) => {
+    const h = harness();
+    h.render({ forecastArgs: changed }).loadForecasts();
+    h.render({ forecastArgs: { ...changed, provider_weight: 0.8 } }).loadForecasts();
+    const status = h.state.forecastUpdate;
+    if (outcome === "success") h.requests[0].resolve(updated(h));
+    else h.requests[0].reject(new Error("Obsolete error"));
+    await settle(h, 0);
+    expect(h.state.forecastUpdate).toBe(status);
+    expect(h.render().forecastStatus()).toEqual({ stale: true, pending: true, error: "" });
+    h.requests[1].reject(new Error("Current failure"));
+    await settle(h, 1);
+    expect(h.render().forecastStatus()).toEqual({ stale: true, pending: false, error: "Current failure" });
+  });
+
+  it("retains saved decisions, assumptions, names and history on error/retry and scores the latest plans", async () => {
+    const h = harness();
+    h.state.planHistory.A = { past: [branch("past")], future: [branch("future")] };
+    const history = structuredClone(h.state.planHistory);
+    const before = structuredClone(h.state.plans);
+    const originalData = h.data;
+    h.render({ forecastArgs: changed }).loadForecasts();
+    h.requests[0].reject(new Error("Offline"));
+    await settle(h, 0);
+    expect(h.data).toBe(originalData);
+    expect(h.state.plans).toEqual(before);
+    expect(h.render().forecastStatus()).toEqual({ stale: true, pending: false, error: "Offline" });
+    expect(h.livePlanningRef.current.forecastArgs).toEqual(changed);
+    h.render().retryForecasts();
+    expect(h.render().forecastStatus()).toEqual({ stale: true, pending: true, error: "" });
+    h.render().loadForecasts();
+    expect(h.requests[1].body).toEqual(changed);
+    // A newer plan edit, rename, branch and player navigation occur while the
+    // read is pending. Rescoring must use these current decisions/resources.
+    h.state.plans[0] = { ...h.state.plans[0], name: "Latest name", base_bank: 2,
+      weeks: h.state.plans[0].weeks.map((w) => ({ ...w, captain: 3, vice: 1, chip: "triplecaptain", hits: 4, bank: 2 })) };
+    h.state.plans.push(branch("Added", [8]));
+    h.state.activeId = "B";
+    h.state.gw = h.state.detailGW = 13;
+    h.state.detailId = 9;
+    h.state.tab = "market";
+    h.render();
+    h.requests[1].resolve(updated(h));
+    await settle(h, 1);
+    expect(h.state.plans[0]).toMatchObject({ name: "Latest name", base_bank: 2 });
+    expect(h.state.plans[0].weeks[0]).toMatchObject({ captain: 3, vice: 1, chip: "triplecaptain", hits: 4, bank: 2, net_points: 61 });
+    expect(h.state.plans[1].weeks.every((w) => w.points === 60)).toBe(true);
+    expect(h.state.plans[2].weeks[0].points).toBe(60);
+    expect(h.state.planHistory).toEqual(history);
+    expect(h.state).toMatchObject({ activeId: "B", gw: 13, detailGW: 13, detailId: 9, tab: "market" });
+    expect(h.render().forecastStatus().stale).toBe(false);
+  });
+
+  it.each(["success", "failure"])("keeps scoring ownership intact when the independent forecast read ends in %s", async (outcome) => {
+    const h = harness();
+    const scoring = h.render().scoreProspective();
+    const owner = h.operationRef.current;
+    h.render({ forecastArgs: changed }).loadForecasts();
+    if (outcome === "success") h.requests[1].resolve(updated(h));
+    else h.requests[1].reject(new Error("Forecast offline"));
+    await settle(h, 1);
+    expect(h.operationRef.current).toBe(owner);
+    expect(h.state.busy).toBe("Scoring completed gameweeks…");
+    expect(h.state.busyStatus.origin).toBeUndefined();
+    h.requests[0].resolve({ gameweeks: [] });
+    await scoring;
+    expect(h.state.busy).toBe("");
+    expect(h.render().forecastStatus().stale).toBe(outcome === "failure");
+  });
+
+  it("reverting a failed assumption clears its error without requesting already-loaded forecasts", async () => {
+    const h = harness();
+    h.render({ forecastArgs: changed }).loadForecasts();
+    h.requests[0].reject(new Error("Offline"));
+    await settle(h, 0);
+    const reverted = h.render({ forecastArgs: defaultForecastConfiguration });
+    expect(reverted.forecastStatus()).toEqual({ stale: false, pending: false, error: "" });
+    reverted.loadForecasts();
+    expect(h.state.forecastUpdate).toBeNull();
+    expect(h.requests).toHaveLength(1);
+  });
+
+  it("invalidates a retry immediately and restores loaded values when the user reverts", async () => {
+    const h = harness();
+    const original = h.data;
+    h.render({ forecastArgs: changed }).loadForecasts();
+    h.requests[0].reject(new Error("Offline"));
+    await settle(h, 0);
+    h.render().retryForecasts();
+    h.render().loadForecasts();
+    expect(h.requests).toHaveLength(2);
+    const reverted = h.render({ forecastArgs: defaultForecastConfiguration });
+    reverted.loadForecasts();
+    expect(h.requests).toHaveLength(2);
+    expect(h.render().forecastStatus()).toEqual({ stale: false, pending: false, error: "" });
+    h.requests[1].resolve({ ...original, players: [] });
+    await settle(h, 1);
+    expect(h.data).toBe(original);
+    expect(h.render().forecastStatus().stale).toBe(false);
+  });
+
+  it("does not let a background status read invalidate a newer assumption request", async () => {
+    const h = harness();
+    const load = vi.fn();
+    const background = h.render({ loadPlanningState: load }).backgroundCheck();
+    h.render({ forecastArgs: changed }).loadForecasts();
+    h.requests[0].resolve({ loaded_at: "2026-11-06T15:00:00Z" });
+    await background;
+    expect(load).not.toHaveBeenCalled();
+    expect(h.render().forecastStatus().pending).toBe(true);
+    h.requests[1].resolve(updated(h));
+    await settle(h, 1);
+    expect(h.state.plans[0].weeks[0].points).toBe(60);
+    expect(h.render().forecastStatus().stale).toBe(false);
+  });
+
+  it("skips background reloads while matching assumption forecasts are unavailable", async () => {
+    const h = harness();
+    const actions = h.render({ forecastArgs: changed });
+    actions.loadForecasts();
+    await actions.backgroundCheck();
+    expect(h.requests.map((r) => r.path)).toEqual(["/projections"]);
+    h.requests[0].resolve(updated(h));
+    await settle(h, 0);
+  });
+});
+
+describe("initial loader recovery", () => {
+  async function flush() {
+    for (let i = 0; i < 12; i++) await Promise.resolve();
+  }
+  function setup() {
+    const h = harness();
+    const saved = { plans: h.state.plans, active_id: "A", watch: [3],
+      configuration: { ...defaultForecastConfiguration, stat_schedule: { "1": { "7": { expected_points: 5 } } } },
+      solver_settings: defaultSolverSettings };
+    const load = vi.fn(async (plans, activeId, configuration, solver, request) => {
+      await request();
+      const forecast = await request(configuration);
+      return { plans, activeId, configuration, solver, forecast, gw: 7, notices: [] };
+    });
+    const configuration = vi.fn();
+    const render = () => h.render({ loadPlanningState: load, applyForecastConfiguration: configuration,
+      forecastBaseline: () => h.api("/bootstrap", {}) });
+    return { h, saved, render, configuration };
+  }
+
+  it("leaves the initial loader in control when focus asks to reload shared plans", async () => {
+    const { h, saved } = setup();
+    const load = vi.fn();
+    const accepted = await h.render({ data: null, loadPlanningState: load }).adoptShared(saved, () => true);
+    expect(accepted).toBe(false);
+    expect(load).not.toHaveBeenCalled();
+    expect(h.requests).toHaveLength(0);
+    expect(h.state.loading).toBe(true);
+  });
+
+  it("shows truthful waiting stages and a prolonged-load recovery state without altering saved inputs", async () => {
+    vi.useFakeTimers();
+    const { h, saved, render } = setup();
+    const before = structuredClone(h.state.plans);
+    const cleanup = render().bootstrap();
+    expect(h.state.loadStage).toBe("Connecting saved plans…");
+    await vi.advanceTimersByTimeAsync(7999);
+    expect(h.state.loadSlow).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(h.state.loadSlow).toBe(true);
+    expect(h.state.plans).toEqual(before);
+    h.requests[0].resolve(saved);
+    await flush();
+    expect(h.requests[3].path).toBe("/bootstrap");
+    expect(h.state.loadStage).toBe("Loading current player pool…");
+    h.requests[3].resolve(h.data);
+    await flush();
+    expect(h.requests[4].path).toBe("/projections");
+    expect(h.requests[4].body).toEqual(saved.configuration);
+    expect(h.state.loadStage).toBe("Applying saved assumptions…");
+    const forecasts = { ...h.data, players: h.data.players.map((p) => ({ ...p,
+      gw: Object.fromEntries([7, 8, 9].map((gw) => [String(gw), { points: 5, pplay: 1 }])) })) };
+    h.requests[4].resolve(forecasts);
+    await flush();
+    expect(h.data).toBe(forecasts);
+    expect(h.state.plans[0].weeks[0].points).toBe(60);
+    expect(h.state.loading).toBe(false);
+    expect(h.loadedForecastArgsRef.current).toBe(JSON.stringify(saved.configuration));
+    cleanup();
+  });
+
+  it("retries through the existing loader after failure, retaining saved plans and assumptions", async () => {
+    const { h, saved, render, configuration } = setup();
+    const before = structuredClone(h.state.plans);
+    const cleanup = render().bootstrap();
+    h.requests[0].resolve(saved);
+    await flush();
+    h.requests[3].reject(new Error("Connection unavailable"));
+    await flush();
+    expect(h.state).toMatchObject({ loading: false, loadError: "Connection unavailable" });
+    expect(h.state.plans).toEqual(before);
+    expect(configuration).not.toHaveBeenCalled();
+    render().retryLoading();
+    expect(h.state).toMatchObject({ loading: true, loadError: "", loadSlow: false });
+    cleanup();
+    const retryCleanup = render().bootstrap();
+    h.requests[4].resolve(saved);
+    await flush();
+    h.requests[7].resolve(h.data);
+    await flush();
+    expect(h.requests[8].body).toEqual(saved.configuration);
+    h.requests[8].resolve(h.data);
+    await flush();
+    expect(h.state.loading).toBe(false);
+    expect(configuration).toHaveBeenCalledExactlyOnceWith(saved.configuration);
+    expect(h.state.plans.map((p) => p.id)).toEqual(["A", "B"]);
+    retryCleanup();
+  });
+
+  it.each(["success", "failure"])("ignores the old loader's %s after Retry even before effect cleanup", async (outcome) => {
+    const { h, saved, render, configuration } = setup();
+    const cleanup = render().bootstrap();
+    h.requests[0].resolve(saved);
+    await flush();
+    h.requests[3].resolve(h.data);
+    await flush();
+    render().retryLoading();
+    // Retry synchronously invalidates the old generation, independently of
+    // when React runs cleanup and starts the replacement effect.
+    if (outcome === "success") h.requests[4].resolve({ ...h.data, players: [] });
+    else h.requests[4].reject(new Error("Obsolete loader failed"));
+    await flush();
+    expect(h.state).toMatchObject({ loading: true, loadError: "", loadSlow: false });
+    expect(h.data.players).toHaveLength(16);
+    expect(configuration).not.toHaveBeenCalled();
+    cleanup();
   });
 });

@@ -164,6 +164,7 @@ async function forecastBaseline(refresh = false) {
     : forecast;
 }
 const storageKey = "open-fpl-plans-v1";
+type PlanOperation = { id: string; name: string; gw: number | null };
 function locationTab(): Tab {
   const value = new URLSearchParams(window.location.search).get("tab");
   return value === "plans"
@@ -297,14 +298,22 @@ export default function App() {
     [listMode, setListMode] = useState<"targets" | "captains" | "watch">(
       "targets",
     ),
-    [busy, setBusy] = useState(""),
+    [busyStatus, setBusyStatus] = useState<{
+      message: string;
+      origin?: PlanOperation;
+    }>({ message: "" }),
     [toast, setToast] = useState<{
       text: string;
       error?: boolean;
+      origin?: PlanOperation;
       action?: { label: string; run: () => void };
     } | null>(null),
     [evalData, setEvalData] = useState<Evaluation | null>(null),
     [prospective, setProspective] = useState<Prospective | null>(null);
+  const busy = busyStatus.message;
+  function setBusy(message: string, origin?: PlanOperation) {
+    setBusyStatus({ message, origin });
+  }
   const [teamId, setTeamId] = useState("2200722"),
     [teamBank, setTeamBank] = useState(0),
     [teamFT, setTeamFT] = useState(1),
@@ -322,7 +331,8 @@ export default function App() {
     solveRequestRef = useRef(0),
     solveInFlightRef = useRef(false),
     fileRef = useRef<HTMLInputElement>(null);
-  const notify = (text: string, error = false) => setToast({ text, error });
+  const notify = (text: string, error = false, origin?: PlanOperation) =>
+    setToast({ text, error, ...(origin ? { origin } : {}) });
   const forecastArgs: ForecastConfiguration = {
     overrides,
     minutes_schedule: minutesSchedule,
@@ -360,6 +370,20 @@ export default function App() {
     busy,
     watch,
   };
+  // Navigation changes this identity; busy and accepted-plan renders do not.
+  const transferView = useMemo(
+    () => ({}),
+    [activeId, gw, tab, detailId, detailGW, detailInline, modal],
+  );
+  const liveTransferViewRef = useRef(transferView);
+  liveTransferViewRef.current = transferView;
+  const feedbackSurfaceRef = useRef<{ gw: number; readOnly: boolean } | null>(null);
+  feedbackSurfaceRef.current = detailId === null ? null
+    : { gw: detailGW || gw, readOnly: detailReadOnly };
+  const planBusyLabel = busyStatus.origin
+    ? planMessage(busy, busyStatus.origin) : busy;
+  const planToastText = toast?.origin
+    ? planMessage(toast.text, toast.origin) : toast?.text;
   const week = active?.weeks.find((w) => w.gw === gw) ?? null;
   const lookup = useMemo(
     () => new Map(data?.players.map((p) => [p.id, p]) ?? []),
@@ -904,6 +928,16 @@ export default function App() {
     return () => window.removeEventListener("popstate", back);
   }, [plans, data?.gameweeks, activeId]);
 
+  function planMessage(message: string, origin: PlanOperation) {
+    const live = livePlanningRef.current;
+    const surface = feedbackSurfaceRef.current;
+    const matchingSurface = !surface || (!surface.readOnly &&
+      (origin.gw === null || surface.gw === origin.gw));
+    if (live.activeId === origin.id && (origin.gw === null || live.gw === origin.gw) && matchingSurface)
+      return message;
+    const name = live.plans.find((plan) => plan.id === origin.id)?.name ?? origin.name;
+    return `${name}${origin.gw === null ? "" : ` · GW${origin.gw}`}: ${message}`;
+  }
   async function validatedPlan(p: Plan) {
     const result = await api<{ weeks: Week[] }>(
       "/plan/validate",
@@ -916,11 +950,13 @@ export default function App() {
     message?: string,
     remember = true,
     pendingMessage = "Updating plan…",
+    atGW: number | null = gw,
   ) {
     if (busy) return false;
+    const origin = { id: p.id, name: p.name, gw: atGW };
     const before = plans.find((row) => row.id === p.id);
     setToast(null);
-    setBusy(pendingMessage);
+    setBusy(pendingMessage, origin);
     try {
       const valid = await validatedPlan(p);
       if (remember && before)
@@ -934,11 +970,14 @@ export default function App() {
             future: [],
           },
         }));
-      setPlans((ps) => ps.map((v) => (v.id === p.id ? valid : v)));
-      if (message) notify(message);
-      return true;
+      // Names can change while validation is pending, independently of decisions.
+      setPlans((ps) =>
+        ps.map((v) => (v.id === p.id ? { ...valid, name: v.name } : v)),
+      );
+      if (message) notify(message, false, origin);
+      return valid;
     } catch (e) {
-      notify((e as Error).message, true);
+      notify((e as Error).message, true, origin);
       return false;
     } finally {
       setBusy("");
@@ -949,14 +988,14 @@ export default function App() {
     const history = planHistory[active.id];
     const target = history?.[direction].at(-1);
     if (!target) return;
-    if (
-      await updatePlan(
-        target,
-        direction === "past" ? "Change undone." : "Change restored.",
-        false,
-        direction === "past" ? "Undoing…" : "Redoing…",
-      )
-    ) {
+    const valid = await updatePlan(
+      target,
+      direction === "past" ? "Change undone." : "Change restored.",
+      false,
+      direction === "past" ? "Undoing…" : "Redoing…",
+      null,
+    );
+    if (valid) {
       setPlanHistory((current) => ({
         ...current,
         [active.id]:
@@ -970,8 +1009,15 @@ export default function App() {
                 future: history.future.slice(0, -1),
               },
       }));
-      if (!target.weeks.some((row) => row.gw === gw)) setGw(target.weeks[0].gw);
-      setSelected(null);
+      // History belongs to its source plan; selection belongs to the current view.
+      if (livePlanningRef.current.activeId === active.id) {
+        setGw((current) =>
+          valid.weeks.some((row) => row.gw === current)
+            ? current
+            : valid.weeks[0].gw,
+        );
+        setSelected(null);
+      }
     }
   }
   useEffect(() => {
@@ -1197,6 +1243,7 @@ export default function App() {
     });
   }
   async function transferIn(id: number, from = selected, atGW = gw) {
+    const view = transferView;
     const transferWeek = active?.weeks.find((row) => row.gw === atGW);
     if (!data || !active || from === null || !transferWeek || busy)
       return false;
@@ -1213,10 +1260,14 @@ export default function App() {
     if (
       await updatePlan(
         next,
-        `${outgoing.name} → ${incoming.name}. Budget and transfers checked.`,
+        `${outgoing.name} → ${incoming.name}.`,
+        true,
+        "Updating plan…",
+        atGW,
       )
     ) {
-      setSelected(null);
+      if (liveTransferViewRef.current === view)
+        setSelected((current) => current === selected ? null : current);
       return true;
     }
     return false;
@@ -1240,6 +1291,9 @@ export default function App() {
     void updatePlan(
       p,
       `${lookup.get(id)?.name} selected as ${vice ? "vice-captain" : "captain"}.`,
+      true,
+      "Updating plan…",
+      atGW,
     );
   }
   function swapPlayers(from: number, id: number) {
@@ -1273,7 +1327,7 @@ export default function App() {
     const p = structuredClone(active),
       w = p.weeks.find((v) => v.gw === atGW)!;
     [w.bench[index], w.bench[target]] = [w.bench[target], w.bench[index]];
-    void updatePlan(p, "Bench substitution priority updated.");
+    void updatePlan(p, "Bench substitution priority updated.", true, "Updating plan…", atGW);
   }
   function changeHorizon(count: number) {
     if (!active || !data) return;
@@ -1300,7 +1354,7 @@ export default function App() {
           transfers_out: [],
         },
     );
-    void updatePlan(p, `Planning horizon updated to ${count} gameweeks.`);
+    void updatePlan(p, `Planning horizon updated to ${count} gameweeks.`, true, "Updating plan…", null);
     if (!weeks.includes(gw)) setGw(weeks[0]);
   }
   function changeChip(chip: Chip) {
@@ -1377,7 +1431,7 @@ export default function App() {
   async function saveTeamSettings() {
     if (!active) return;
     const p = { ...active, base_bank: teamBank, free_transfers: teamFT };
-    await updatePlan(p, "Starting bank and free transfers updated.");
+    await updatePlan(p, "Starting bank and free transfers updated.", true, "Updating plan…", null);
   }
   async function runSolve(fresh = false, inPlace = false) {
     if (!data || busy || solveInFlightRef.current) return;
@@ -1978,7 +2032,7 @@ export default function App() {
         week={week}
         selected={selected}
         busy={Boolean(busy)}
-        busyLabel={busy}
+        busyLabel={planBusyLabel}
         onWeek={(value) => {
           setGw(value);
           setSelected(null);
@@ -2418,7 +2472,7 @@ export default function App() {
       {busy && (
         <div className="global-busy">
           <LoaderCircle size={14} className="spin" />
-          {busy}
+          <span>{planBusyLabel}</span>
         </div>
       )}
       {toast && (
@@ -2427,7 +2481,7 @@ export default function App() {
           role="status"
         >
           {toast.error ? <Info size={17} /> : <Check size={17} />}
-          <span>{toast.text}</span>
+          <span>{planToastText}</span>
           {toast.action ? (
             <button className="toast-undo" onClick={toast.action.run}>
               {toast.action.label}
@@ -3337,8 +3391,9 @@ export default function App() {
                   setDetailTab("overview");
                 }}
                 onTransfer={async (id) => {
+                  const view = transferView;
                   const ok = await transferIn(id, detailId, playerGW);
-                  if (ok) {
+                  if (ok && liveTransferViewRef.current === view) {
                     setDetailId(null);
                     if (!detailInline) {
                       setGw(playerGW);

@@ -6,17 +6,19 @@ export function ProspectiveView({
   data,
   report,
   onScore,
+  busy,
 }: {
   data: Bootstrap;
   report: Prospective | null;
   onScore: () => void;
+  busy: boolean;
 }) {
   return (
     <section className="panel prospective-panel">
       <div className="panel-heading">
         <Clock3 size={16} />
         <h3>Forecast results</h3>
-        <button className="button small" onClick={onScore}>
+        <button className="button small" onClick={onScore} disabled={busy}>
           Score weeks
         </button>
       </div>

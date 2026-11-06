@@ -54,9 +54,9 @@ export class SharedWorkspace {
     }
   }
 
-  async initialize(local: SharedDocument) {
+  async initialize(local: SharedDocument, current = () => true) {
     const state = await api<SharedState>("/workspace");
-    if (this.stopped) return local;
+    if (this.stopped || !current()) return local;
     this.enabled = state.enabled;
     this.revision = state.revision;
     const document = state.document ?? local;

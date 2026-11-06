@@ -22,6 +22,28 @@ afterEach(() => {
 });
 
 describe("shared personal workspace", () => {
+  it("does not let an obsolete initialization replace a retried workspace revision", async () => {
+    let resolveOld!: (response: Response) => void;
+    const fetcher = vi.fn()
+      .mockImplementationOnce(() => new Promise<Response>((resolve) => { resolveOld = resolve; }))
+      .mockResolvedValueOnce(response(7, document("latest")))
+      .mockResolvedValueOnce(response(8, document("edited")));
+    vi.stubGlobal("fetch", fetcher);
+    const report = vi.fn();
+    const sync = new SharedWorkspace(report);
+    let current = true;
+    const old = sync.initialize(document("local"), () => current);
+    current = false;
+    expect((await sync.initialize(document("local"))).active_id).toBe("latest");
+    resolveOld(response(1, document("obsolete")));
+    await old;
+    expect(report).toHaveBeenCalledTimes(1);
+    sync.queue(document("edited"));
+    await sync.flush();
+    expect(JSON.parse(fetcher.mock.calls[2][1].body).revision).toBe(7);
+    sync.stop();
+  });
+
   it("restores unsaved edits after a reload and preserves a newer remote revision", async () => {
     const values = new Map<string, string>();
     const storage = {

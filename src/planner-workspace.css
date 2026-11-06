@@ -1,3 +1,43 @@
+.solio-studio.forecasts-stale {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+.forecasts-stale > .app-rail {
+  grid-row: 1 / -1;
+}
+.forecasts-stale > .workspace.solio-workspace {
+  grid-column: 2;
+  height: 100%;
+}
+.forecast-feedback {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 9px 12px;
+  background: #241b17;
+  border-bottom: 1px solid #825238;
+  color: #edc0a5;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.forecast-feedback > svg,
+.forecast-feedback > button {
+  flex-shrink: 0;
+}
+.forecast-feedback > span {
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+.forecast-feedback small {
+  display: block;
+}
+.player-detail > .forecast-feedback {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  margin-bottom: 8px;
+}
+
 .tree-canvas-scroll[hidden],
 .plan-canvas > .tree-zoom[hidden],
 .tree-branch-order[hidden],

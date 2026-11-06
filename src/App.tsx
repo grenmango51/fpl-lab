@@ -164,6 +164,7 @@ async function forecastBaseline(refresh = false) {
     : forecast;
 }
 const storageKey = "open-fpl-plans-v1";
+type PlanOperation = { id: string; name: string; gw: number | null };
 function locationTab(): Tab {
   const value = new URLSearchParams(window.location.search).get("tab");
   return value === "plans"
@@ -297,14 +298,22 @@ export default function App() {
     [listMode, setListMode] = useState<"targets" | "captains" | "watch">(
       "targets",
     ),
-    [busy, setBusy] = useState(""),
+    [busyStatus, setBusyStatus] = useState<{
+      message: string;
+      origin?: PlanOperation;
+    }>({ message: "" }),
     [toast, setToast] = useState<{
       text: string;
       error?: boolean;
+      origin?: PlanOperation;
       action?: { label: string; run: () => void };
     } | null>(null),
     [evalData, setEvalData] = useState<Evaluation | null>(null),
     [prospective, setProspective] = useState<Prospective | null>(null);
+  const busy = busyStatus.message;
+  function setBusy(message: string, origin?: PlanOperation) {
+    setBusyStatus({ message, origin });
+  }
   const [teamId, setTeamId] = useState("2200722"),
     [teamBank, setTeamBank] = useState(0),
     [teamFT, setTeamFT] = useState(1),
@@ -324,7 +333,13 @@ export default function App() {
     operationRef = useRef<symbol | null>(null),
     operationVersionRef = useRef(0),
     fileRef = useRef<HTMLInputElement>(null);
-  const notify = (text: string, error = false) => setToast({ text, error });
+  const renderedOperationVersion = operationVersionRef.current;
+  // Toast actions outlive the render that created them; enter through the
+  // latest handler so the ownership/version guard checks current state.
+  const restoreDeletedRef = useRef(restoreDeleted);
+  restoreDeletedRef.current = restoreDeleted;
+  const notify = (text: string, error = false, origin?: PlanOperation) =>
+    setToast({ text, error, ...(origin ? { origin } : {}) });
   const forecastArgs: ForecastConfiguration = {
     overrides,
     minutes_schedule: minutesSchedule,
@@ -351,6 +366,7 @@ export default function App() {
     gw,
     busy,
     watch,
+    renderedOperationVersion,
   });
   livePlanningRef.current = {
     plans,
@@ -361,7 +377,22 @@ export default function App() {
     gw,
     busy,
     watch,
+    renderedOperationVersion,
   };
+  // Navigation changes this identity; busy and accepted-plan renders do not.
+  const transferView = useMemo(
+    () => ({}),
+    [activeId, gw, tab, detailId, detailGW, detailInline, modal],
+  );
+  const liveTransferViewRef = useRef(transferView);
+  liveTransferViewRef.current = transferView;
+  const feedbackSurfaceRef = useRef<{ gw: number; readOnly: boolean } | null>(null);
+  feedbackSurfaceRef.current = detailId === null ? null
+    : { gw: detailGW || gw, readOnly: detailReadOnly };
+  const planBusyLabel = busyStatus.origin
+    ? planMessage(busy, busyStatus.origin) : busy;
+  const planToastText = toast?.origin
+    ? planMessage(toast.text, toast.origin) : toast?.text;
   const week = active?.weeks.find((w) => w.gw === gw) ?? null;
   const lookup = useMemo(
     () => new Map(data?.players.map((p) => [p.id, p]) ?? []),
@@ -415,7 +446,7 @@ export default function App() {
     const fingerprint = () => { const { data: _data, ...state } = livePlanningRef.current; return JSON.stringify(state); };
     const before = fingerprint();
     const version = operationVersionRef.current;
-    if (operationRef.current) return false;
+    if (!canStartOperation()) return false;
     const restored = await loadPlanningState(document.plans, document.active_id, document.configuration,
       document.solver_settings, configuration => configuration === undefined
         ? forecastBaseline() : api<Bootstrap>("/projections", configuration));
@@ -426,6 +457,7 @@ export default function App() {
       fingerprint() !== before
     ) return false;
     archivePlanningInputs(livePlanningRef.current.plans, livePlanningRef.current.forecastArgs);
+    ++operationVersionRef.current;
     ++dataRequestRef.current;
     loadedForecastArgsRef.current = JSON.stringify(restored.configuration);
     applyForecastConfiguration(restored.configuration);
@@ -607,7 +639,8 @@ export default function App() {
     async function check() {
       const current = livePlanningRef.current;
       if (
-        checking || !current.data || operationRef.current || solveInFlightRef.current
+        checking || !current.data || operationRef.current || solveInFlightRef.current ||
+        current.renderedOperationVersion !== operationVersionRef.current
       ) return;
       checking = true;
       const version = operationVersionRef.current;
@@ -645,6 +678,7 @@ export default function App() {
           return;
         if (restored.notices.length)
           archivePlanningInputs(current.plans, current.forecastArgs);
+        ++operationVersionRef.current;
         loadedForecastArgsRef.current = JSON.stringify(restored.configuration);
         applyForecastConfiguration(restored.configuration);
         setSettings(restored.solver);
@@ -917,16 +951,20 @@ export default function App() {
     return () => window.removeEventListener("popstate", back);
   }, [plans, data?.gameweeks, activeId]);
 
-  // The ref claims ownership before React renders disabled controls. Busy is
-  // display state only; a stale callback must not start or finish another job.
-  function beginOperation(message: string) {
-    if (operationRef.current) return null;
+  // Claim ownership before React renders disabled controls. The version also
+  // rejects callbacks that captured decisions before a completed operation.
+  function canStartOperation() {
+    return !busy && !operationRef.current &&
+      renderedOperationVersion === operationVersionRef.current;
+  }
+  function beginOperation(message: string, origin?: PlanOperation) {
+    if (!canStartOperation()) return null;
     const operation = Symbol();
     operationRef.current = operation;
     // Also invalidate background reloads if this job starts and finishes
     // before React has rendered its accepted state into livePlanningRef.
     ++operationVersionRef.current;
-    setBusy(message);
+    setBusy(message, origin);
     return operation;
   }
   function finishOperation(operation: symbol) {
@@ -935,9 +973,20 @@ export default function App() {
     setBusy("");
   }
   function operationMessage(operation: symbol, message: string) {
-    if (operationRef.current === operation) setBusy(message);
+    if (operationRef.current === operation)
+      setBusyStatus((current) => ({ ...current, message }));
   }
 
+  function planMessage(message: string, origin: PlanOperation) {
+    const live = livePlanningRef.current;
+    const surface = feedbackSurfaceRef.current;
+    const matchingSurface = !surface || (!surface.readOnly &&
+      (origin.gw === null || surface.gw === origin.gw));
+    if (live.activeId === origin.id && (origin.gw === null || live.gw === origin.gw) && matchingSurface)
+      return message;
+    const name = live.plans.find((plan) => plan.id === origin.id)?.name ?? origin.name;
+    return `${name}${origin.gw === null ? "" : ` · GW${origin.gw}`}: ${message}`;
+  }
   async function validatedPlan(p: Plan) {
     const result = await api<{ weeks: Week[] }>(
       "/plan/validate",
@@ -950,8 +999,10 @@ export default function App() {
     message?: string,
     remember = true,
     pendingMessage = "Updating plan…",
+    atGW: number | null = gw,
   ) {
-    const operation = beginOperation(pendingMessage);
+    const origin = { id: p.id, name: p.name, gw: atGW };
+    const operation = beginOperation(pendingMessage, origin);
     if (!operation) return false;
     const before = plans.find((row) => row.id === p.id);
     setToast(null);
@@ -972,10 +1023,10 @@ export default function App() {
       setPlans((ps) =>
         ps.map((v) => (v.id === p.id ? { ...valid, name: v.name } : v)),
       );
-      if (message) notify(message);
+      if (message) notify(message, false, origin);
       return valid;
     } catch (e) {
-      notify((e as Error).message, true);
+      notify((e as Error).message, true, origin);
       return false;
     } finally {
       finishOperation(operation);
@@ -991,6 +1042,7 @@ export default function App() {
       direction === "past" ? "Change undone." : "Change restored.",
       false,
       direction === "past" ? "Undoing…" : "Redoing…",
+      null,
     );
     if (valid) {
       setPlanHistory((current) => ({
@@ -1038,7 +1090,7 @@ export default function App() {
     };
     document.addEventListener("keydown", keyboard);
     return () => document.removeEventListener("keydown", keyboard);
-  }, [active, planHistory, busy, modal, detailId]);
+  }, [active, planHistory, busy, modal, detailId, renderedOperationVersion]);
   function onWatch(id: number) {
     setWatch((v) => (v.includes(id) ? v.filter((i) => i !== id) : [...v, id]));
   }
@@ -1098,7 +1150,10 @@ export default function App() {
     }
   }
   function reorderPlan(direction: number) {
-    if (!active || operationRef.current) return;
+    if (!active || !canStartOperation()) return;
+    const target = plans.findIndex((plan) => plan.id === active.id) + direction;
+    if (target < 0 || target >= plans.length) return;
+    ++operationVersionRef.current;
     setPlans((current) => {
       const next = [...current],
         index = next.findIndex((plan) => plan.id === active.id),
@@ -1219,7 +1274,8 @@ export default function App() {
     notify(`GW${gw} transfers locked in optimiser rules.`);
   }
   function clonePlan() {
-    if (!active || operationRef.current) return;
+    if (!active || !canStartOperation()) return;
+    ++operationVersionRef.current;
     const p = {
       ...structuredClone(active),
       id: uid(),
@@ -1231,7 +1287,8 @@ export default function App() {
     notify("New branch created. Explore another route.");
   }
   function deletePlan() {
-    if (!active || plans.length <= 1 || operationRef.current) return;
+    if (!active || plans.length <= 1 || !canStartOperation()) return;
+    ++operationVersionRef.current;
     const rest = plans.filter((p) => p.id !== active.id);
     const removed = structuredClone(active);
     setDeletedPlans((current) => [...current, removed].slice(-20));
@@ -1240,10 +1297,11 @@ export default function App() {
     setPreviewingDraft(false);
     setToast({
       text: "Branch moved to deleted plans.",
-      action: { label: "Undo", run: () => restoreDeleted(removed) },
+      action: { label: "Undo", run: () => restoreDeletedRef.current(removed) },
     });
   }
   async function transferIn(id: number, from = selected, atGW = gw) {
+    const view = transferView;
     const transferWeek = active?.weeks.find((row) => row.gw === atGW);
     if (!data || !active || from === null || !transferWeek || operationRef.current)
       return false;
@@ -1260,10 +1318,14 @@ export default function App() {
     if (
       await updatePlan(
         next,
-        `${outgoing.name} → ${incoming.name}. Budget and transfers checked.`,
+        `${outgoing.name} → ${incoming.name}.`,
+        true,
+        "Updating plan…",
+        atGW,
       )
     ) {
-      setSelected(null);
+      if (liveTransferViewRef.current === view)
+        setSelected((current) => current === selected ? null : current);
       return true;
     }
     return false;
@@ -1287,6 +1349,9 @@ export default function App() {
     void updatePlan(
       p,
       `${lookup.get(id)?.name} selected as ${vice ? "vice-captain" : "captain"}.`,
+      true,
+      "Updating plan…",
+      atGW,
     );
   }
   function swapPlayers(from: number, id: number) {
@@ -1320,7 +1385,7 @@ export default function App() {
     const p = structuredClone(active),
       w = p.weeks.find((v) => v.gw === atGW)!;
     [w.bench[index], w.bench[target]] = [w.bench[target], w.bench[index]];
-    void updatePlan(p, "Bench substitution priority updated.");
+    void updatePlan(p, "Bench substitution priority updated.", true, "Updating plan…", atGW);
   }
   function changeHorizon(count: number) {
     if (!active || !data) return;
@@ -1347,7 +1412,7 @@ export default function App() {
           transfers_out: [],
         },
     );
-    void updatePlan(p, `Planning horizon updated to ${count} gameweeks.`);
+    void updatePlan(p, `Planning horizon updated to ${count} gameweeks.`, true, "Updating plan…", null);
     if (!weeks.includes(gw)) setGw(weeks[0]);
   }
   function changeChip(chip: Chip) {
@@ -1425,7 +1490,7 @@ export default function App() {
   async function saveTeamSettings() {
     if (!active) return;
     const p = { ...active, base_bank: teamBank, free_transfers: teamFT };
-    await updatePlan(p, "Starting bank and free transfers updated.");
+    await updatePlan(p, "Starting bank and free transfers updated.", true, "Updating plan…", null);
   }
   async function runSolve(fresh = false, inPlace = false) {
     if (!data || operationRef.current || solveInFlightRef.current) return;
@@ -1619,7 +1684,7 @@ export default function App() {
       if (request === solveRequestRef.current)
         notify((e as Error).message, true);
     } finally {
-      solveInFlightRef.current = false;
+      if (operationRef.current === operation) solveInFlightRef.current = false;
       finishOperation(operation);
     }
   }
@@ -2039,7 +2104,7 @@ export default function App() {
         week={week}
         selected={selected}
         busy={Boolean(busy)}
-        busyLabel={busy}
+        busyLabel={planBusyLabel}
         onWeek={(value) => {
           setGw(value);
           setSelected(null);
@@ -2480,7 +2545,7 @@ export default function App() {
       {busy && (
         <div className="global-busy">
           <LoaderCircle size={14} className="spin" />
-          {busy}
+          <span>{planBusyLabel}</span>
         </div>
       )}
       {toast && (
@@ -2489,7 +2554,7 @@ export default function App() {
           role="status"
         >
           {toast.error ? <Info size={17} /> : <Check size={17} />}
-          <span>{toast.text}</span>
+          <span>{planToastText}</span>
           {toast.action ? (
             <button className="toast-undo" onClick={toast.action.run}>
               {toast.action.label}
@@ -3399,8 +3464,9 @@ export default function App() {
                   setDetailTab("overview");
                 }}
                 onTransfer={async (id) => {
+                  const view = transferView;
                   const ok = await transferIn(id, detailId, playerGW);
-                  if (ok) {
+                  if (ok && liveTransferViewRef.current === view) {
                     setDetailId(null);
                     if (!detailInline) {
                       setGw(playerGW);

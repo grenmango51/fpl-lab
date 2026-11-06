@@ -638,31 +638,110 @@ export function solverSettingsForHorizon(
 type ProjectionRequest = (
   configuration?: ForecastConfiguration,
 ) => Promise<Bootstrap>;
+type ValidationRequest = (
+  body: ReturnType<typeof planValidationRequest>,
+) => Promise<{ weeks: Week[] }>;
+
+export class PlanResourceError extends Error {}
+
+export class PlanningRestoreError extends PlanResourceError {
+  constructor(
+    message: string,
+    readonly recovery: {
+      version: number;
+      plans: Plan[];
+      active_id: string;
+      configuration: unknown;
+      solver_settings: unknown;
+    },
+  ) {
+    super(message);
+  }
+}
+
+/** Decisions and authentic starting receipts survive; future receipts are derived. */
+export async function reconcilePlanResources(
+  plans: Plan[],
+  configuration: ForecastConfiguration,
+  validate: ValidationRequest,
+) {
+  const checked: Plan[] = [];
+  for (const plan of plans) {
+    try {
+      const receipt = await validate(
+        planValidationRequest(plan, configuration),
+      );
+      checked.push({ ...plan, weeks: receipt.weeks });
+    } catch (error) {
+      throw new PlanResourceError(
+        `Plan “${plan.name}” could not be validated: ${(error as Error).message} Saved decisions were retained.`,
+      );
+    }
+  }
+  return checked;
+}
+
+export function sameResourcePrices(previous: Bootstrap, next: Bootstrap) {
+  const prices = new Map(
+    previous.players.map((player) => [player.id, player.price]),
+  );
+  return (
+    prices.size === next.players.length &&
+    next.players.every((player) => prices.get(player.id) === player.price)
+  );
+}
+
 export async function loadPlanningState(
   saved: Plan[],
   activeId: string,
   configuration: unknown,
   solver: unknown,
   request: ProjectionRequest,
+  validate: ValidationRequest,
 ) {
-  // Never send persisted settings until the current pool/window is known.
-  const baseline = await request();
-  const sanitized = sanitizeForecastConfiguration(configuration, baseline);
-  const response = await request(sanitized.configuration);
-  const forecast = baseline.official_fixture_catalog
-    ? {
-        ...response,
-        official_fixture_catalog: baseline.official_fixture_catalog,
-      }
-    : response;
-  const restored = restorePlanningState(saved, activeId, forecast);
-  return {
-    ...restored,
-    forecast,
-    configuration: sanitized.configuration,
-    solver: sanitizeSolverSettings(solver, forecast),
-    notices: [...new Set([...sanitized.notices, ...restored.notices])],
+  const recovery = {
+    version: 2,
+    plans: saved,
+    active_id: activeId,
+    configuration,
+    solver_settings: solver,
   };
+  try {
+    // Never send persisted settings until the current pool/window is known.
+    const baseline = await request();
+    const sanitized = sanitizeForecastConfiguration(configuration, baseline);
+    const response = await request(sanitized.configuration);
+    const forecast = baseline.official_fixture_catalog
+      ? {
+          ...response,
+          official_fixture_catalog: baseline.official_fixture_catalog,
+        }
+      : response;
+    // Abort the whole adoption on rejection. In particular, do not silently drop
+    // a branch and then persist a smaller workspace over its original inputs.
+    const rebased = saved.map((plan) => rebasePlan(plan, forecast));
+    const plans = await reconcilePlanResources(
+      rebased.map((entry) => entry.plan),
+      sanitized.configuration,
+      validate,
+    );
+    const active = plans.find((plan) => plan.id === activeId) ?? plans[0];
+    const notices = rebased.flatMap((entry) => entry.notices);
+    return {
+      plans,
+      activeId: active?.id ?? "",
+      gw:
+        active?.weeks.find((week) => week.gw === forecast.next_gw)?.gw ??
+        active?.weeks[0]?.gw ??
+        forecast.next_gw,
+      forecast,
+      configuration: sanitized.configuration,
+      solver: sanitizeSolverSettings(solver, forecast),
+      notices: [...new Set([...sanitized.notices, ...notices])],
+    };
+  } catch (error) {
+    throw new PlanningRestoreError((error as Error).message, recovery);
+  }
 }
 
 export function createPlanExport(

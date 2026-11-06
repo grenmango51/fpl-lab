@@ -150,6 +150,7 @@ describe("forecast settings across deadlines", () => {
         captain_locks: { "6": 2, "9": 999, "8": 2 },
       },
       request,
+      async body => ({ weeks: body.weeks }),
     );
     expect(request.mock.calls[0]).toEqual([]);
     expect(request.mock.calls).toHaveLength(2);
@@ -181,6 +182,7 @@ describe("forecast settings across deadlines", () => {
       },
       null,
       async () => bootstrap,
+      async body => ({ weeks: body.weeks }),
     );
     expect(restored.configuration).toEqual(defaultForecastConfiguration);
     expect(restored.solver).toEqual(defaultSolverSettings);

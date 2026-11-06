@@ -119,6 +119,10 @@ import {
   createPlanExport,
   defaultSolverSettings,
   loadPlanningState,
+  PlanningRestoreError,
+  PlanResourceError,
+  reconcilePlanResources,
+  sameResourcePrices,
   planValidationRequest,
   preparePlanImport,
   solverSettingsForHorizon,
@@ -198,6 +202,12 @@ export default function App() {
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [loadStage, setLoadStage] = useState("Connecting saved plans…");
   const [loadSlow, setLoadSlow] = useState(false);
+  const [resourceError, setResourceErrorState] = useState("");
+  const resourceErrorRef = useRef("");
+  function setResourceError(error: string) {
+    resourceErrorRef.current = error;
+    setResourceErrorState(error);
+  }
   const [forecastRetry, setForecastRetry] = useState(0);
   const forecastRetryRef = useRef(0);
   // Forecast reads have their own generation; they never own operation busy.
@@ -286,6 +296,7 @@ export default function App() {
     media.addEventListener("change", changed);
     return () => media.removeEventListener("change", changed);
   }, []);
+  const [loadRecovery, setLoadRecovery] = useState<unknown>(null);
   const [planHistory, setPlanHistory] = useState<
     Record<string, { past: Plan[]; future: Plan[] }>
   >({});
@@ -440,10 +451,15 @@ export default function App() {
     const configuration = JSON.stringify(forecastArgs);
     const update = forecastUpdate?.configuration === configuration &&
       forecastUpdate.request === dataRequestRef.current ? forecastUpdate : null;
-    const stale = loadedForecastArgsRef.current !== configuration || !!update;
-    return { stale, pending: stale && !update?.error, error: update?.error ?? "" };
+    const stale = !!resourceError || loadedForecastArgsRef.current !== configuration || !!update;
+    const error = resourceError || update?.error || "";
+    return { stale, pending: stale && !error, error };
   }
   function retryForecasts() {
+    if (resourceErrorRef.current) {
+      void refresh();
+      return;
+    }
     const request = ++dataRequestRef.current;
     setForecastUpdate({ request, configuration: JSON.stringify(livePlanningRef.current.forecastArgs), error: "" });
     setForecastRetry((attempt) => attempt + 1);
@@ -497,9 +513,18 @@ export default function App() {
     const before = fingerprint();
     const version = operationVersionRef.current;
     if (!data || !canStartOperation()) return false;
-    const restored = await loadPlanningState(document.plans, document.active_id, document.configuration,
+    let restored;
+    try {
+      restored = await loadPlanningState(document.plans, document.active_id, document.configuration,
       document.solver_settings, configuration => configuration === undefined
-        ? forecastBaseline() : api<Bootstrap>("/projections", configuration));
+        ? forecastBaseline() : api<Bootstrap>("/projections", configuration),
+      body => api("/plan/validate", body));
+    } catch (error) {
+      if (error instanceof PlanningRestoreError && current() &&
+          !operationRef.current && version === operationVersionRef.current && fingerprint() === before)
+        setResourceError(error.message);
+      throw error;
+    }
     if (
       !current() ||
       operationRef.current ||
@@ -512,9 +537,12 @@ export default function App() {
     loadedForecastArgsRef.current = JSON.stringify(restored.configuration);
     applyForecastConfiguration(restored.configuration);
     setSettings(restored.solver);
+    setResourceError("");
     adoptForecast(restored.forecast, () => restored.plans);
-    setActiveId(restored.activeId);
-    setGw(restored.gw);
+    const context = livePlanningRef.current;
+    const selected = restored.plans.find(plan => plan.id === context.activeId);
+    setActiveId(selected?.id ?? restored.activeId);
+    if (!restored.forecast.gameweeks.includes(context.gw)) setGw(restored.gw);
     setWatch(document.watch);
     setSolveResult(null);
     setSolveContext(null);
@@ -536,7 +564,6 @@ export default function App() {
       if (plans.length && JSON.stringify(document.plans) !== JSON.stringify(plans)) {
         archivePlanningInputs(plans, forecastArgs);
       }
-      setWatch(document.watch);
       return loadPlanningState(
       document.plans,
       document.active_id,
@@ -550,7 +577,8 @@ export default function App() {
           ? forecastBaseline()
           : api<Bootstrap>("/projections", configuration);
       },
-    ); })
+      body => api("/plan/validate", body),
+    ).then(restored => ({ ...restored, watch: document.watch })); })
       .then((restored) => {
         if (!current()) return;
         if (
@@ -568,6 +596,8 @@ export default function App() {
         loadedForecastArgsRef.current = JSON.stringify(restored.configuration);
         applyForecastConfiguration(restored.configuration);
         setSettings(restored.solver);
+        setWatch(restored.watch);
+        setResourceError("");
         adoptForecast(restored.forecast, () => restored.plans);
         const params = new URLSearchParams(window.location.search);
         const requestedPlan = restored.plans.find(
@@ -592,6 +622,7 @@ export default function App() {
       .catch((e) => {
         if (current()) {
           clearTimeout(slowTimer);
+          if (e instanceof PlanningRestoreError) setLoadRecovery(e.recovery);
           setLoadError(e.message);
           setLoading(false);
         }
@@ -714,6 +745,7 @@ export default function App() {
           latest.settings === current.settings && latest.gw === current.gw &&
           JSON.stringify(latest.forecastArgs) === JSON.stringify(current.forecastArgs);
       };
+      let request: number | undefined;
       try {
         const status = await api<DataRefreshStatus>("/data-refresh");
         if (
@@ -722,7 +754,7 @@ export default function App() {
           Date.parse(status.loaded_at) <= Date.parse(current.data.loaded_at)
         )
           return;
-        const request = ++dataRequestRef.current;
+        request = ++dataRequestRef.current;
         const restored = await loadPlanningState(
           current.plans,
           current.activeId,
@@ -732,6 +764,7 @@ export default function App() {
             configuration === undefined
               ? forecastBaseline()
               : api<Bootstrap>("/projections", configuration),
+          body => api("/plan/validate", body),
         );
         if (request !== dataRequestRef.current || !unchanged())
           return;
@@ -741,6 +774,7 @@ export default function App() {
         loadedForecastArgsRef.current = JSON.stringify(restored.configuration);
         applyForecastConfiguration(restored.configuration);
         setSettings(restored.solver);
+        setResourceError("");
         adoptForecast(restored.forecast, () => restored.plans);
         setActiveId(restored.activeId);
         if (!restored.forecast.gameweeks.includes(current.gw))
@@ -748,7 +782,9 @@ export default function App() {
         setSolveResult(null);
         setSolveContext(null);
         if (restored.notices.length) notify(restored.notices.join(" "));
-      } catch {
+      } catch (error) {
+        if (error instanceof PlanningRestoreError && request === dataRequestRef.current && unchanged())
+          setResourceError(error.message);
         // Background failures retain the current plan. Sources/settings show
         // server failures; the next poll retries without interrupting editing.
       } finally {
@@ -830,19 +866,38 @@ export default function App() {
       request === dataRequestRef.current &&
       JSON.stringify(livePlanningRef.current.forecastArgs) === serialized;
     setForecastUpdate({ request, configuration: serialized, error: "" });
+    let reconcilingData: Bootstrap | null = null;
     api<Bootstrap>("/projections", forecastArgs)
-      .then((d) => {
+      .then(async (d) => {
+        if (!current()) return;
+        const previous = livePlanningRef.current;
+        let reconciled: Plan[] | undefined;
+        if (previous.data && !sameResourcePrices(previous.data, d)) {
+          if (operationRef.current) throw new Error("Plan update in progress. Retry forecasts after it finishes.");
+          const version = operationVersionRef.current;
+          reconcilingData = previous.data;
+          reconciled = await reconcilePlanResources(previous.plans, forecastArgs,
+            body => api("/plan/validate", body));
+          if (!current()) return;
+          if (operationRef.current || version !== operationVersionRef.current ||
+              livePlanningRef.current.plans !== previous.plans ||
+              livePlanningRef.current.data !== previous.data)
+            throw new Error("Plans changed during price validation. Retry forecasts.");
+          ++operationVersionRef.current;
+        }
         if (current()) {
           loadedForecastArgsRef.current = serialized;
           adoptForecast({
             ...d,
             official_fixture_catalog: livePlanningRef.current.data?.official_fixture_catalog,
-          });
+          }, reconciled ? () => reconciled! : undefined);
           setForecastUpdate(null);
         }
       })
       .catch((e) => {
         if (current()) {
+          if (e instanceof PlanResourceError && livePlanningRef.current.data === reconcilingData)
+            setResourceError(e.message);
           setForecastUpdate({ request, configuration: serialized, error: e.message });
           notify(e.message, true);
         }
@@ -1039,7 +1094,9 @@ export default function App() {
   // A receipt is valid only for this render's configuration and loaded inputs.
   // Reject the entire attempt on drift: resources and history must come from a
   // fresh server validation on retry, never from a locally repaired old receipt.
-  function assertPlanInputs(operation: symbol) {
+  function assertPlanInputs(operation: symbol, resourceRetry = false) {
+    if (resourceErrorRef.current && !resourceRetry)
+      throw new Error("Plan resources need validation. Retry the feed refresh.");
     if (operationRef.current !== operation)
       throw new Error("Plan update expired. Try again.");
     const live = livePlanningRef.current;
@@ -1048,7 +1105,7 @@ export default function App() {
       !data ||
       live.data !== data ||
       JSON.stringify(live.forecastArgs) !== configuration ||
-      loadedForecastArgsRef.current !== configuration
+      (!resourceRetry && loadedForecastArgsRef.current !== configuration)
     )
       throw new Error("Forecasts changed. Try again.");
   }
@@ -1869,7 +1926,9 @@ export default function App() {
           configuration === undefined
             ? Promise.resolve(baseline)
             : api<Bootstrap>("/projections", configuration),
+        body => api("/plan/validate", body),
       );
+      assertPlanInputs(operation, true);
       if (
         restored.notices.length ||
         plans.some((plan) =>
@@ -1881,9 +1940,14 @@ export default function App() {
       loadedForecastArgsRef.current = JSON.stringify(restored.configuration);
       applyForecastConfiguration(restored.configuration);
       setSettings(restored.solver);
-      adoptForecast(restored.forecast, () => restored.plans);
-      setActiveId(restored.activeId);
-      if (!restored.forecast.gameweeks.includes(gw)) setGw(restored.gw);
+      setResourceError("");
+      adoptForecast(restored.forecast, current => restored.plans.map(plan => ({
+        ...plan, name: current.find(latest => latest.id === plan.id)?.name ?? plan.name,
+      })));
+      const context = livePlanningRef.current;
+      const selected = restored.plans.find(plan => plan.id === context.activeId);
+      setActiveId(selected?.id ?? restored.activeId);
+      if (!restored.forecast.gameweeks.includes(context.gw)) setGw(restored.gw);
       setSolveResult(null);
       setSolveContext(null);
       setEvalData(await api<Evaluation>("/evaluation"));
@@ -1891,6 +1955,10 @@ export default function App() {
         `Feeds refreshed.${restored.notices.length ? ` ${restored.notices.join(" ")}` : ""}`,
       );
     } catch (e) {
+      if (e instanceof PlanningRestoreError && operationRef.current === operation &&
+          livePlanningRef.current.data === data &&
+          JSON.stringify(livePlanningRef.current.forecastArgs) === JSON.stringify(forecastArgs))
+        setResourceError(e.message);
       notify((e as Error).message, true);
     } finally {
       finishOperation(operation);
@@ -1914,9 +1982,22 @@ export default function App() {
           api<Prospective>("/prospective"),
           api<Bootstrap>("/projections", forecastArgs),
         ]);
+        assertPlanInputs(operation);
+        const current = livePlanningRef.current;
+        const reconciled = current.data && !sameResourcePrices(current.data, forecasts)
+          ? await reconcilePlanResources(current.plans, forecastArgs,
+              body => api("/plan/validate", body)) : undefined;
+        assertPlanInputs(operation);
+        ++dataRequestRef.current;
         setProspective(receipt);
-        adoptForecast(forecasts);
-      } catch {
+        adoptForecast(forecasts, reconciled ? current => reconciled.map(plan => ({
+          ...plan, name: current.find(latest => latest.id === plan.id)?.name ?? plan.name,
+        })) : undefined);
+      } catch (error) {
+        if (error instanceof PlanResourceError && operationRef.current === operation &&
+            livePlanningRef.current.data === data &&
+            JSON.stringify(livePlanningRef.current.forecastArgs) === JSON.stringify(forecastArgs))
+          setResourceError(error.message);
         notify(
           "Forecast saved. Refresh the app to reload its capture receipt and forecasts.",
         );
@@ -2023,6 +2104,11 @@ export default function App() {
         },
         uid,
       );
+      assertPlanInputs(operation, true);
+      const existing = data && (!sameResourcePrices(data, prepared.forecast) || resourceErrorRef.current)
+        ? await reconcilePlanResources(livePlanningRef.current.plans, prepared.configuration,
+            body => api("/plan/validate", body)) : undefined;
+      assertPlanInputs(operation, true);
       if (
         prepared.notices.length ||
         value.plans.some((plan: Plan) =>
@@ -2035,7 +2121,12 @@ export default function App() {
       loadedForecastArgsRef.current = JSON.stringify(prepared.configuration);
       applyForecastConfiguration(prepared.configuration);
       setSettings(prepared.solver);
-      adoptForecast(prepared.forecast, (ps) => [...ps, ...prepared.plans]);
+      if (existing) setResourceError("");
+      adoptForecast(prepared.forecast, ps => [
+        ...(existing ? existing.map(plan => ({
+          ...plan, name: ps.find(latest => latest.id === plan.id)?.name ?? plan.name,
+        })) : ps), ...prepared.plans,
+      ]);
       setActiveId(prepared.plans[0].id);
       setGw(prepared.plans[0].weeks[0].gw);
       setSolveResult(null);
@@ -2044,6 +2135,10 @@ export default function App() {
         `${prepared.plans.length} branches and settings imported.${prepared.notices.length ? ` ${prepared.notices.join(" ")}` : ""}`,
       );
     } catch (e) {
+      if (e instanceof PlanResourceError && operationRef.current === operation &&
+          livePlanningRef.current.data === data &&
+          JSON.stringify(livePlanningRef.current.forecastArgs) === JSON.stringify(forecastArgs))
+        setResourceError(e.message);
       notify((e as Error).message, true);
     } finally {
       finishOperation(operation);
@@ -2149,6 +2244,9 @@ export default function App() {
               <RefreshCw size={15} />
               Retry
             </button>
+            {loadRecovery !== null && <button className="button" onClick={() =>
+              download("open-fpl-recovery.json", JSON.stringify(loadRecovery, null, 2))
+            }>Export saved inputs</button>}
             <small>
               Your saved plans and assumptions are retained.
             </small>
@@ -2186,7 +2284,7 @@ export default function App() {
       {forecastState.pending ? <LoaderCircle size={15} className="spin" /> : <Info size={15} />}
       <span>
         <b>{forecastState.error ? "Forecast update failed." : "Updating forecasts…"}</b>{" "}
-        Previous player figures and plan totals shown.
+        Previous player figures, totals and resources shown.
         {forecastState.error && <small>{forecastState.error}</small>}
       </span>
       {forecastState.error && <button className="button small" onClick={retryForecasts}>

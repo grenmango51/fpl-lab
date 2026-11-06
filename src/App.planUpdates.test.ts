@@ -7,15 +7,26 @@ import {
   defaultSolverSettings,
   solverSettingsForHorizon,
   planValidationRequest,
+  loadPlanningState,
+  PlanningRestoreError,
+  PlanResourceError,
+  reconcilePlanResources,
+  sameResourcePrices,
+  rebasePlan,
+  createPlanExport,
+  preparePlanImport,
 } from "./planningPersistence";
-import { replacePlayer } from "./plannerInteractions";
+import { planReceipt } from "../tools/tests/planReceipt.mjs";
+import financialFixture from "../backend/tests/fixtures/transfer_affordability.json";
+import { transferAllowance, replacePlayer } from "./plannerInteractions";
 import { uid, chipNames, planFromSquad } from "./lib";
 import { teamPoints } from "./scoring";
 import { quickSolveHorizon, planWithOptimisedSuffix } from "./quickOptimise";
-import type { Plan, Week, Prospective, SensitivityJob } from "./types";
+import type { Bootstrap, Player, Plan, Week, Prospective, SensitivityJob } from "./types";
 
 type History = Record<string, { past: Plan[]; future: Plan[] }>;
 type State = {
+  resourceError: string;
   forecastUpdate: { request: number; configuration: string; error: string } | null;
   forecastRetry: number;
   loading: boolean;
@@ -63,7 +74,7 @@ const app = source.statements.find(
     ts.isFunctionDeclaration(node) && node.name?.text === "App",
 )!;
 const names = [
-  "rescorePlans", "adoptForecast", "forecastStatus", "retryForecasts", "retryLoading",
+  "setResourceError", "rescorePlans", "adoptForecast", "forecastStatus", "retryForecasts", "retryLoading",
   "assertPlanInputs",
   "setBusy",
   "planMessage",
@@ -179,11 +190,11 @@ const reloadCheck = reloadBody.statements.find(
   (node) => ts.isFunctionDeclaration(node) && node.name?.text === "check",
 )!;
 const actions = ts.transpileModule(
-  `const { plans, active, gw, busy, tab, planHistory, forecastArgs,
+  `const { resourceError, resourceErrorRef, setResourceErrorState, plans, active, activeId, gw, busy, tab, planHistory, forecastArgs,
     api, teamPoints, planValidationRequest, livePlanningRef, operationRef, operationVersionRef, renderedOperationVersion, data,
     settings, solveInFlightRef, solveRequestRef, forecastBaseline, uid, chipNames,
     solverSettingsForHorizon, quickSolveHorizon, planWithOptimisedSuffix, initRef, planFromSquad, setTeamBank, setTeamFT, setModal,
-    loadPlanningState, archivePlanningInputs, dataRequestRef, loadedForecastArgsRef,
+    loadPlanningState, PlanningRestoreError, PlanResourceError, reconcilePlanResources, sameResourcePrices, preparePlanImport, setLoadRecovery, archivePlanningInputs, dataRequestRef, loadedForecastArgsRef,
     applyForecastConfiguration, setSettings, setData, setWatch,
     setActiveId, setTab, setDetailId, setDeletedPlans, setPreviewingDraft,
     pitchExpanded, wideLayout, treeHidden, solveResult, solveContext,
@@ -266,6 +277,7 @@ function branch(id: string, gameweeks = [7, 8, 9]): Plan {
 
 function harness(plans = [branch("A"), branch("B", [12, 13])]) {
   const state: State = {
+    resourceError: "",
     forecastUpdate: null,
     forecastRetry: 0,
     loading: true, loadError: "", loadStage: "Connecting saved plans…", loadSlow: false, loadAttempt: 0,
@@ -303,6 +315,7 @@ function harness(plans = [branch("A"), branch("B", [12, 13])]) {
   let forecastArgs = structuredClone(defaultForecastConfiguration);
   const loadedForecastArgsRef = { current: JSON.stringify(forecastArgs) };
   const dataRequestRef = { current: 0 };
+  const resourceErrorRef = { current: "" };
   const forecastRetryRef = { current: 0 };
   const restoreDeletedRef = { current: (_plan: Plan) => Promise.resolve() };
   const initRef = { current: null as object | null };
@@ -379,6 +392,7 @@ function harness(plans = [branch("A"), branch("B", [12, 13])]) {
       forecastArgs,
       livePlanningRef,
       loadedForecastArgsRef,
+      resourceErrorRef, setResourceErrorState: setter("resourceError"),
       dataRequestRef,
       forecastRetryRef,
       setForecastUpdate: setter("forecastUpdate"),
@@ -440,7 +454,8 @@ function harness(plans = [branch("A"), branch("B", [12, 13])]) {
       setEvalData: vi.fn(),
       setSolveResult: vi.fn(),
       setSolveContext: vi.fn(),
-      planValidationRequest,
+      preparePlanImport, planValidationRequest, loadPlanningState, PlanningRestoreError, PlanResourceError, reconcilePlanResources, sameResourcePrices,
+      setLoadRecovery: vi.fn(),
       setPlans: setter("plans"),
       setProspective: setter("prospective"),
       setPlanHistory: setter("planHistory"),
@@ -2167,4 +2182,510 @@ describe("initial loader recovery", () => {
     expect(configuration).not.toHaveBeenCalled();
     cleanup();
   });
+});
+
+// These tests start with real accepted receipts, then change the price pool.
+// The bridge executes FastAPI TestClient without a lifespan or socket listener.
+describe("restored resources through production callers and real server receipts", () => {
+  function setup(
+    options: {
+      bank?: number;
+      purchase?: number;
+      complex?: boolean;
+      expiredFH?: boolean;
+    } = {},
+  ) {
+    const gws = options.complex ? [7, 8, 9, 10, 11] : [7, 8, 9];
+    const old = {
+      next_gw: 7,
+      gameweeks: gws,
+      teams: [],
+      loaded_at: "2026-11-06T19:00:00Z",
+      players: financialFixture.players.map(
+        ([id, position_id, team, price]) => ({
+          id,
+          name: `P${id}`,
+          position_id,
+          team,
+          price,
+          pplay: 1,
+          gw: Object.fromEntries(
+            gws.map((gw) => [gw, { points: 2, pplay: 1, p60: 1, xmins: 90 }]),
+          ),
+        }),
+      ),
+    } as unknown as Bootstrap;
+    const base = Array.from({ length: 15 }, (_, i) => i + 1);
+    let decisions = gws.map(
+      (gw) =>
+        ({
+          gw,
+          squad: [...base],
+          starters: [1, 3, 4, 5, 8, 9, 10, 11, 13, 14, 15],
+          bench: [2, 6, 7, 12],
+          captain: 13,
+          vice: 8,
+          chip: "none",
+        }) as Week,
+    );
+    const change = (week: Week, out: number, incoming: number) => {
+      for (const key of ["squad", "starters", "bench"] as const)
+        week[key] = week[key].map((id) => (id === out ? incoming : id));
+      if (week.captain === out) week.captain = incoming;
+    };
+    if (options.complex) {
+      change(decisions[0], 13, 16);
+      change(decisions[2], 14, 16);
+      decisions[2].chip = "freehit";
+      change(decisions[3], 3, 17);
+      decisions[3].chip = "wildcard";
+      change(decisions[4], 13, 16);
+      change(decisions[4], 3, 17);
+      change(decisions[4], 15, 19);
+    } else if (options.expiredFH) {
+      change(decisions[0], 14, 16);
+      decisions[0].chip = "freehit";
+    } else for (const week of decisions) change(week, 14, 16);
+    const input: Plan = {
+      id: "saved",
+      name: "Keep my decisions",
+      created_at: "2026-11-01T12:00:00Z",
+      base_squad: base,
+      base_bank: options.bank ?? (options.complex ? 3 : 1),
+      purchase_prices: { "13": 5.5, "14": options.purchase ?? 6 },
+      free_transfers: options.complex ? 0 : 2,
+      weeks: decisions,
+    };
+    const saved = {
+      ...input,
+      weeks: planReceipt(
+        planValidationRequest(input, defaultForecastConfiguration),
+        old,
+      ).weeks,
+    };
+    const fresh = structuredClone(old);
+    fresh.loaded_at = "2026-11-06T20:00:00Z";
+    fresh.players.find((p) => p.id === 16)!.price = 6.5;
+    if (options.expiredFH) {
+      fresh.next_gw = 8;
+      fresh.gameweeks = fresh.gameweeks.filter((gw) => gw >= 8);
+    }
+    return { old, fresh, saved };
+  }
+
+  function connect(
+    h: ReturnType<typeof harness>,
+    fresh: Bootstrap,
+    saved = h.state.plans,
+  ) {
+    const doc = {
+      plans: saved,
+      active_id: saved[0].id,
+      configuration: defaultForecastConfiguration,
+      solver_settings: defaultSolverSettings,
+      watch: [],
+    };
+    const api = vi.fn(async (path: string, body: any) => {
+      if (path === "/plan/validate") return planReceipt(body, fresh);
+      if (path === "/workspace") return doc;
+      if (path === "/data-refresh") return { loaded_at: fresh.loaded_at };
+      if (path === "/snapshot")
+        return { filename: "test", captured_gameweeks: [7] };
+      if (["/refresh", "/bootstrap", "/projections"].includes(path))
+        return fresh;
+      return {};
+    });
+    const render = (extra: object = {}) =>
+      h.render({
+        api,
+        forecastBaseline: async () => fresh,
+        loadPlanningState,
+        sharedRef: { current: { initialize: async () => doc } },
+        ...extra,
+      });
+    return { api, render, doc };
+  }
+
+  it.each([
+    "bootstrap",
+    "refresh",
+    "background",
+    "shared",
+    "projections",
+    "snapshot",
+    "import",
+  ] as const)(
+    "reconciles the saved £1.0m P14→P16 plan at £6.5m through %s",
+    async (caller) => {
+      const { old, fresh, saved } = setup();
+      expect(saved.weeks.map((w) => w.bank)).toEqual([1, 1, 1]);
+      const h = harness([saved]);
+      h.render({ data: old });
+      h.state.gw = h.state.detailGW = 8;
+      h.state.detailId = 16;
+      const { api, render, doc } = connect(h, fresh);
+      const actions = render();
+      let cleanup: (() => void) | undefined;
+      if (caller === "bootstrap") {
+        cleanup = actions.bootstrap();
+        await vi.waitFor(() => expect(h.state.loading).toBe(false));
+      } else if (caller === "background") await actions.backgroundCheck();
+      else if (caller === "shared")
+        expect(await actions.adoptShared(doc, () => true)).toBe(true);
+      else if (caller === "projections") {
+        cleanup = render({
+          forecastArgs: { ...defaultForecastConfiguration, use_market: false },
+        }).loadForecasts();
+        await vi.waitFor(() => expect(h.data).not.toBe(old));
+      } else if (caller === "import")
+        await actions.importPlans({
+          size: 1,
+          text: async () =>
+            JSON.stringify(
+              createPlanExport(
+                [saved],
+                defaultForecastConfiguration,
+                defaultSolverSettings,
+              ),
+            ),
+        });
+      else await actions[caller]();
+      expect(h.state.toast?.error, h.state.toast?.text).not.toBe(true);
+      const canonical = planReceipt(
+        planValidationRequest(saved, defaultForecastConfiguration),
+        fresh,
+      ).weeks;
+      expect(h.state.plans[0]).toMatchObject({ ...saved, weeks: canonical });
+      expect(h.state.plans[0].base_bank).toBe(1);
+      expect(h.state.plans[0].weeks.map((w) => w.bank)).toEqual([
+        0.5, 0.5, 0.5,
+      ]);
+      expect(
+        api.mock.calls.filter(([path]) => path === "/plan/validate"),
+      ).toHaveLength(caller === "import" ? 2 : 1);
+      expect(h.data.players.find((p) => p.id === 16)!.price).toBe(6.5);
+      if (caller !== "bootstrap" && caller !== "import") {
+        expect(h.state.gw).toBe(8);
+        expect(h.state.detailId).toBe(16);
+      }
+      for (const week of h.state.plans[0].weeks) {
+        const p = h.data.players.find((p) => p.id === 16)!;
+        expect(
+          transferAllowance(
+            h.state.plans[0],
+            week,
+            p as Player,
+            h.data.players as Player[],
+          ).bank,
+        ).toBe(week.bank);
+      }
+      cleanup?.();
+    },
+    30000,
+  );
+
+  it.each([
+    { complex: true },
+    { expiredFH: true },
+    { bank: 1.05, purchase: 5.05 },
+    { bank: 1.15, purchase: 5.15 },
+  ])(
+    "restores purchase/sale/chip/FT and rounding receipts: %j",
+    async (options) => {
+      const { old, fresh, saved } = setup(options);
+      const h = harness([saved]);
+      h.render({ data: old });
+      const { render } = connect(h, fresh);
+      await render().refresh();
+      expect(h.state.toast?.error, h.state.toast?.text).not.toBe(true);
+      const rebased = rebasePlan(saved, fresh).plan;
+      const expected = planReceipt(
+        planValidationRequest(rebased, defaultForecastConfiguration),
+        fresh,
+      ).weeks;
+      expect(h.state.plans[0]).toEqual({ ...rebased, weeks: expected });
+      expect(h.state.plans[0].base_bank).toBe(saved.base_bank);
+      if (options.purchase === 5.05) expect(expected[0].bank).toBe(0);
+      if (options.purchase === 5.15) expect(expected[0].bank).toBe(0.3);
+      if (options.complex) {
+        const [sold, repurchased, fh, wc, last] = expected;
+        expect(sold.purchase_prices!["13"]).toBeUndefined();
+        expect(repurchased.purchase_prices!["13"]).toBe(6.5);
+        expect(fh.permanent_bank).toBe(repurchased.permanent_bank);
+        expect(fh.purchase_prices).toEqual(repurchased.purchase_prices);
+        expect(fh.bank).not.toBe(fh.permanent_bank);
+        expect(fh.next_free_transfers).toBe(fh.free_transfers);
+        expect(wc.next_free_transfers).toBe(wc.free_transfers);
+        expect(wc.hits).toBe(0);
+        expect(last.hits).toBe(4);
+        expect(last.next_free_transfers).toBe(1);
+      }
+    },
+    30000,
+  );
+
+  it.each([
+    "bootstrap",
+    "refresh",
+    "background",
+    "shared",
+    "projections",
+    "snapshot",
+    "import",
+  ] as const)(
+    "preserves the complete rejected input and old dataset on %s failure",
+    async (caller) => {
+      const { old, fresh, saved } = setup();
+      const unaffordable = setup({ bank: 0.1 }).saved;
+      unaffordable.id = "rejected";
+      unaffordable.name = "Priced out";
+      const original = [saved, unaffordable];
+      const h = harness(original);
+      h.render({ data: old });
+      const { render, doc } = connect(h, fresh);
+      const recovery = vi.fn();
+      const actions = render({ setLoadRecovery: recovery });
+      if (caller === "bootstrap") {
+        const cleanup = actions.bootstrap();
+        await vi.waitFor(() =>
+          expect(h.state.loadError).toContain("Priced out"),
+        );
+        expect(recovery.mock.calls[0][0]).toMatchObject({
+          plans: original,
+          active_id: "saved",
+        });
+        expect(
+          createPlanExport(
+            original,
+            defaultForecastConfiguration,
+            defaultSolverSettings,
+          ).plans,
+        ).toEqual(recovery.mock.calls[0][0].plans);
+        cleanup();
+      } else if (caller === "background") await actions.backgroundCheck();
+      else if (caller === "shared")
+        await expect(actions.adoptShared(doc, () => true)).rejects.toThrow(
+          "Priced out",
+        );
+      else if (caller === "projections") {
+        const cleanup = render({
+          forecastArgs: { ...defaultForecastConfiguration, use_market: false },
+        }).loadForecasts();
+        await vi.waitFor(() =>
+          expect(h.state.forecastUpdate?.error).toContain("Priced out"),
+        );
+        cleanup();
+      } else if (caller === "import")
+        await actions.importPlans({
+          size: 1,
+          text: async () =>
+            JSON.stringify(
+              createPlanExport(
+                [saved],
+                defaultForecastConfiguration,
+                defaultSolverSettings,
+              ),
+            ),
+        });
+      else await actions[caller]();
+      expect(h.state.plans).toBe(original);
+      expect(h.data).toBe(old);
+      expect(h.state.planHistory).toEqual({});
+      if (caller !== "bootstrap") {
+        h.state.toast = null;
+        expect(render().forecastStatus()).toMatchObject({
+          stale: true,
+          pending: false,
+        });
+        expect(h.state.resourceError).toContain("Priced out");
+        expect(await render().updatePlan(saved)).toBe(false);
+        // Recovery must not invent extra starting bank to make the plan pass.
+        // Retry the unchanged decisions once the server price is affordable.
+        fresh.players.find((p) => p.id === 16)!.price = 6;
+        await render().refresh();
+        expect(h.state.resourceError).toBe("");
+        expect(h.state.plans[1].weeks[0].bank).toBe(0.1);
+        expect(h.state.plans[1].base_bank).toBe(0.1);
+        expect(h.state.plans[1].id).toBe("rejected");
+      }
+    },
+    30000,
+  );
+
+  function holdValidation(api: ReturnType<typeof vi.fn>) {
+    const entered = deferred<void>(),
+      release = deferred<void>();
+    const original = api.getMockImplementation()!;
+    api.mockImplementation(async (path: string, body: unknown) => {
+      if (path === "/plan/validate") {
+        entered.resolve();
+        await release.promise;
+      }
+      return original(path, body);
+    });
+    return { entered, release };
+  }
+
+  it("retains latest names and selected plan/player/week while a real refresh receipt waits", async () => {
+    const { old, fresh, saved } = setup();
+    const other = { ...saved, id: "other", name: "Other plan" };
+    const h = harness([saved, other]);
+    h.render({ data: old });
+    const { api, render } = connect(h, fresh);
+    const { entered, release } = holdValidation(api);
+    const pending = render().refresh();
+    await entered.promise;
+    h.state.plans = [{ ...saved, name: "Renamed while waiting" }, other];
+    h.state.activeId = "other";
+    h.state.gw = h.state.detailGW = 9;
+    h.state.detailId = 13;
+    render();
+    release.resolve();
+    await pending;
+    expect(h.state.plans.map((p) => [p.id, p.name, p.weeks[0].bank])).toEqual([
+      ["saved", "Renamed while waiting", 0.5],
+      ["other", "Other plan", 0.5],
+    ]);
+    expect(h.state).toMatchObject({
+      activeId: "other",
+      gw: 9,
+      detailId: 13,
+      detailGW: 9,
+    });
+  }, 30000);
+
+  it("rejects a held refresh after settings drift and retains the original receipts", async () => {
+    const { old, fresh, saved } = setup();
+    const h = harness([saved]);
+    h.render({ data: old });
+    const { api, render } = connect(h, fresh);
+    const { entered, release } = holdValidation(api);
+    const pending = render().refresh();
+    await entered.promise;
+    render({
+      forecastArgs: { ...defaultForecastConfiguration, use_market: false },
+    });
+    release.resolve();
+    await pending;
+    expect(h.data).toBe(old);
+    expect(h.state.plans).toEqual([saved]);
+    expect(h.state.toast?.text).toContain("Forecasts changed");
+  }, 30000);
+
+  it.each(["shared", "background", "projections"] as const)(
+    "discards a held %s reconciliation when its ownership/context expires",
+    async (caller) => {
+      const { old, fresh, saved } = setup();
+      const h = harness([saved]);
+      h.render({ data: old });
+      const { api, render, doc } = connect(h, fresh);
+      const { entered, release } = holdValidation(api);
+      const actions = render();
+      const pending =
+        caller === "shared"
+          ? actions.adoptShared(doc, () => true)
+          : caller === "background"
+            ? actions.backgroundCheck()
+            : undefined;
+      const cleanup =
+        caller === "projections"
+          ? render({
+              forecastArgs: {
+                ...defaultForecastConfiguration,
+                use_market: false,
+              },
+            }).loadForecasts()
+          : undefined;
+      await entered.promise;
+      h.state.gw = 9;
+      h.state.plans = [{ ...saved, name: "Latest name" }];
+      render();
+      cleanup?.();
+      release.resolve();
+      await pending;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(h.data).toBe(old);
+      expect(h.state.plans[0]).toEqual({ ...saved, name: "Latest name" });
+      expect(h.state.gw).toBe(9);
+      expect(h.state.resourceError).toBe("");
+    },
+    30000,
+  );
+
+  it("retains every branch on transport failure after an earlier real receipt, then retries the full workspace", async () => {
+    const { old, fresh, saved } = setup();
+    const other = { ...saved, id: "other", name: "Other plan" };
+    const original = [saved, other];
+    const h = harness(original);
+    h.render({ data: old });
+    const { api, render } = connect(h, fresh);
+    const actual = api.getMockImplementation()!;
+    let count = 0;
+    api.mockImplementation(async (path, body) => {
+      if (path === "/plan/validate" && ++count === 2)
+        throw new Error("HTTP 503");
+      return actual(path, body);
+    });
+    await render().refresh();
+    expect(h.state.plans).toBe(original);
+    expect(h.data).toBe(old);
+    h.state.toast = null;
+    expect(render().forecastStatus()).toMatchObject({
+      stale: true,
+      pending: false,
+    });
+    expect(h.state.resourceError).toContain("HTTP 503");
+    render().retryForecasts();
+    await vi.waitFor(() => expect(h.state.busy).toBe(""));
+    expect(count).toBe(4);
+    expect(h.state.plans.map((p) => p.weeks[0].bank)).toEqual([0.5, 0.5]);
+    expect(h.state.resourceError).toBe("");
+  }, 30000);
+
+  it("exports the rejected shared source on initial structural failure without replacing local decisions", async () => {
+    const { old, fresh, saved } = setup();
+    const rejected = structuredClone(saved);
+    rejected.id = "remote";
+    rejected.weeks[2].squad[0] = 999;
+    rejected.weeks[2].starters[0] = 999;
+    const h = harness([saved]);
+    h.render({ data: old });
+    const { api, render } = connect(h, fresh, [rejected]);
+    const recovery = vi.fn();
+    const cleanup = render({ setLoadRecovery: recovery }).bootstrap();
+    await vi.waitFor(() => expect(h.state.loadError).toContain("unavailable"));
+    expect(recovery.mock.calls[0][0]).toMatchObject({
+      plans: [rejected],
+      active_id: "remote",
+    });
+    expect(h.state.plans).toEqual([saved]);
+    expect(h.data).toBe(old);
+    expect(api.mock.calls.some(([path]) => path === "/plan/validate")).toBe(
+      false,
+    );
+    cleanup();
+  }, 30000);
+  it("keeps snapshot resources coherent when an older forecast retry completes afterwards", async () => {
+    const { old, fresh, saved } = setup();
+    const h = harness([saved]);
+    h.render({ data: old });
+    const { api, render } = connect(h, fresh);
+    const actual = api.getMockImplementation()!;
+    const oldRead = deferred<Bootstrap>();
+    let projections = 0;
+    api.mockImplementation(async (path, body) => {
+      if (path === "/projections" && ++projections === 1)
+        return oldRead.promise;
+      return actual(path, body);
+    });
+    render().retryForecasts();
+    const cleanup = render().loadForecasts();
+    await render().snapshot();
+    expect(h.state.plans[0].weeks[0].bank).toBe(0.5);
+    oldRead.resolve(old);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(h.data).toBe(fresh);
+    expect(h.state.plans[0].weeks[0].bank).toBe(0.5);
+    cleanup();
+  }, 30000);
 });

@@ -3671,7 +3671,7 @@ export default function App() {
                         return next;
                       });
                       notify(
-                        `${detailPlayer.name}: Minutes edits cleared. Updating forecasts…`,
+                        `${detailPlayer.name}: Minutes edits cleared.`,
                       );
                     }}
                     onNotify={notify}

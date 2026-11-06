@@ -67,7 +67,7 @@ export function MinutesScenarioEditor({
     });
     onSchedule(updated);
     onNotify(
-      `${player.name} · GW${chosen[0]}${chosen.length > 1 ? `–${chosen.at(-1)}` : ""}: Saved for all plans. Updating forecasts…`,
+      `${player.name} · GW${chosen[0]}${chosen.length > 1 ? `–${chosen.at(-1)}` : ""}: Saved for all plans.`,
     );
   }
   return (

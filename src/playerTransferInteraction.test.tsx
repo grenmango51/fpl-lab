@@ -328,7 +328,7 @@ describe("shared forecast editor scope", () => {
       "8": { expected_points: 7.3 },
     });
     expect(props.onNotify.mock.lastCall?.[0]).toContain(
-      "GW8: Saved for all plans. Updating forecasts",
+      "GW8: Saved for all plans.",
     );
     expect(nodes(tree).some((n) => n.props.children === "All plans")).toBe(
       true,
@@ -339,7 +339,7 @@ describe("shared forecast editor scope", () => {
       "7": { expected_points: 1 },
     });
     expect(props.onNotify.mock.lastCall?.[0]).toContain(
-      "GW8: Override cleared. Updating forecasts",
+      "GW8: Override cleared.",
     );
   });
 
@@ -369,7 +369,7 @@ describe("shared forecast editor scope", () => {
       "8": { conditional_minutes: 30 },
     });
     expect(props.onNotify.mock.lastCall?.[0]).toContain(
-      "GW8: Saved for all plans. Updating forecasts",
+      "GW8: Saved for all plans.",
     );
     const savedWeek = find(
       tree,

@@ -104,7 +104,7 @@ export function StatScenarioEditor({
     });
     onSchedule(next);
     onNotify(
-      `${player.name} · GW${chosen[0]}${chosen.length > 1 ? `–${chosen.at(-1)}` : ""}: Saved for all plans. Updating forecasts…`,
+      `${player.name} · GW${chosen[0]}${chosen.length > 1 ? `–${chosen.at(-1)}` : ""}: Saved for all plans.`,
     );
   }
   return (
@@ -192,9 +192,7 @@ export function StatScenarioEditor({
             delete next[String(selectedGW)];
             onSchedule(next);
             setDraft({});
-            onNotify(
-              `${player.name} · GW${selectedGW}: Override cleared. Updating forecasts…`,
-            );
+            onNotify(`${player.name} · GW${selectedGW}: Override cleared.`);
           }}
         >
           <RotateCcw size={12} />
@@ -206,9 +204,7 @@ export function StatScenarioEditor({
           onClick={() => {
             onSchedule({});
             setDraft({});
-            onNotify(
-              `${player.name}: All stat edits cleared. Updating forecasts…`,
-            );
+            onNotify(`${player.name}: All stat edits cleared.`);
           }}
         >
           Reset all GWs

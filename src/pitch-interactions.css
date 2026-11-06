@@ -68,3 +68,13 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+.global-busy > span,
+.toast > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.global-busy > svg {
+  flex-shrink: 0;
+}

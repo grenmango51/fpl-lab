@@ -852,6 +852,7 @@ export function AnalysisView({
   evalData,
   onSnapshot,
   prospective,
+  busy,
   onScore,
   selectedGW,
   onDetail,
@@ -864,6 +865,7 @@ export function AnalysisView({
   evalData: Evaluation | null;
   onSnapshot: () => void;
   prospective: Prospective | null;
+  busy: boolean;
   onScore: () => void;
   selectedGW: number;
   onDetail: (id: number) => void;
@@ -890,12 +892,13 @@ export function AnalysisView({
           <h2>Plans</h2>
         </div>
         <div className="toolbar-actions" hidden={section !== "benchmarks"}>
-          <button className="button" onClick={onSnapshot}>
+          <button className="button" onClick={onSnapshot} disabled={busy}>
             <Clock3 size={15} />
             Capture forecasts
           </button>
           <button
             className="button secondary"
+            disabled={busy}
             onClick={() => {
               onScore();
               setSection("benchmarks");
@@ -935,7 +938,12 @@ export function AnalysisView({
       ) : null}
       {section === "benchmarks" && (
         <>
-          <ProspectiveView data={data} report={prospective} onScore={onScore} />
+          <ProspectiveView
+            data={data}
+            report={prospective}
+            onScore={onScore}
+            busy={busy}
+          />
           <LeadTimeView
             data={data}
             captureKey={prospective?.captures?.[0]?.filename ?? ""}

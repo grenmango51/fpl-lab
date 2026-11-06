@@ -158,7 +158,7 @@ export function PlannerBoard({
           onChange={(event) => onName(event.target.value.slice(0, 70))}
         />
         {busy && (
-          <span className="board-pending-status" role="status" aria-atomic="true">
+          <span className="board-pending-status" role="status" aria-atomic="true" title={busyLabel}>
             <LoaderCircle size={13} className="spin" aria-hidden="true" />
             <span>{busyLabel || "Updating plan…"}</span>
           </span>

@@ -18,7 +18,7 @@ vi.mock("react", async (importOriginal) => {
     useState: (initial: unknown) =>
       actual.useState(
         initial === null
-          ? ui.target
+          ? ui.target?.id ?? null
           : initial === true
             ? ui.affordable
             : initial,

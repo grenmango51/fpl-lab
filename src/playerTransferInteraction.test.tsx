@@ -195,6 +195,39 @@ describe("compact transfer decisions", () => {
     expect(ui.props.onTransfer).toHaveBeenCalledTimes(2);
   });
 
+  it("uses refreshed forecasts for an already selected replacement", () => {
+    const ui = panel();
+    labelled(ui.render(), "Choose Player 16").props.onClick();
+    const currentDelta = () => {
+      const impact = find(ui.render(), (n) => n.props.className === "transfer-impact");
+      return find(impact.props.children[1], (n) => n.type === "b").props.children;
+    };
+    expect(currentDelta()).toBe("3.0");
+    ui.props.data = {
+      ...ui.props.data,
+      players: ui.props.data.players.map((player) => player.id === 16 ? {
+        ...player,
+        gw: { ...player.gw, "7": { ...player.gw["7"], points: 0 } },
+      } : player),
+    };
+    expect(currentDelta()).toBe("-13.0");
+    textButton(ui.render(), "Confirm transfer").props.onClick();
+    expect(ui.props.onTransfer).toHaveBeenCalledExactlyOnceWith(16);
+  });
+
+  it("returns to the shortlist when refreshed data removes the selected player", () => {
+    const ui = panel();
+    labelled(ui.render(), "Choose Player 16").props.onClick();
+    ui.props.data = {
+      ...ui.props.data,
+      players: ui.props.data.players.filter((player) => player.id !== 16),
+    };
+    const tree = ui.render();
+    expect(nodes(tree).some((n) => n.props.className === "transfer-confirm")).toBe(false);
+    expect(labelled(tree, "Search replacements")).toBeDefined();
+    expect(ui.props.onTransfer).not.toHaveBeenCalled();
+  });
+
   it("filters using the exact selected GW and preserves inspection/watch actions", () => {
     const ui = panel();
     ui.props.week = { ...week, gw: 8 };

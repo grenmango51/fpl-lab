@@ -3506,7 +3506,7 @@ export default function App() {
                     setGw(playerGW);
                     setSelected(detailId);
                     setDetailId(null);
-                    if (!detailInline) setTab("lineup");
+                    setTab("lineup");
                   }}
                 >
                   <ArrowLeftRight size={14} />

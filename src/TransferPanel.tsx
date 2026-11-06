@@ -45,7 +45,7 @@ export function TransferPanel({
   const [watched, setWatched] = useState(false);
   const [includeUnavailable, setIncludeUnavailable] = useState(false);
   const [sort, setSort] = useState("total");
-  const [target, setTarget] = useState<Player | null>(null);
+  const [targetId, setTargetId] = useState<number | null>(null);
   const [error, setError] = useState("");
   const weeks = data.gameweeks.filter((gw) => gw >= week.gw).slice(0, horizon);
   const comparisonRange =
@@ -57,8 +57,9 @@ export function TransferPanel({
     [plan, week, outgoing, data.players],
   );
   const { bank, sale, budget, cancelsBuy } = allowance;
-  const preview = target ? allowance.forTarget(target) : null;
   const lookup = new Map(data.players.map((player) => [player.id, player]));
+  const target = targetId === null ? null : lookup.get(targetId) ?? null;
+  const preview = target ? allowance.forTarget(target) : null;
   const reason = (player: Player) =>
     allowance.forTarget(player).bankAfter < 0
       ? "Over budget"
@@ -138,7 +139,7 @@ export function TransferPanel({
           <button
             className="button small"
             onClick={() => {
-              setTarget(null);
+              setTargetId(null);
               setError("");
             }}
             disabled={busy}
@@ -385,7 +386,7 @@ export function TransferPanel({
                         aria-label={`Choose ${player.name}${reason(player) ? `: ${reason(player)}` : ""}`}
                         disabled={busy || Boolean(reason(player))}
                         onClick={() => {
-                          if (!busy && !reason(player)) setTarget(player);
+                          if (!busy && !reason(player)) setTargetId(player.id);
                         }}
                       >
                         <ArrowRight size={16} />

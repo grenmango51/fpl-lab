@@ -39,12 +39,23 @@ const app = source.statements.find(
   (node): node is ts.FunctionDeclaration =>
     ts.isFunctionDeclaration(node) && node.name?.text === "App",
 )!;
-const names = ["validatedPlan", "updatePlan", "travelPlan", "transferIn"];
+const names = [
+  "planMessage",
+  "validatedPlan",
+  "updatePlan",
+  "travelPlan",
+  "transferIn",
+];
 const functions = app.body!.statements.filter(
   (node) => ts.isFunctionDeclaration(node) && names.includes(node.name!.text),
 );
 if (functions.length !== names.length) throw new Error("Missing plan actions");
 const printer = ts.createPrinter();
+const pendingLabel = app
+  .body!.statements.flatMap((node) =>
+    ts.isVariableStatement(node) ? [...node.declarationList.declarations] : [],
+  )
+  .find((node) => node.name.getText(source) === "planBusyLabel")!.initializer!;
 let transferCallback: ts.Expression | undefined;
 function findTransfer(node: ts.Node) {
   if (
@@ -66,11 +77,12 @@ const actions = ts.transpileModule(
     api, planValidationRequest, livePlanningRef,
     setPlans, setPlanHistory, setBusy, setToast, setGw, setSelected, notify,
     data, lookup, selected, detailId, playerGW, detailInline, replacePlayer,
-    transferView, liveTransferViewRef, setDetailId, setTab
+    transferView, liveTransferViewRef, setDetailId, setTab, pendingPlanRef
   } = scope;
   ${functions.map((node) => printer.printNode(ts.EmitHint.Unspecified, node, source)).join("\n")}
   const transferCallback = ${printer.printNode(ts.EmitHint.Expression, transferCallback, source)};
-  return { updatePlan, travelPlan, transferIn, transferCallback };`,
+  return { updatePlan, travelPlan, transferIn, transferCallback,
+    pendingLabel: () => ${printer.printNode(ts.EmitHint.Expression, pendingLabel, source)} };`,
   { compilerOptions: { target: ts.ScriptTarget.ES2022 } },
 ).outputText;
 const createActions = new Function("scope", actions) as (scope: object) => {
@@ -79,9 +91,11 @@ const createActions = new Function("scope", actions) as (scope: object) => {
     message?: string,
     remember?: boolean,
     pendingMessage?: string,
+    atGW?: number | null,
   ) => Promise<Plan | boolean>;
   travelPlan: (direction: "past" | "future") => Promise<void>;
   transferCallback: (id: number) => Promise<boolean>;
+  pendingLabel: () => string;
 };
 
 function branch(id: string, gameweeks = [7, 8, 9]): Plan {
@@ -130,6 +144,9 @@ function harness(plans = [branch("A"), branch("B", [12, 13])]) {
     modal: null,
   };
   const livePlanningRef = { current: { ...state } };
+  const pendingPlanRef = {
+    current: null as { id: string; name: string; gw: number | null } | null,
+  };
   const liveTransferViewRef = { current: {} };
   let viewKey = "";
   const players = Array.from({ length: 16 }, (_, i) => ({
@@ -178,6 +195,7 @@ function harness(plans = [branch("A"), branch("B", [12, 13])]) {
         state.plans.find((p) => p.id === state.activeId) ?? state.plans[0],
       forecastArgs: defaultForecastConfiguration,
       livePlanningRef,
+      pendingPlanRef,
       transferView: liveTransferViewRef.current,
       liveTransferViewRef,
       data: { players },
@@ -203,6 +221,61 @@ function harness(plans = [branch("A"), branch("B", [12, 13])]) {
 }
 
 describe("deferred plan validation", () => {
+  it("attributes pending and completed feedback to the renamed source after navigation", async () => {
+    const h = harness();
+    h.state.gw = 9;
+    const pending = h
+      .render()
+      .updatePlan(h.state.plans[0], "Updated.", true, "Updating lineup…");
+    expect(h.render().pendingLabel()).toBe("Updating lineup…");
+    h.state.activeId = "B";
+    h.state.gw = 13;
+    h.state.plans[0].name = "Renamed A";
+    expect(h.render().pendingLabel()).toBe("Renamed A · GW9: Updating lineup…");
+    h.requests[0].resolve({ weeks: h.state.plans[0].weeks });
+    await pending;
+    expect(h.state.toast?.text).toBe("Renamed A · GW9: Updated.");
+    expect(h.render().pendingLabel()).toBe("");
+  });
+  it("distinguishes another week while keeping same-view feedback short", async () => {
+    const h = harness();
+    const pending = h.render().updatePlan(h.state.plans[0], "Updated.");
+    h.state.gw = 8;
+    expect(h.render().pendingLabel()).toBe("A · GW7: Updating plan…");
+    h.state.gw = 7;
+    expect(h.render().pendingLabel()).toBe("Updating plan…");
+    h.requests[0].resolve({ weeks: h.state.plans[0].weeks });
+    await pending;
+    expect(h.state.toast?.text).toBe("Updated.");
+  });
+  it("labels plan-wide history feedback without assigning it to an unrelated week", async () => {
+    const h = harness();
+    const target = branch("A", [7]);
+    h.state.planHistory.A = { past: [], future: [target] };
+    const pending = h.render().travelPlan("future");
+    h.state.activeId = "B";
+    h.state.gw = 13;
+    expect(h.render().pendingLabel()).toBe("A: Redoing…");
+    h.requests[0].resolve({ weeks: target.weeks });
+    await pending;
+    expect(h.state.toast?.text).toBe("A: Change restored.");
+    expect(h.state.gw).toBe(13);
+  });
+  it("keeps the source identity on a rejected operation after navigation", async () => {
+    const h = harness();
+    const pending = h.render().updatePlan(h.state.plans[0]);
+    h.state.activeId = "B";
+    h.state.gw = 13;
+    h.render();
+    h.requests[0].reject(new Error("Temporary failure"));
+    expect(await pending).toBe(false);
+    expect(h.state.toast).toEqual({
+      text: "A · GW7: Temporary failure",
+      error: true,
+    });
+    expect(h.render().pendingLabel()).toBe("");
+    expect(h.state.planHistory).toEqual({});
+  });
   it.each(["branch", "week", "player", "reopened player"])(
     "keeps newer %s navigation after an accepted transfer",
     async (navigation) => {

@@ -1,9 +1,18 @@
 import type { Plan, Player, Week } from "./types";
 
+// Match Python round(value * 10), including accepted off-step inputs.
+function moneyUnits(value: number): number {
+  const scaled = value * 10;
+  const lower = Math.floor(scaled);
+  return scaled - lower === 0.5
+    ? lower % 2 === 0 ? lower : lower + 1
+    : Math.round(scaled);
+}
+
 // Mirror FPL's £0.1m price steps. The server remains the authority on every move.
 export function sellingPrice(current: number, purchase: number): number {
-  const now = Math.round(current * 10),
-    paid = Math.round(purchase * 10);
+  const now = moneyUnits(current),
+    paid = moneyUnits(purchase);
   return (now > paid ? paid + Math.floor((now - paid) / 2) : now) / 10;
 }
 
@@ -13,15 +22,13 @@ export function transferAllowance(
   player: Player,
   players: Player[],
 ) {
-  const prices = new Map(players.map((p) => [p.id, Math.round(p.price * 10)]));
+  const prices = new Map(players.map((p) => [p.id, moneyUnits(p.price)]));
   let squad = new Set(plan.base_squad),
-    bank = Math.round(plan.base_bank * 10);
+    bank = moneyUnits(plan.base_bank);
   const purchases = new Map(
     plan.base_squad.map((id) => [
       id,
-      Math.round(
-        (plan.purchase_prices[String(id)] ?? prices.get(id)! / 10) * 10,
-      ),
+      moneyUnits(plan.purchase_prices[String(id)] ?? prices.get(id)! / 10),
     ]),
   );
   const salePrice = (id: number) =>

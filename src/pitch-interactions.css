@@ -1,4 +1,6 @@
-.planner-board .pitch-select-mode .player-info {
+.planner-board .player-info,
+.planner-board .player-substitute {
+  position: absolute;
   left: 0;
   right: auto;
   top: 0;
@@ -10,15 +12,19 @@
   border-radius: 50%;
   background: #0b1929;
   opacity: 0.85;
+  color: #aac1da;
+  z-index: 2;
 }
 
-.planner-board .pitch-select-mode .player-info:hover,
-.planner-board .pitch-select-mode .player-info:focus-visible {
+.planner-board .player-info:hover,
+.planner-board .player-info:focus-visible,
+.planner-board .player-substitute:hover,
+.planner-board .player-substitute:focus-visible {
   opacity: 1;
   color: #fff;
 }
 
-.planner-board .pitch-select-mode .player-select:focus-visible {
+.planner-board .player-select:focus-visible {
   outline: 2px solid #ff996d;
   outline-offset: 2px;
 }

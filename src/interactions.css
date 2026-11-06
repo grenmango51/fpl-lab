@@ -506,24 +506,62 @@
 .detail-tab-overview .detail-grid > section:last-child:empty {
   display: none;
 }
-.transfer-resources {
+.transfer-budget {
   display: flex;
   justify-content: space-between;
-  gap: 8px;
-  padding: 12px 0;
-  margin-bottom: 8px;
+  align-items: baseline;
+  gap: 12px;
+  padding: 6px 0 10px;
   border-bottom: 1px solid #26354c;
 }
-.transfer-resources > span {
-  display: flex;
-  flex-direction: column;
-  font-size: 11px;
-  gap: 5px;
-  color: #8da1bd;
+.transfer-budget > span {
+  color: #9bacc5;
+  font-size: 12px;
+  white-space: nowrap;
 }
-.transfer-resources b {
-  font-size: 18px;
+.transfer-budget b {
+  color: #ff9e78;
+  font-size: 22px;
+  margin-left: 6px;
   font-variant-numeric: tabular-nums;
+}
+.transfer-budget-details summary,
+.transfer-options > summary {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: #a5b5ca;
+  min-height: 30px;
+  list-style: none;
+}
+.transfer-budget-details summary::-webkit-details-marker,
+.transfer-options > summary::-webkit-details-marker {
+  display: none;
+}
+.transfer-budget-details summary:focus-visible,
+.transfer-options > summary:focus-visible {
+  outline: 2px solid var(--orange);
+  outline-offset: 2px;
+}
+.transfer-budget-details[open] summary > svg,
+.transfer-options[open] > summary > svg {
+  transform: rotate(180deg);
+}
+.transfer-budget-details dl {
+  margin: 3px 0;
+  font-size: 11px;
+  color: #9bacc5;
+}
+.transfer-budget-details dl > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 3px 0;
+}
+.transfer-budget-details dd {
+  margin: 0;
   color: #e2ebf7;
 }
 .transfer-search {
@@ -542,6 +580,22 @@
 .transfer-search > .icon-button {
   width: 36px;
   height: 36px;
+}
+.transfer-eligibility {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.transfer-eligibility .segmented button {
+  min-height: 32px;
+  padding: 6px 10px;
+  font-size: 11px;
+}
+.transfer-eligibility > span {
+  font-size: 10px;
+  color: #8da1bd;
+  white-space: nowrap;
 }
 .transfer-filters {
   display: flex;
@@ -637,11 +691,8 @@
   background: #ff6a3d15;
   border: 1px solid #ff6a3d44;
 }
-.transfer-limit {
-  display: block;
-  color: #d99b77;
-  font-size: 9px;
-  margin-top: 4px;
+.transfer-list .unavailable-transfer td {
+  color: #72849d;
 }
 .unavailable-transfer .player-name-cell {
   opacity: 0.65;
@@ -689,6 +740,17 @@
 .transfer-impact b {
   font-size: 22px;
   font-variant-numeric: tabular-nums;
+}
+.transfer-hit-preview {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 10px 0 0;
+  font-size: 12px;
+  color: #b6c4d8;
+}
+.transfer-hit-preview small {
+  color: #8da1bd;
 }
 .transfer-confirm .button-row {
   margin-top: 20px;
@@ -1028,9 +1090,6 @@
     font-size: 11px;
     padding: 10px 4px;
   }
-  .transfer-resources b {
-    font-size: 17px;
-  }
   .transfer-filters {
     gap: 5px;
   }
@@ -1207,17 +1266,6 @@
   padding: 8px 5px;
   font-size: 11px;
 }
-.floating-player-window .transfer-resources {
-  padding: 8px 0;
-  margin-bottom: 3px;
-}
-.floating-player-window .transfer-resources b {
-  font-size: 15px;
-}
-.floating-player-window .transfer-resources > span {
-  font-size: 10px;
-  gap: 3px;
-}
 .floating-player-window .transfer-search {
   margin: 9px 0;
 }
@@ -1249,6 +1297,36 @@
 .floating-player-window .detail-grid,
 .floating-player-window .detail-tab-edit .detail-grid > section:last-child {
   grid-template-columns: minmax(0, 1fr);
+}
+.detail-tab-edit > .player-detail-top {
+  display: none;
+}
+.editor-team-news,
+.player-minutes-options {
+  margin: 8px 0;
+  color: #a5b5ca;
+  font-size: 11px;
+}
+.editor-team-news > summary,
+.player-minutes-options > summary {
+  cursor: pointer;
+  padding: 6px 0;
+}
+.editor-team-news p { margin: 6px 0; }
+.player-window .stat-scenario-editor { padding: 10px; margin-bottom: 8px; }
+.stat-scenario-editor .field-grid,
+.minutes-schedule-editor .field-grid {
+  align-items: center;
+}
+.editor-week { color: #e2ebf7; font-size: 12px; }
+.detail-tab-overview .player-minutes-options { display: none; }
+.player-window .editor-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  padding: 8px 0;
+  margin-bottom: 0;
+  background: #0b1628;
 }
 .planner-board {
   position: relative;
@@ -1355,31 +1433,8 @@
   border-bottom: 1px solid #26384e;
   padding-bottom: 8px;
 }
-.transfer-options > summary {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  cursor: pointer;
-  font-size: 11px;
-  color: #a5b5ca;
-  min-height: 25px;
-}
-.transfer-options > summary > span {
-  margin-left: auto;
-  font-size: 10px;
-  color: #788eaa;
-}
 .floating-player-window .detail-tab-transfer > .player-detail-top {
   display: none;
-}
-.floating-player-window .transfer-resources {
-  flex-direction: row;
-  gap: 10px;
-}
-.floating-player-window .transfer-resources > span {
-  flex-direction: row;
-  gap: 6px;
-  align-items: baseline;
 }
 .floating-player-window .transfer-list {
   max-height: 340px;

@@ -4,6 +4,7 @@ import {
   ArrowUpRight,
   Star,
   Info,
+  ArrowLeftRight,
   LoaderCircle,
   AlertTriangle,
 } from "lucide-react";
@@ -183,11 +184,17 @@ export function Pitch({
           onDragEnd={() => setDragged(null)}
           onClick={() => {
             if (disabled) return;
-            if (selected !== null && swapTargets?.includes(id)) onBenchSwap(id);
+            if (interactionMode === "inspect") onDetail(id);
+            else if (selected !== null && swapTargets?.includes(id))
+              onBenchSwap(id);
             else onSelect(id);
           }}
-          onDoubleClick={
-            interactionMode === "inspect" ? () => onDetail(id) : undefined
+          title={
+            interactionMode === "inspect"
+              ? onSwap
+                ? `Transfer / Edit ${p.name}`
+                : `Open ${p.name}`
+              : undefined
           }
           aria-label={
             targets?.includes(id)
@@ -221,7 +228,7 @@ export function Pitch({
             <b>{value ? value(p) : fmt(xp(p, week.gw))}</b>
           </div>
         </button>
-        {interactionMode === "substitute" ? (
+        {interactionMode === "substitute" || disabled ? (
           <button
             className="player-info"
             onClick={() => onDetail(id)}
@@ -230,6 +237,18 @@ export function Pitch({
             aria-haspopup="dialog"
           >
             <Info size={14} />
+          </button>
+        ) : onSwap ? (
+          <button
+            className="player-substitute"
+            disabled={disabled}
+            onClick={() => {
+              if (!disabled) onSelect(id);
+            }}
+            aria-label={`Select ${p.name} for substitution`}
+            title={`Substitute ${p.name}`}
+          >
+            <ArrowLeftRight size={14} />
           </button>
         ) : null}
       </div>

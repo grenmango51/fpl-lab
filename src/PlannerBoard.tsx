@@ -320,7 +320,7 @@ export function PlannerBoard({
           week={week}
           players={data.players}
           selected={selected}
-          interactionMode="substitute"
+          interactionMode={chosen ? "substitute" : "inspect"}
           disabled={busy}
           onSelect={(id) => {
             if (busy) return;

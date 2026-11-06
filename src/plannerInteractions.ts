@@ -63,11 +63,21 @@ export function transferAllowance(
   const currentBank = bankFor(current);
   const cancelsBuy = !squad.has(player.id);
   const sale = cancelsBuy ? prices.get(player.id)! : salePrice(player.id);
+  // Count the final net buys, not clicks or the displayed transfer slots.
+  // week.free_transfers is the validator's canonical entering allowance.
+  const hitsFor = (final: Set<number>) =>
+    week.chip === "wildcard" || week.chip === "freehit"
+      ? 0
+      : Math.max(
+          0,
+          [...final].filter((id) => !squad.has(id)).length - week.free_transfers,
+        ) * 4;
   return {
     bank: currentBank / 10,
     sale: sale / 10,
     budget: (currentBank + sale) / 10,
     cancelsBuy,
+    hits: hitsFor(current),
     forTarget(target: Player) {
       const final = new Set(current);
       final.delete(player.id);
@@ -78,6 +88,7 @@ export function transferAllowance(
           (cancelsSale ? salePrice(target.id) : prices.get(target.id)!) / 10,
         bankAfter: bankFor(final) / 10,
         cancelsSale,
+        hits: hitsFor(final),
       };
     },
   };

@@ -1,6 +1,6 @@
 # Player transfer/editor handoff — issue #10
 
-Implementation handoff, 6 November 2026. **Parent desktop/390px transfer and actual editor save/reload/reset checks pass; remaining native inputs and independent code/blind acceptance are pending. The report is not closed.** `docs/STATUS.md` consolidation belongs to the parent. No browser/server was started, no deployment/merge occurred, and no Jam/issue comment was posted by this branch.
+Implementation handoff, 6 November 2026. **Parent desktop/390px transfer and actual editor save/reload/reset checks pass; native keyboard/drag/touch checks also pass, with independent code/blind acceptance pending. The report is not closed.** `docs/STATUS.md` consolidation belongs to the parent. No browser/server was started, no deployment/merge occurred, and no Jam/issue comment was posted by this branch.
 
 ## Evidence and scope
 

@@ -56,7 +56,10 @@ function scenario(spec: (typeof fixture.cases)[number]) {
       captain: replace(13),
       vice: 8,
       bank: spec.expected.bank,
-      free_transfers: 5,
+      free_transfers:
+        ("freeTransfers" in spec.expected
+          ? spec.expected.freeTransfers
+          : undefined) ?? 5,
       next_free_transfers: 5,
       hits: 0,
       points: 0,
@@ -74,7 +77,8 @@ function scenario(spec: (typeof fixture.cases)[number]) {
     base_squad,
     base_bank: spec.bank ?? 0,
     purchase_prices: spec.purchases ?? { "13": 5.5 },
-    free_transfers: 5,
+    free_transfers:
+      ("free_transfers" in spec ? spec.free_transfers : undefined) ?? 5,
     created_at: "2026-11-05",
   } as Plan;
   return {
@@ -124,17 +128,28 @@ describe("final-squad transfer affordability", () => {
       expect(preview.bankAfter).toBe(spec.expected.bankAfter);
       expect(plan).toEqual(original);
       const blocked = spec.expected.bankAfter < 0 || spec.clubBlocked;
-      const choose = `aria-label="Choose Player ${target.id}"`;
+      const choose = `aria-label="Choose Player ${target.id}`;
       expect(render(spec).includes(choose)).toBe(!blocked);
       const unfiltered = render(spec, false, false);
-      expect(unfiltered).toContain(choose + (blocked ? ' disabled=""' : "><"));
+      const button = unfiltered.match(new RegExp(`${choose}[^>]*>`))![0];
+      expect(button.includes('disabled=""')).toBe(Boolean(blocked));
+      if (blocked) expect(button).toMatch(/Over budget|3 players from club/);
+      expect(unfiltered).not.toContain('class="transfer-limit"');
       const confirmation = render(spec, true, false);
       expect(confirmation).toContain(
         `<small>Bank after</small><b>£${spec.expected.bankAfter.toFixed(1)}m</b>`,
       );
       expect(confirmation).toContain(
-        `class="button primary"${blocked ? ' disabled=""' : ""}>`,
+        `class="button primary"${blocked ? ' disabled=""' : ""}`,
       );
+      if ("hitsBefore" in spec.expected) {
+        expect(allowance.hits).toBe(spec.expected.hitsBefore);
+        expect(preview.hits).toBe(spec.expected.hitsAfter);
+        expect(confirmation).toContain(`<span>GW${week.gw} hit</span>`);
+        expect(confirmation).toContain(
+          `>${preview.hits ? `−${preview.hits}` : "0"} pts</b>`,
+        );
+      }
     });
   }
 

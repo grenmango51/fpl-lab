@@ -170,12 +170,14 @@ function boardPitch(selected: number | null, busy = false) {
   }
 }
 
-describe("direct pitch selection", () => {
+describe("explicit pitch substitution selection", () => {
   it("selects, deselects and changes a source without opening details", () => {
     const first = boardPitch(null);
+    expect(first.pitch.interactionMode).toBe("inspect");
     first.pitch.onSelect(3);
     expect(first.onSelect).toHaveBeenCalledWith(3);
     const active = boardPitch(3);
+    expect(active.pitch.interactionMode).toBe("substitute");
     active.pitch.onSelect(3);
     expect(active.onSelect).toHaveBeenLastCalledWith(null);
     active.pitch.onSelect(4);

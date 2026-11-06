@@ -1,5 +1,12 @@
 import { useMemo, useState } from "react";
-import { ArrowLeft, ArrowRight, Check, Search, Star } from "lucide-react";
+import {
+  ArrowLeft,
+  ArrowRight,
+  Check,
+  ChevronDown,
+  Search,
+  Star,
+} from "lucide-react";
 import { Badge, PlayerName } from "./components";
 import { fmt, money, xp } from "./lib";
 import { transferAllowance } from "./plannerInteractions";
@@ -93,7 +100,7 @@ export function TransferPanel({
     ],
   );
   async function confirm() {
-    if (!target || busy) return;
+    if (!target || busy || reason(target)) return;
     setError("");
     if (!(await onTransfer(target.id)))
       setError(
@@ -102,16 +109,25 @@ export function TransferPanel({
   }
   return (
     <section className="transfer-panel" aria-label={`Replace ${outgoing.name}`}>
-      <div className="transfer-resources">
+      <div className="transfer-budget">
         <span>
-          Released <b>{money(sale)}</b>
+          Available <b>{money(budget)}</b>
         </span>
-        <span>
-          Bank <b>{money(bank)}</b>
-        </span>
-        <span>
-          Available <b className="orange">{money(budget)}</b>
-        </span>
+        <details className="transfer-budget-details">
+          <summary aria-label="Budget details">
+            Details <ChevronDown size={12} />
+          </summary>
+          <dl>
+            <div>
+              <dt>{cancelsBuy ? "Buy cancelled" : "Selling"}</dt>
+              <dd>{money(sale)}</dd>
+            </div>
+            <div>
+              <dt>Bank</dt>
+              <dd>{money(bank)}</dd>
+            </div>
+          </dl>
+        </details>
       </div>
       {target && preview ? (
         <div className="transfer-confirm">
@@ -166,17 +182,34 @@ export function TransferPanel({
               </b>
             </div>
           </div>
+          <div className="transfer-hit-preview" role="status">
+            <span>GW{week.gw} hit</span>
+            <b className={preview.hits ? "red" : ""}>
+              {preview.hits ? `−${preview.hits}` : "0"} pts
+            </b>
+            {preview.hits !== allowance.hits ? (
+              <small>
+                was {allowance.hits ? `−${allowance.hits}` : "0"} pts
+              </small>
+            ) : null}
+          </div>
           <p className="source-caption">
-            Player points before captaincy and hits.{" "}
+            Player xPts before captaincy and hits.{" "}
             {week.chip === "freehit"
               ? "This Free Hit only."
-              : "Carries into later planned weeks while the outgoing player is held."}
+              : "Carries into later weeks while held."}
           </p>
           <div className="button-row">
             <button
               className="button primary"
               onClick={() => void confirm()}
               disabled={busy || Boolean(reason(target))}
+              title={reason(target) || undefined}
+              aria-label={
+                reason(target)
+                  ? `Confirm transfer: ${reason(target)}`
+                  : undefined
+              }
             >
               <Check size={15} />
               {busy ? "Checking…" : "Confirm transfer"}
@@ -197,30 +230,53 @@ export function TransferPanel({
         </div>
       ) : (
         <>
-          <details className="transfer-options">
-            <summary>
-              <Search size={13} />
-              Search & filters<span>{rows.length} players</span>
-            </summary>
-            <div className="transfer-search">
-              <div className="search-box">
-                <Search size={15} />
-                <input
-                  aria-label="Search replacements"
-                  placeholder={`Find a ${outgoing.position === "GKP" ? "goalkeeper" : outgoing.position.toLowerCase()}`}
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                />
-              </div>
+          <div className="transfer-search">
+            <div className="search-box">
+              <Search size={15} />
+              <input
+                aria-label="Search replacements"
+                placeholder={`Find a ${outgoing.position === "GKP" ? "goalkeeper" : outgoing.position.toLowerCase()}`}
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+              />
+            </div>
+            <button
+              className={`icon-button ${watched ? "starred" : ""}`}
+              aria-label="Replacement watchlist"
+              aria-pressed={watched}
+              onClick={() => setWatched(!watched)}
+            >
+              <Star size={16} />
+            </button>
+          </div>
+          <div className="transfer-eligibility">
+            <div
+              className="segmented"
+              role="group"
+              aria-label="Replacement eligibility"
+            >
               <button
-                className={`icon-button ${watched ? "starred" : ""}`}
-                aria-label="Replacement watchlist"
-                aria-pressed={watched}
-                onClick={() => setWatched(!watched)}
+                aria-pressed={affordable}
+                className={affordable ? "active" : ""}
+                title="Within budget and club limit"
+                onClick={() => setAffordable(true)}
               >
-                <Star size={16} />
+                Affordable
+              </button>
+              <button
+                aria-pressed={!affordable}
+                className={!affordable ? "active" : ""}
+                onClick={() => setAffordable(false)}
+              >
+                All players
               </button>
             </div>
+            <span role="status">{rows.length} players</span>
+          </div>
+          <details className="transfer-options">
+            <summary>
+              Filters <ChevronDown size={12} />
+            </summary>
             <div className="transfer-filters">
               <select
                 aria-label="Replacement club"
@@ -274,15 +330,6 @@ export function TransferPanel({
             <label className="transfer-affordable">
               <input
                 type="checkbox"
-                checked={affordable}
-                onChange={(event) => setAffordable(event.target.checked)}
-              />
-              Available within budget & club limit
-              <span>{rows.length} players</span>
-            </label>
-            <label className="transfer-affordable">
-              <input
-                type="checkbox"
                 checked={includeUnavailable}
                 onChange={(event) =>
                   setIncludeUnavailable(event.target.checked)
@@ -307,17 +354,13 @@ export function TransferPanel({
                   <tr
                     key={player.id}
                     className={reason(player) ? "unavailable-transfer" : ""}
+                    title={reason(player) || undefined}
                   >
                     <td>
                       <PlayerName
                         player={player}
                         onClick={() => onInspect(player.id)}
                       />
-                      {reason(player) ? (
-                        <small className="transfer-limit">
-                          {reason(player)}
-                        </small>
-                      ) : null}
                     </td>
                     <td>{money(player.price)}</td>
                     <td>{fmt(xp(player, week.gw))}</td>
@@ -332,9 +375,12 @@ export function TransferPanel({
                     <td>
                       <button
                         className="transfer-pick"
-                        aria-label={`Choose ${player.name}`}
+                        title={reason(player) || `Choose ${player.name}`}
+                        aria-label={`Choose ${player.name}${reason(player) ? `: ${reason(player)}` : ""}`}
                         disabled={busy || Boolean(reason(player))}
-                        onClick={() => setTarget(player)}
+                        onClick={() => {
+                          if (!busy && !reason(player)) setTarget(player);
+                        }}
                       >
                         <ArrowRight size={16} />
                       </button>

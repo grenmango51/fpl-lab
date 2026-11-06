@@ -47,13 +47,16 @@ def test_picker_accounting_against_server(monkeypatch, case):
         weeks.append(week)
     body = {
         "base_squad": list(range(1, 16)), "bank": case.get("bank", 0),
-        "free_transfers": 5, "purchase_prices": case.get("purchases", {"13": 5.5}),
+        "free_transfers": case.get("free_transfers", 5), "purchase_prices": case.get("purchases", {"13": 5.5}),
         "weeks": weeks,
     }
     client = TestClient(api.app)  # No lifespan/server/collector is started.
     before = client.post("/api/plan/validate", json=body)
     assert before.status_code == 200, before.text
     assert before.json()["weeks"][-1]["bank"] == case["expected"]["bank"]
+    if "hitsBefore" in case["expected"]:
+        assert before.json()["weeks"][-1]["hits"] == case["expected"]["hitsBefore"]
+        assert before.json()["weeks"][-1]["free_transfers"] == case["expected"]["freeTransfers"]
     edited = deepcopy(body)
     replace(edited["weeks"][-1], case["outgoing"], case["target"])
     after = client.post("/api/plan/validate", json=edited)
@@ -67,6 +70,8 @@ def test_picker_accounting_against_server(monkeypatch, case):
         assert after.status_code == 200, after.text
         result = after.json()["weeks"][-1]
         assert result["bank"] == case["expected"]["bankAfter"]
+        if "hitsAfter" in case["expected"]:
+            assert result["hits"] == case["expected"]["hitsAfter"]
         # Net cancellation retains the historical receipt, including on FH/WC.
         if len(weeks) == 1 and case["target"] == 13:
             expected_receipt = body["purchase_prices"].get("13", 6.5)

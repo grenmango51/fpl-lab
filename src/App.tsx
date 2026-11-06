@@ -3282,7 +3282,7 @@ export default function App() {
                   }}
                 >
                   <ArrowLeftRight size={14} />
-                  Sub
+                  Substitute
                 </button>
               ) : null}
               {detailWeek?.bench.includes(detailId) &&
@@ -3323,7 +3323,7 @@ export default function App() {
             />
             {detailTab === "transfer" && detailSquad && active && detailWeek ? (
               <TransferPanel
-                key={`${detailId}-${playerGW}`}
+                key={`${active.id}-${detailId}-${playerGW}`}
                 data={data}
                 plan={active}
                 week={detailWeek}

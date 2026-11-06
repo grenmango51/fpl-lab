@@ -1,5 +1,13 @@
 # Current handover
 
+
+## Transfer affordability correction — 6 November (in progress)
+
+- Draft PR #7 reconstructs entering permanent resources for the selected week, so cancelling a planned acquisition/sale uses the net final squad and retains the historical purchase receipt. Free Hit restores permanent resources, real repurchases reset receipts, and affordable/club filters and confirmation use the same target-specific result. The complete plan still validates on the server before adoption.
+- The independent first-pass source review of `24dbb3a` requested changes for an introduced P2: accepted off-step bank/purchase inputs such as `0.05` and `5.05` rounded differently in JavaScript and Python. Correction `9ea0bbe` now matches the validator's binary64 ties-to-even monetary normalization. Six additional shared panel/real-endpoint cases cover round-up and round-down ties for both inputs. A separate local comparison found zero differences over 26,001 cent/half-tenth/adjacent-binary64 inputs.
+- **592 backend tests, 159 frontend tests, production build and hosting typecheck pass.** Both production source configurations pass **670 players × GW10–38 = 19,430/19,430 cells**, checked at 12:17 UTC. Native desktop evidence reproduces an enabled £0.1m-short transfer and HTTP 422 before the rounding correction; after it, the same sourced-price candidate is blocked without submitting or changing decisions. QA uses a hypothetical raw starting bank of `0.05`, not a claim about the user's finances. Remaining mobile, cancellation recheck, independent corrective review and paired visual gates are pending; this is not a closeout.
+- Fresh user report [issue #10](https://github.com/grenmango51/fpl-lab/issues/10) is accepted separately: hidden transfer filters, repeated per-row budget text, a bulky resources row and indirect player transfer/edit access remain in this branch and the live website. The recording's later Pro modal belongs to the reference; Open FPL editing must stay available. A separate dependent UI change is in progress. The financial fix alone does not resolve this report. No changes here are merged or deployed.
+
 ## Jam interaction ladder — 5 November (in progress)
 
 - [Horizon PR #3](https://github.com/grenmango51/fpl-lab/pull/3) is ready for review with independent code **PASS** and blind workflow **PASS**. Its changes remain on the separate horizon branch. Neither PR is deployed, and whole-app parity remains unproven.

@@ -377,6 +377,9 @@ export default function App() {
   );
   const liveTransferViewRef = useRef(transferView);
   liveTransferViewRef.current = transferView;
+  const feedbackSurfaceRef = useRef<{ gw: number; readOnly: boolean } | null>(null);
+  feedbackSurfaceRef.current = detailId === null ? null
+    : { gw: detailGW || gw, readOnly: detailReadOnly };
   const planBusyLabel = busyStatus.origin
     ? planMessage(busy, busyStatus.origin) : busy;
   const planToastText = toast?.origin
@@ -927,7 +930,10 @@ export default function App() {
 
   function planMessage(message: string, origin: PlanOperation) {
     const live = livePlanningRef.current;
-    if (live.activeId === origin.id && (origin.gw === null || live.gw === origin.gw))
+    const surface = feedbackSurfaceRef.current;
+    const matchingSurface = !surface || (!surface.readOnly &&
+      (origin.gw === null || surface.gw === origin.gw));
+    if (live.activeId === origin.id && (origin.gw === null || live.gw === origin.gw) && matchingSurface)
       return message;
     const name = live.plans.find((plan) => plan.id === origin.id)?.name ?? origin.name;
     return `${name}${origin.gw === null ? "" : ` · GW${origin.gw}`}: ${message}`;

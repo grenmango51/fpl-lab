@@ -23,6 +23,7 @@ type State = {
   detailId: number | null;
   detailGW: number;
   detailInline: boolean;
+  detailReadOnly: boolean;
   modal: string | null;
 };
 type Origin = { id: string; name: string; gw: number | null };
@@ -91,7 +92,7 @@ const actions = ts.transpileModule(
     setPlans, setPlanHistory, setBusyStatus, setToast, setGw, setSelected,
     data, lookup, selected, detailId, playerGW, detailInline, replacePlayer,
     transferView, liveTransferViewRef, setDetailId, setTab, busyStatus, toast,
-    setProspective
+    setProspective, feedbackSurfaceRef
   } = scope;
   const notify = ${printer.printNode(ts.EmitHint.Expression, notify, source)};
   ${functions.map((node) => printer.printNode(ts.EmitHint.Unspecified, node, source)).join("\n")}
@@ -160,10 +161,14 @@ function harness(plans = [branch("A"), branch("B", [12, 13])]) {
     detailId: 2,
     detailGW: plans[0].weeks[0].gw,
     detailInline: false,
+    detailReadOnly: false,
     modal: null,
   };
   const livePlanningRef = { current: { ...state } };
   const liveTransferViewRef = { current: {} };
+  const feedbackSurfaceRef = {
+    current: null as { gw: number; readOnly: boolean } | null,
+  };
   let viewKey = "";
   const players = Array.from({ length: 16 }, (_, i) => ({
     id: i + 1,
@@ -194,6 +199,10 @@ function harness(plans = [branch("A"), branch("B", [12, 13])]) {
     if (state.busy !== state.busyStatus.message)
       state.busyStatus = { message: state.busy };
     livePlanningRef.current = { ...state };
+    feedbackSurfaceRef.current =
+      state.detailId === null
+        ? null
+        : { gw: state.detailGW || state.gw, readOnly: state.detailReadOnly };
     const nextKey = JSON.stringify([
       state.activeId,
       state.gw,
@@ -215,6 +224,7 @@ function harness(plans = [branch("A"), branch("B", [12, 13])]) {
       livePlanningRef,
       transferView: liveTransferViewRef.current,
       liveTransferViewRef,
+      feedbackSurfaceRef,
       data: { players },
       lookup: new Map(players.map((p) => [p.id, p])),
       playerGW: state.detailGW || state.gw,
@@ -239,6 +249,23 @@ function harness(plans = [branch("A"), branch("B", [12, 13])]) {
 }
 
 describe("deferred plan validation", () => {
+  it.each(["week", "draft preview"])(
+    "keeps toast context when a player surface changes its %s",
+    async (change) => {
+      const h = harness();
+      const pending = h.render().updatePlan(h.state.plans[0], "Updated.");
+      h.requests[0].resolve({ weeks: h.state.plans[0].weeks });
+      await pending;
+      expect(h.render().toastText()).toBe("Updated.");
+      const toast = h.state.toast;
+      if (change === "week") h.state.detailGW = 8;
+      else h.state.detailReadOnly = true;
+      expect(h.render().toastText()).toBe("A · GW7: Updated.");
+      h.state.detailId = null;
+      expect(h.render().toastText()).toBe("Updated.");
+      expect(h.state.toast).toBe(toast);
+    },
+  );
   it("does not attach a pending plan's origin to an unrelated scoring operation", async () => {
     const h = harness();
     const edit = h.render().updatePlan(h.state.plans[0], "Updated.");
@@ -282,7 +309,7 @@ describe("deferred plan validation", () => {
   );
   it("attributes pending and completed feedback to the renamed source after navigation", async () => {
     const h = harness();
-    h.state.gw = 9;
+    h.state.gw = h.state.detailGW = 9;
     const pending = h
       .render()
       .updatePlan(h.state.plans[0], "Updated.", true, "Updating lineup…");

@@ -298,14 +298,22 @@ export default function App() {
     [listMode, setListMode] = useState<"targets" | "captains" | "watch">(
       "targets",
     ),
-    [busy, setBusy] = useState(""),
+    [busyStatus, setBusyStatus] = useState<{
+      message: string;
+      origin?: PlanOperation;
+    }>({ message: "" }),
     [toast, setToast] = useState<{
       text: string;
       error?: boolean;
+      origin?: PlanOperation;
       action?: { label: string; run: () => void };
     } | null>(null),
     [evalData, setEvalData] = useState<Evaluation | null>(null),
     [prospective, setProspective] = useState<Prospective | null>(null);
+  const busy = busyStatus.message;
+  function setBusy(message: string, origin?: PlanOperation) {
+    setBusyStatus({ message, origin });
+  }
   const [teamId, setTeamId] = useState("2200722"),
     [teamBank, setTeamBank] = useState(0),
     [teamFT, setTeamFT] = useState(1),
@@ -322,9 +330,9 @@ export default function App() {
     loadedForecastArgsRef = useRef(""),
     solveRequestRef = useRef(0),
     solveInFlightRef = useRef(false),
-    pendingPlanRef = useRef<PlanOperation | null>(null),
     fileRef = useRef<HTMLInputElement>(null);
-  const notify = (text: string, error = false) => setToast({ text, error });
+  const notify = (text: string, error = false, origin?: PlanOperation) =>
+    setToast({ text, error, ...(origin ? { origin } : {}) });
   const forecastArgs: ForecastConfiguration = {
     overrides,
     minutes_schedule: minutesSchedule,
@@ -369,8 +377,10 @@ export default function App() {
   );
   const liveTransferViewRef = useRef(transferView);
   liveTransferViewRef.current = transferView;
-  const planBusyLabel = busy && pendingPlanRef.current
-    ? planMessage(busy, pendingPlanRef.current) : busy;
+  const planBusyLabel = busyStatus.origin
+    ? planMessage(busy, busyStatus.origin) : busy;
+  const planToastText = toast?.origin
+    ? planMessage(toast.text, toast.origin) : toast?.text;
   const week = active?.weeks.find((w) => w.gw === gw) ?? null;
   const lookup = useMemo(
     () => new Map(data?.players.map((p) => [p.id, p]) ?? []),
@@ -938,10 +948,9 @@ export default function App() {
   ) {
     if (busy) return false;
     const origin = { id: p.id, name: p.name, gw: atGW };
-    pendingPlanRef.current = origin;
     const before = plans.find((row) => row.id === p.id);
     setToast(null);
-    setBusy(pendingMessage);
+    setBusy(pendingMessage, origin);
     try {
       const valid = await validatedPlan(p);
       if (remember && before)
@@ -959,13 +968,12 @@ export default function App() {
       setPlans((ps) =>
         ps.map((v) => (v.id === p.id ? { ...valid, name: v.name } : v)),
       );
-      if (message) notify(planMessage(message, origin));
+      if (message) notify(message, false, origin);
       return valid;
     } catch (e) {
-      notify(planMessage((e as Error).message, origin), true);
+      notify((e as Error).message, true, origin);
       return false;
     } finally {
-      pendingPlanRef.current = null;
       setBusy("");
     }
   }
@@ -2467,7 +2475,7 @@ export default function App() {
           role="status"
         >
           {toast.error ? <Info size={17} /> : <Check size={17} />}
-          <span>{toast.text}</span>
+          <span>{planToastText}</span>
           {toast.action ? (
             <button className="toast-undo" onClick={toast.action.run}>
               {toast.action.label}

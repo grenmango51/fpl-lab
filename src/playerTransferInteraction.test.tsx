@@ -2,6 +2,8 @@ import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Pitch } from "./components";
 import { TransferPanel } from "./TransferPanel";
+import { StatScenarioEditor } from "./StatScenarioEditor";
+import { MinutesScenarioEditor } from "./MinutesScenarioEditor";
 import type { Bootstrap, Plan, Player, Week } from "./types";
 import fixture from "../backend/tests/fixtures/transfer_affordability.json";
 
@@ -17,7 +19,8 @@ vi.mock("react", async (original) => ({
     return [
       hooks.values[slot],
       (value: unknown) => {
-        hooks.values[slot] = value;
+        hooks.values[slot] =
+          typeof value === "function" ? value(hooks.values[slot]) : value;
       },
     ];
   },
@@ -292,5 +295,138 @@ describe("direct pitch tools with deliberate substitutions", () => {
     expect(ui.props.onSelect).not.toHaveBeenCalled();
     labelled(ui.render(), "Info for Player 8").props.onClick();
     expect(ui.props.onDetail).toHaveBeenCalledExactlyOnceWith(8);
+  });
+});
+
+describe("shared forecast editor scope", () => {
+  it("saves and resets only the shared player week without erasing other weeks", () => {
+    const props = {
+      player: players[12],
+      weeks: [7, 8],
+      gw: 8,
+      onGWChange: vi.fn(),
+      schedule: { "7": { expected_points: 1 } },
+      onSchedule: vi.fn(),
+      onNotify: vi.fn(),
+    };
+    const render = () => {
+      hooks.cursor = 0;
+      return StatScenarioEditor(props);
+    };
+    let tree = render();
+    labelled(tree, "Override Expected points").props.onChange({
+      target: { checked: true },
+    });
+    tree = render();
+    labelled(tree, "Assumed Expected points").props.onChange({
+      target: { value: "7.3" },
+    });
+    tree = render();
+    textButton(tree, "Save stats").props.onClick();
+    expect(props.onSchedule).toHaveBeenLastCalledWith({
+      "7": { expected_points: 1 },
+      "8": { expected_points: 7.3 },
+    });
+    expect(props.onNotify.mock.lastCall?.[0]).toContain(
+      "GW8: Saved for all plans. Updating forecasts",
+    );
+    expect(nodes(tree).some((n) => n.props.children === "All plans")).toBe(
+      true,
+    );
+    props.schedule = props.onSchedule.mock.lastCall![0];
+    textButton(render(), "Reset GW").props.onClick();
+    expect(props.onSchedule).toHaveBeenLastCalledWith({
+      "7": { expected_points: 1 },
+    });
+    expect(props.onNotify.mock.lastCall?.[0]).toContain(
+      "GW8: Override cleared. Updating forecasts",
+    );
+  });
+
+  it("saves minutes against the same supplied week and preserves earlier assumptions", () => {
+    const props = {
+      player: players[12],
+      weeks: [7, 8],
+      gw: 8,
+      onGWChange: vi.fn(),
+      schedule: { "7": { conditional_minutes: 45 } },
+      onSchedule: vi.fn(),
+      onReset: vi.fn(),
+      onNotify: vi.fn(),
+    };
+    const render = () => {
+      hooks.cursor = 0;
+      return MinutesScenarioEditor(props);
+    };
+    let tree = render();
+    labelled(tree, "Conditional player minutes").props.onChange({
+      target: { value: "30" },
+    });
+    tree = render();
+    textButton(tree, "Save minutes").props.onClick();
+    expect(props.onSchedule).toHaveBeenLastCalledWith({
+      "7": { conditional_minutes: 45 },
+      "8": { conditional_minutes: 30 },
+    });
+    expect(props.onNotify.mock.lastCall?.[0]).toContain(
+      "GW8: Saved for all plans. Updating forecasts",
+    );
+    const savedWeek = find(
+      tree,
+      (n) =>
+        n.type === "button" &&
+        Array.isArray(n.props.children) &&
+        n.props.children[1] === "7",
+    );
+    savedWeek.props.onClick();
+    expect(props.onGWChange).toHaveBeenCalledWith(7);
+  });
+
+  it("defaults transfer comparison to the plan and names any manually extended range", () => {
+    const ui = panel();
+    ui.props.plan = {
+      ...plan,
+      weeks: [7, 8, 9, 10].map((gw) => ({ ...week, gw })),
+    };
+    ui.props.data = {
+      ...ui.props.data,
+      gameweeks: [7, 8, 9, 10, 11],
+      players: structuredClone(players),
+    };
+    const outgoing = ui.props.data.players.find((p) => p.id === 13)!;
+    const target = ui.props.data.players.find((p) => p.id === 16)!;
+    for (const [gw, a, b] of [
+      [9, 20, 25],
+      [10, 30, 30],
+      [11, 90, 40],
+    ]) {
+      outgoing.gw[String(gw)] = { ...outgoing.gw["7"], points: a };
+      target.gw[String(gw)] = { ...target.gw["7"], points: b };
+    }
+    ui.props.outgoing = outgoing;
+    let tree = ui.render();
+    expect(labelled(tree, "Replacement horizon").props.value).toBe(4);
+    labelled(tree, "Choose Player 16").props.onClick();
+    tree = ui.render();
+    const delta = (rendered: ReactNode, range: string) => {
+      const box = find(
+        rendered,
+        (n) =>
+          n.type === "div" &&
+          Array.isArray(n.props.children) &&
+          [n.props.children[0]?.props?.children].flat().join("") ===
+            `${range} Δ xPts`,
+      );
+      return Number(find(box, (n) => n.type === "b").props.children);
+    };
+    expect(delta(tree, "GW7–10")).toBe(14);
+    textButton(tree, "Shortlist").props.onClick();
+    tree = ui.render();
+    labelled(tree, "Replacement horizon").props.onChange({
+      target: { value: "5" },
+    });
+    tree = ui.render();
+    labelled(tree, "Choose Player 16").props.onClick();
+    expect(delta(ui.render(), "GW7–11")).toBe(-36);
   });
 });

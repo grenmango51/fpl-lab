@@ -37,7 +37,9 @@ export function TransferPanel({
   const [query, setQuery] = useState("");
   const [club, setClub] = useState(0);
   const [horizon, setHorizon] = useState(
-    Math.min(5, data.gameweeks.filter((gw) => gw >= week.gw).length),
+    plan.weeks.filter(
+      (row) => row.gw >= week.gw && data.gameweeks.includes(row.gw),
+    ).length || 1,
   );
   const [affordable, setAffordable] = useState(true);
   const [watched, setWatched] = useState(false);
@@ -46,6 +48,8 @@ export function TransferPanel({
   const [target, setTarget] = useState<Player | null>(null);
   const [error, setError] = useState("");
   const weeks = data.gameweeks.filter((gw) => gw >= week.gw).slice(0, horizon);
+  const comparisonRange =
+    weeks.length === 1 ? `GW${weeks[0]}` : `GW${weeks[0]}–${weeks.at(-1)}`;
   const total = (player: Player) =>
     weeks.reduce((sum, gw) => sum + xp(player, gw), 0);
   const allowance = useMemo(
@@ -176,7 +180,7 @@ export function TransferPanel({
               </b>
             </div>
             <div>
-              <small>{weeks.length} GW Δ xPts</small>
+              <small>{comparisonRange} Δ xPts</small>
               <b className={total(target) >= total(outgoing) ? "green" : "red"}>
                 {fmt(total(target) - total(outgoing))}
               </b>
@@ -271,7 +275,9 @@ export function TransferPanel({
                 All players
               </button>
             </div>
-            <span role="status">{rows.length} players</span>
+            <span role="status">
+              {rows.length} players · {comparisonRange}
+            </span>
           </div>
           <details className="transfer-options">
             <summary>

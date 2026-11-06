@@ -7,6 +7,7 @@ export function MinutesScenarioEditor({
   player,
   weeks,
   gw,
+  onGWChange,
   globalMinutes,
   schedule,
   onSchedule,
@@ -16,13 +17,14 @@ export function MinutesScenarioEditor({
   player: Player;
   weeks: number[];
   gw: number;
+  onGWChange: (gw: number) => void;
   globalMinutes?: number;
   schedule: Record<string, MinutesScenario>;
   onSchedule: (schedule: Record<string, MinutesScenario>) => void;
   onReset: () => void;
   onNotify: (text: string) => void;
 }) {
-  const [selectedGW, setSelectedGW] = useState(gw);
+  const selectedGW = gw;
   const [scope, setScope] = useState("selected");
   const [minutes, setMinutes] = useState(
     schedule[String(gw)]?.conditional_minutes ?? globalMinutes ?? 90,
@@ -42,12 +44,12 @@ export function MinutesScenarioEditor({
   );
   const forecast = player.gw[String(selectedGW)];
   function selectGW(value: number) {
-    setSelectedGW(value);
     const row = schedule[String(value)];
     setMinutes(row?.conditional_minutes ?? globalMinutes ?? 90);
     setOwnAvailability(row?.availability !== undefined);
     if (row?.availability !== undefined)
       setAvailability(Math.round(row.availability * 100));
+    onGWChange(value);
   }
   function apply() {
     const chosen =
@@ -65,30 +67,17 @@ export function MinutesScenarioEditor({
     });
     onSchedule(updated);
     onNotify(
-      `${player.name}: saved a human minutes assumption for ${chosen.length} gameweek${chosen.length === 1 ? "" : "s"}.`,
+      `${player.name} · GW${chosen[0]}${chosen.length > 1 ? `–${chosen.at(-1)}` : ""}: Saved for all plans. Updating forecasts…`,
     );
   }
   return (
     <div className="minutes-schedule-editor">
       <h3>Edit minutes</h3>
       <p className="help-text">
-        Your duration and availability assumptions override these weeks.
+        Minutes and availability shared across all plans.
       </p>
       <div className="field-grid">
-        <label>
-          Gameweek
-          <select
-            aria-label="Minutes scenario gameweek"
-            value={selectedGW}
-            onChange={(e) => selectGW(+e.target.value)}
-          >
-            {weeks.map((w) => (
-              <option key={w} value={w}>
-                GW{w}
-              </option>
-            ))}
-          </select>
-        </label>
+        <b className="editor-week">GW{selectedGW}</b>
         <label>
           Apply to
           <select
@@ -96,8 +85,8 @@ export function MinutesScenarioEditor({
             value={scope}
             onChange={(e) => setScope(e.target.value)}
           >
-            <option value="selected">Selected GW only</option>
-            <option value="from">From GW{selectedGW} onwards</option>
+            <option value="selected">This GW</option>
+            <option value="from">From GW{selectedGW}</option>
             <option value="all">All remaining GWs</option>
           </select>
         </label>
@@ -138,8 +127,16 @@ export function MinutesScenarioEditor({
           />
         </label>
       )}
-      <details className="compact-details minutes-notes"><summary>Minutes notes</summary><p className="help-text">Duration is conditional on appearance and applies per fixture in a double. Official availability remains unless you replace it. Injury recovery is your assumption. These edits take priority over point blends.</p></details>
-      <div className="button-row">
+      <details className="compact-details minutes-notes">
+        <summary>Minutes notes</summary>
+        <p className="help-text">
+          Duration is conditional on appearance and applies per fixture in a
+          double. Official availability remains unless you replace it. Injury
+          recovery is your assumption. These edits take priority over point
+          blends.
+        </p>
+      </details>
+      <div className="button-row editor-actions">
         <button className="button primary small" onClick={apply}>
           Save minutes
         </button>

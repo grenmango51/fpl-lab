@@ -1298,6 +1298,36 @@
 .floating-player-window .detail-tab-edit .detail-grid > section:last-child {
   grid-template-columns: minmax(0, 1fr);
 }
+.detail-tab-edit > .player-detail-top {
+  display: none;
+}
+.editor-team-news,
+.player-minutes-options {
+  margin: 8px 0;
+  color: #a5b5ca;
+  font-size: 11px;
+}
+.editor-team-news > summary,
+.player-minutes-options > summary {
+  cursor: pointer;
+  padding: 6px 0;
+}
+.editor-team-news p { margin: 6px 0; }
+.player-window .stat-scenario-editor { padding: 10px; margin-bottom: 8px; }
+.stat-scenario-editor .field-grid,
+.minutes-schedule-editor .field-grid {
+  align-items: center;
+}
+.editor-week { color: #e2ebf7; font-size: 12px; }
+.detail-tab-overview .player-minutes-options { display: none; }
+.player-window .editor-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  padding: 8px 0;
+  margin-bottom: 0;
+  background: #0b1628;
+}
 .planner-board {
   position: relative;
 }

@@ -3132,7 +3132,7 @@ export default function App() {
       {detailId !== null && detailPlayer && (
         <PlayerSurface
           title={detailPlayer.name}
-          subtitle={`${detailPlayer.team_name} · ${detailPlayer.position} · ${money(detailPlayer.price)}`}
+          subtitle={`${detailPlayer.team_name} · ${detailPlayer.position} · ${money(detailPlayer.price)} · GW${playerGW}`}
           onClose={() => setDetailId(null)}
           anchor={detailAnchor}
           target={
@@ -3349,11 +3349,16 @@ export default function App() {
                 }}
               />
             ) : null}
-            {detailPlayer.news && (
+            {detailPlayer.news && detailTab === "edit" ? (
+              <details className="editor-team-news">
+                <summary>Team news</summary>
+                <p>{detailPlayer.news}</p>
+              </details>
+            ) : detailPlayer.news ? (
               <p className="news-alert">
                 Official team news: {detailPlayer.news}
               </p>
-            )}
+            ) : null}
             <div className="detail-grid">
               <section>
                 <h3>Where the points come from</h3>
@@ -3393,6 +3398,7 @@ export default function App() {
                   player={detailPlayer}
                   weeks={data.gameweeks}
                   gw={playerGW}
+                  onGWChange={setDetailGW}
                   schedule={statSchedule[String(detailId)] ?? {}}
                   onSchedule={(schedule) =>
                     setStatSchedule((current) => {
@@ -3405,39 +3411,43 @@ export default function App() {
                   }
                   onNotify={notify}
                 />
-                <MinutesScenarioEditor
-                  key={`minutes-${detailId}-${playerGW}`}
-                  player={detailPlayer}
-                  weeks={data.gameweeks}
-                  gw={playerGW}
-                  globalMinutes={overrides[String(detailId)]}
-                  schedule={minutesSchedule[String(detailId)] ?? {}}
-                  onSchedule={(schedule) =>
-                    setMinutesSchedule((current) => {
-                      const next = { ...current };
-                      if (Object.keys(schedule).length)
-                        next[String(detailId)] = schedule;
-                      else delete next[String(detailId)];
-                      return next;
-                    })
-                  }
-                  onReset={() => {
-                    setOverrides((current) => {
-                      const next = { ...current };
-                      delete next[String(detailId)];
-                      return next;
-                    });
-                    setMinutesSchedule((current) => {
-                      const next = { ...current };
-                      delete next[String(detailId)];
-                      return next;
-                    });
-                    notify(
-                      "Automatic minutes and availability restored for this player.",
-                    );
-                  }}
-                  onNotify={notify}
-                />
+                <details className="player-minutes-options">
+                  <summary>Edit minutes</summary>
+                  <MinutesScenarioEditor
+                    key={`minutes-${detailId}-${playerGW}`}
+                    player={detailPlayer}
+                    weeks={data.gameweeks}
+                    gw={playerGW}
+                    onGWChange={setDetailGW}
+                    globalMinutes={overrides[String(detailId)]}
+                    schedule={minutesSchedule[String(detailId)] ?? {}}
+                    onSchedule={(schedule) =>
+                      setMinutesSchedule((current) => {
+                        const next = { ...current };
+                        if (Object.keys(schedule).length)
+                          next[String(detailId)] = schedule;
+                        else delete next[String(detailId)];
+                        return next;
+                      })
+                    }
+                    onReset={() => {
+                      setOverrides((current) => {
+                        const next = { ...current };
+                        delete next[String(detailId)];
+                        return next;
+                      });
+                      setMinutesSchedule((current) => {
+                        const next = { ...current };
+                        delete next[String(detailId)];
+                        return next;
+                      });
+                      notify(
+                        `${detailPlayer.name}: Minutes edits cleared. Updating forecasts…`,
+                      );
+                    }}
+                    onNotify={notify}
+                  />
+                </details>
                 <div className="player-underlying">
                   <span>
                     xG / 90 <b>{fmt(detailPlayer.xg90, 2)}</b>

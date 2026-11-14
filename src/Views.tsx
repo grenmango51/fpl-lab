@@ -150,6 +150,20 @@ function cleanWeeklyMap(map: Record<string, number[]> | undefined) {
   return output;
 }
 
+function stripPlayerFromWeeklyMap(
+  map: Record<string, number[]> | undefined,
+  id: number,
+) {
+  return cleanWeeklyMap(
+    Object.fromEntries(
+      Object.entries(map ?? {}).map(([w, list]) => [
+        w,
+        list.filter((value) => value !== id),
+      ]),
+    ),
+  );
+}
+
 export function OptimiseView({
   data,
   plan,
@@ -276,21 +290,16 @@ export function OptimiseView({
       const ids = activeInScope
         ? settings[constraint].filter((value) => value !== id)
         : [...settings[constraint], id];
-      const nextOtherScoped = cleanWeeklyMap(
-        Object.fromEntries(
-          Object.entries(settings[otherScopedKey] ?? {}).map(([w, list]) => [
-            w,
-            activeInScope ? list : list.filter((value) => value !== id),
-          ]),
-        ),
-      );
       onSettings({
         ...settings,
         [constraint]: ids,
+        [scopedKey]: stripPlayerFromWeeklyMap(settings[scopedKey], id),
         [otherGlobalKey]: activeInScope
           ? settings[otherGlobalKey]
           : settings[otherGlobalKey].filter((value) => value !== id),
-        [otherScopedKey]: nextOtherScoped,
+        [otherScopedKey]: activeInScope
+          ? cleanWeeklyMap(settings[otherScopedKey])
+          : stripPlayerFromWeeklyMap(settings[otherScopedKey], id),
       });
       return;
     }
@@ -318,16 +327,17 @@ export function OptimiseView({
   };
 
   const removeConstraintReceipt = (receipt: PlayerConstraintReceipt) => {
+    const key = receipt.kind === "locked" ? "locked_by_gw" : "excluded_by_gw";
     if (receipt.weeks === null) {
       onSettings({
         ...settings,
         [receipt.kind]: settings[receipt.kind].filter(
           (value) => value !== receipt.id,
         ),
+        [key]: stripPlayerFromWeeklyMap(settings[key], receipt.id),
       });
       return;
     }
-    const key = receipt.kind === "locked" ? "locked_by_gw" : "excluded_by_gw";
     const next = { ...(settings[key] ?? {}) };
     for (const w of receipt.weeks) {
       if (next[w]) {
@@ -433,6 +443,8 @@ export function OptimiseView({
       ? null
       : Math.round((resultPoints! - baselinePoints) * 10) / 10 || 0;
   const lockedCaptainId = settings.captain_locks?.[String(ruleGW)];
+  const draftLabel =
+    sourceName ?? (resultFresh ? "New £100m squad" : baselinePlan?.name);
 
   return (
     <>
@@ -714,7 +726,9 @@ export function OptimiseView({
                   ([week, limit]) => (
                     <span key={`t${week}`}>
                       GW{week}:{" "}
-                      {limit === 0 ? "roll" : `max ${limit} transfers`}
+                      {limit === 0
+                        ? "roll"
+                        : `max ${limit} transfer${limit === 1 ? "" : "s"}`}
                     </span>
                   ),
                 )}
@@ -865,8 +879,8 @@ export function OptimiseView({
                   </h3>
                   <p className="compact-status">
                     {result
-                      ? sourceName
-                        ? `Draft · ${sourceName}`
+                      ? draftLabel
+                        ? `Draft · ${draftLabel}`
                         : "Draft"
                       : "Current plan"}{" "}
                     · {previewWeeks.length} GW

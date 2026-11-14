@@ -277,7 +277,7 @@ export function SensitivityView({
             </button>
             <small>
               {plan
-                ? `${plan.name} · GW${startGW}–${startGW + effectiveHorizon - 1}`
+                ? `${plan.name} · ${effectiveHorizon > 1 ? `GW${startGW}–${startGW + effectiveHorizon - 1}` : `GW${startGW}`}`
                 : "Import or create a plan first."}
             </small>
           </div>

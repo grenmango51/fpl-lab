@@ -281,7 +281,7 @@ describe("SensitivityView and sensitivity polling fixes", () => {
     stop();
   });
 
-  it("filters stress horizon against plan startGW and fixes 1 gameweek grammar", () => {
+  it("filters stress horizon against plan startGW, guards single-GW range, and fixes 1 gameweek grammar", () => {
     const { data, plan, solver, week11 } = makeSetup();
     const latePlan: Plan = {
       ...plan,
@@ -305,6 +305,21 @@ describe("SensitivityView and sensitivity polling fixes", () => {
     expect(html).toContain("2 gameweeks</option>");
     expect(html).not.toContain("3 gameweeks</option>");
     expect(html).not.toContain("1 gameweeks");
+
+    const finalGwPlan: Plan = { ...plan, weeks: [{ ...week11, gw: 38 }] };
+    const finalGwHtml = renderToStaticMarkup(
+      createElement(SensitivityView, {
+        data,
+        plan: finalGwPlan,
+        strategy: solver,
+        forecast: {},
+        busy: false,
+        onApply: vi.fn(),
+        onDetail: vi.fn(),
+      }),
+    );
+    expect(finalGwHtml).toContain("Branch A · GW38</small>");
+    expect(finalGwHtml).not.toContain("GW38–38");
   });
 
   it("renders null variant.gap as unknown, prefixes positive mean with +, guards null loaded_at, and shows ready badge", async () => {
@@ -426,7 +441,7 @@ describe("ChipPlanner and ChipStrategyView contract fixes", () => {
     );
   });
 
-  it("tracks forecast, next_gw, and player prices in chipStrategyInputSignature", () => {
+  it("tracks forecast, next_gw, loaded_at, and player pool metadata in chipStrategyInputSignature", () => {
     const { data } = makeSetup();
     const baseSig = chipStrategyInputSignature({ a: 1, b: 2 }, data);
     expect(chipStrategyInputSignature({ b: 2, a: 1 }, data)).toBe(baseSig);
@@ -434,9 +449,25 @@ describe("ChipPlanner and ChipStrategyView contract fixes", () => {
     expect(
       chipStrategyInputSignature({ a: 1, b: 2 }, { ...data, next_gw: 12 }),
     ).not.toBe(baseSig);
+    expect(
+      chipStrategyInputSignature(
+        { a: 1, b: 2 },
+        { ...data, loaded_at: "2026-10-01T12:05:00Z" },
+      ),
+    ).not.toBe(baseSig);
     const repriced = structuredClone(data);
     repriced.players[0].price += 0.1;
     expect(chipStrategyInputSignature({ a: 1, b: 2 }, repriced)).not.toBe(
+      baseSig,
+    );
+    const transferred = structuredClone(data);
+    transferred.players[0].team = 99;
+    expect(chipStrategyInputSignature({ a: 1, b: 2 }, transferred)).not.toBe(
+      baseSig,
+    );
+    const reclassified = structuredClone(data);
+    reclassified.players[0].position_id = 4;
+    expect(chipStrategyInputSignature({ a: 1, b: 2 }, reclassified)).not.toBe(
       baseSig,
     );
   });
@@ -624,6 +655,78 @@ describe("ChipPlanner and ChipStrategyView contract fixes", () => {
       /<button[^>]*disabled=""[^>]*>Save strategy branch<\/button>/,
     );
     expect(staleHtml).toContain('<option value="2" selected="">GW20–38</option>');
+
+    // 3. Verify storageWarning survives watchChipStrategy polling callbacks.error("") when localStorage.setItem throws!
+    resetHooks();
+    vi.stubGlobal("localStorage", {
+      getItem: () => null,
+      setItem: () => {
+        throw new Error("QuotaExceededError");
+      },
+      removeItem: vi.fn(),
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(new Response(JSON.stringify(recJob)))
+        .mockResolvedValueOnce(new Response(JSON.stringify(recJob))),
+    );
+    hooks.enabled = true;
+    const initialCsTree = runCycle(() =>
+      ChipStrategyView({
+        data,
+        plan,
+        gw: 11,
+        strategy: solver,
+        forecast,
+        busy: false,
+        onApply: vi.fn(async () => {}),
+      }),
+    );
+    // Find and invoke "Search chip strategy" onClick:
+    function findButtons(node: unknown): { props: Record<string, any> }[] {
+      if (Array.isArray(node)) return node.flatMap(findButtons);
+      if (!node || typeof node !== "object" || !("type" in node)) return [];
+      const el = node as { type: unknown; props: Record<string, any> };
+      return [
+        ...(el.type === "button" ? [el] : []),
+        ...findButtons(el.props?.children),
+      ];
+    }
+    const searchBtn = findButtons(initialCsTree).find((b) =>
+      JSON.stringify(b.props.children).includes("Search chip strategy"),
+    )!;
+    await searchBtn.props.onClick();
+    // Run effect cycle so watchChipStrategy polls and invokes callbacks.error(""):
+    runCycle(() =>
+      ChipStrategyView({
+        data,
+        plan,
+        gw: 11,
+        strategy: solver,
+        forecast,
+        busy: false,
+        onApply: vi.fn(async () => {}),
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    const afterPollTree = runCycle(() =>
+      ChipStrategyView({
+        data,
+        plan,
+        gw: 11,
+        strategy: solver,
+        forecast,
+        busy: false,
+        onApply: vi.fn(async () => {}),
+      }),
+    );
+    hooks.enabled = false;
+    const afterPollHtml = renderToStaticMarkup(afterPollTree);
+    expect(afterPollHtml).toContain(
+      "Search running. Storage unavailable; keep this page open to save.",
+    );
   });
 });
 
@@ -728,7 +831,7 @@ describe("OptimiseView, AnalysisView, and MarketView fixes", () => {
     expect(matchHtml).toContain("T6 · DEF");
   });
 
-  it("renders Reject when onDiscard is passed, hides No chip on chip-free week, uses compact chip tab labels, and keeps 0-xP locked captains", () => {
+  it("renders Reject when onDiscard is passed, falls back draftLabel to New £100m squad / baselinePlan.name, strips scoped duplicates when removing All GWs, and singularizes max 1 transfer", () => {
     const { data, plan, solver, week11, week12 } = makeSetup();
     data.players[0].gw["11"] = {
       points: 0,
@@ -746,6 +849,7 @@ describe("OptimiseView, AnalysisView, and MarketView fixes", () => {
       pool_count: 600,
       assumptions: ["Test assumption"],
     };
+    const onSettings = vi.fn();
     const html = renderToStaticMarkup(
       createElement(OptimiseView, {
         data,
@@ -753,21 +857,25 @@ describe("OptimiseView, AnalysisView, and MarketView fixes", () => {
         gw: 11,
         settings: {
           ...solver,
+          transfer_limits: { "11": 1 },
           captain_locks: { "11": 1 },
-          locked_by_gw: { "12": [16] },
+          locked_by_gw: { "12": [5, 16] },
         },
-        onSettings: vi.fn(),
+        onSettings,
         onSolve: vi.fn(),
         result,
         busy: false,
+        resultFresh: false,
+        baselinePlan: plan,
         onApply: vi.fn(),
         onDiscard: vi.fn(),
-        sourceName: "Branch A",
         onDetail: vi.fn(),
       }),
     );
     expect(html).toContain("Reject");
+    // Falls back to baselinePlan.name when sourceName is omitted!
     expect(html).toContain("Draft · Branch A");
+    expect(html).toContain("GW11: max 1 transfer</span>");
     expect(html).not.toContain("Squad rules checked");
     expect(html).not.toContain("No chip");
     expect(html).toContain("<small>BB</small>");
@@ -775,6 +883,65 @@ describe("OptimiseView, AnalysisView, and MarketView fixes", () => {
     expect(html).toContain("GW11 onwards");
     expect(html).toContain("Player 1 · T1");
     expect(html).toContain("GW12: include Player 16");
+
+    // Fresh squad fallback when sourceName is omitted:
+    const freshHtml = renderToStaticMarkup(
+      createElement(OptimiseView, {
+        data,
+        plan,
+        gw: 11,
+        settings: solver,
+        onSettings: vi.fn(),
+        onSolve: vi.fn(),
+        result,
+        busy: false,
+        resultFresh: true,
+        onApply: vi.fn(),
+        onDetail: vi.fn(),
+      }),
+    );
+    expect(freshHtml).toContain("Draft · New £100m squad");
+
+    // Removing global All GWs receipt also strips hidden per-GW entry for player 5:
+    hooks.enabled = true;
+    const tree = runCycle(() =>
+      OptimiseView({
+        data,
+        plan,
+        gw: 11,
+        settings: {
+          ...solver,
+          locked: [5],
+          locked_by_gw: { "12": [5, 16] },
+        },
+        onSettings,
+        onSolve: vi.fn(),
+        result: null,
+        busy: false,
+        onApply: vi.fn(),
+        onDetail: vi.fn(),
+      }),
+    );
+    hooks.enabled = false;
+    function findButtons(node: unknown): { props: Record<string, any> }[] {
+      if (Array.isArray(node)) return node.flatMap(findButtons);
+      if (!node || typeof node !== "object" || !("type" in node)) return [];
+      const el = node as { type: unknown; props: Record<string, any> };
+      return [
+        ...(el.type === "button" ? [el] : []),
+        ...findButtons(el.props?.children),
+      ];
+    }
+    const chipBtn = findButtons(tree).find((b) =>
+      JSON.stringify(b.props.children).includes("Player 5"),
+    )!;
+    chipBtn.props.onClick();
+    expect(onSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        locked: [],
+        locked_by_gw: { "12": [16] },
+      }),
+    );
   });
 
   it("wraps benchmark tables in table-container, guards missing generated_at, and marks stale sources orange", () => {

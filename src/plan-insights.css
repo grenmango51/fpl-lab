@@ -563,26 +563,26 @@
     gap: 5px;
     grid-template-columns: minmax(0, 1fr) 12px minmax(0, 1fr) auto auto;
   }
-  .pi-player-name {
+  .plan-insights .pi-player-name {
     gap: 5px;
     font-size: 11px;
   }
-  .pi-player-name img {
+  .plan-insights .pi-player-name img {
     width: 18px;
     height: 18px;
   }
-  .pi-upgrade {
+  .plan-insights .pi-upgrade {
     min-width: 54px;
   }
-  .pi-lock {
+  .plan-insights .pi-lock {
     width: 24px;
     height: 24px;
   }
-  .pi-risk-rows > div {
+  .plan-insights .pi-risk-rows > div {
     grid-template-columns: 36px minmax(24px, 1fr) 34px 78px;
     gap: 5px;
   }
-  .pi-bar-row {
+  .plan-insights .pi-bar-row {
     grid-template-columns: minmax(120px, 1.4fr) minmax(25px, 1fr) 36px;
     gap: 5px;
     font-size: 10px;

@@ -84,14 +84,26 @@ function stableValue(value: unknown): unknown {
 
 export function chipStrategyInputSignature(
   forecast: Record<string, unknown>,
-  data: Pick<Bootstrap, "next_gw" | "players">,
+  data: Pick<Bootstrap, "next_gw" | "loaded_at" | "players"> &
+    Partial<Pick<Bootstrap, "official_fixture_catalog">>,
 ) {
   return JSON.stringify({
     forecast: stableValue(forecast),
     next_gw: data.next_gw,
-    prices: [...data.players]
+    loaded_at: data.loaded_at,
+    fixtures: data.official_fixture_catalog
+      ? [...data.official_fixture_catalog]
+          .sort((a, b) => a.id - b.id)
+          .map((f) => [f.id, f.event, f.kickoff_time])
+      : null,
+    players: [...data.players]
       .sort((a, b) => a.id - b.id)
-      .map((player) => [player.id, player.price]),
+      .map((player) => [
+        player.id,
+        player.price,
+        player.team,
+        player.position_id,
+      ]),
   });
 }
 
@@ -199,6 +211,7 @@ export function ChipStrategyView({
   const [sending, setSending] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [storageWarning, setStorageWarning] = useState("");
   const [chip, setChip] = useState<SearchChip>("wildcard");
   const gwHalf: 1 | 2 = gw <= 19 ? 1 : 2;
   const [half, setHalf] = useState<1 | 2>(gwHalf);
@@ -258,6 +271,7 @@ export function ChipStrategyView({
       error: setError,
       missing: (message) => {
         setError(message);
+        setStorageWarning("");
         setJobId(null);
         setJob(null);
         setSource(null);
@@ -286,6 +300,7 @@ export function ChipStrategyView({
     const signature = chipStrategyInputSignature(inputs, data);
     setSending(true);
     setError("");
+    setStorageWarning("");
     try {
       const result = await api<ChipStrategyJob>("/chip-strategy", {
         ...inputs,
@@ -327,7 +342,7 @@ export function ChipStrategyView({
           }),
         );
       } catch {
-        setError(
+        setStorageWarning(
           "Search running. Storage unavailable; keep this page open to save.",
         );
       }
@@ -564,6 +579,11 @@ export function ChipStrategyView({
         )}
         {!selectedWeekExists && (
           <p className="help-text">Select a gameweek in your plan first.</p>
+        )}
+        {storageWarning && (
+          <p role="status" className="orange help-text">
+            {storageWarning}
+          </p>
         )}
         {error && (
           <p role="alert" className="chip-strategy-error">

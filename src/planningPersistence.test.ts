@@ -1,17 +1,24 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Bootstrap, Plan, Week } from "./types";
 import {
+  activePlanGW,
   createPlanExport,
   defaultForecastConfiguration,
   defaultSolverSettings,
   loadPlanningState,
+  needsPlanReconciliation,
+  PlanResourceError,
+  planValidationRequest,
   preparePlanImport,
   rebasePlan,
+  reconcilePlanResources,
   restorePlanningState,
   sanitizeForecastConfiguration,
   sanitizeSolverSettings,
   solverSettingsForHorizon,
 } from "./planningPersistence";
+import { planReceipt } from "../tools/tests/planReceipt.mjs";
+import financialFixture from "../backend/tests/fixtures/transfer_affordability.json";
 
 const squad = Array.from({ length: 15 }, (_, index) => index + 1);
 const bootstrap = {
@@ -336,6 +343,135 @@ describe("permanent holdings when saved decisions expire", () => {
     saved.weeks[0].purchase_prices = {};
     expect(() => rebasePlan(saved, bootstrap)).toThrow("purchase-price");
   });
+  it("rebases GW7-9 plans before validating GW8-9 and retains GW7 in history", async () => {
+    const gws = [7, 8, 9];
+    const oldForecast = {
+      next_gw: 7,
+      gameweeks: gws,
+      teams: [],
+      players: financialFixture.players.map(([id, position_id, team, price]) => ({
+        id,
+        name: `P${id}`,
+        position_id,
+        team,
+        price,
+        pplay: 1,
+        gw: Object.fromEntries(
+          gws.map((gw) => [gw, { points: 2 + (gw - 7), pplay: 1, p60: 1, xmins: 90 }]),
+        ),
+      })),
+    } as unknown as Bootstrap;
+    const base = Array.from({ length: 15 }, (_, index) => index + 1);
+    const makeWeek = (gw: number, out?: number, incoming?: number, chip: Week["chip"] = "none"): Week => {
+      const replace = (ids: number[]) =>
+        out && incoming ? ids.map((id) => (id === out ? incoming : id)) : [...ids];
+      return {
+        gw,
+        squad: replace(base),
+        starters: replace([1, 3, 4, 5, 8, 9, 10, 11, 13, 14, 15]),
+        bench: replace([2, 6, 7, 12]),
+        captain: out === 13 && incoming ? incoming : 13,
+        vice: 8,
+        chip,
+      } as Week;
+    };
+    const permanentInput: Plan = {
+      id: "perm",
+      name: "Permanent GW7 move",
+      created_at: "2026-11-01T12:00:00Z",
+      base_squad: base,
+      base_bank: 1,
+      free_transfers: 2,
+      purchase_prices: { "13": 5.5, "14": 6 },
+      weeks: gws.map((gw) => makeWeek(gw, 14, 16)),
+    };
+    const fhInput: Plan = {
+      ...permanentInput,
+      id: "fh",
+      name: "Expired GW7 Free Hit",
+      weeks: [
+        makeWeek(7, 14, 16, "freehit"),
+        makeWeek(8, 14, 16),
+        makeWeek(9, 14, 16),
+      ],
+    };
+    const permanentSaved: Plan = {
+      ...permanentInput,
+      weeks: planReceipt(
+        planValidationRequest(permanentInput, defaultForecastConfiguration),
+        oldForecast,
+      ).weeks,
+    };
+    const fhSaved: Plan = {
+      ...fhInput,
+      weeks: planReceipt(
+        planValidationRequest(fhInput, defaultForecastConfiguration),
+        oldForecast,
+      ).weeks,
+    };
+
+    const freshForecast = structuredClone(oldForecast);
+    freshForecast.next_gw = 8;
+    freshForecast.gameweeks = [8, 9];
+    freshForecast.players.find((player) => player.id === 16)!.price = 6.5;
+
+    const validate = vi.fn(async (body: ReturnType<typeof planValidationRequest>) =>
+      planReceipt(body, freshForecast),
+    );
+    const reconciled = await reconcilePlanResources(
+      [permanentSaved, fhSaved],
+      freshForecast,
+      defaultForecastConfiguration,
+      validate,
+    );
+
+    expect(validate).toHaveBeenCalledTimes(2);
+    expect(validate.mock.calls.map(([body]) => body.weeks.map((row) => row.gw))).toEqual([
+      [8, 9],
+      [8, 9],
+    ]);
+    expect(reconciled[0].weeks.map((row) => row.gw)).toEqual([8, 9]);
+    expect(reconciled[0].history_weeks).toEqual([permanentSaved.weeks[0]]);
+    // Bought P16 in GW7 at £6.0m, so GW8-9 retain £1.0m bank and £6.0m purchase receipt.
+    expect(reconciled[0].weeks.map((row) => row.bank)).toEqual([1, 1]);
+    expect(reconciled[0].purchase_prices["16"]).toBe(6);
+
+    expect(reconciled[1].weeks.map((row) => row.gw)).toEqual([8, 9]);
+    expect(reconciled[1].history_weeks).toEqual([fhSaved.weeks[0]]);
+    expect(reconciled[1].used_chips).toEqual([{ chip: "freehit", gw: 7 }]);
+    // GW7 was a Free Hit, so buying P16 permanently in GW8 pays the refreshed £6.5m price -> £0.5m bank.
+    expect(reconciled[1].weeks.map((row) => row.bank)).toEqual([0.5, 0.5]);
+
+    const onlyGW7: Plan = {
+      ...permanentSaved,
+      id: "expired-only",
+      name: "Expired branch",
+      weeks: [permanentSaved.weeks[0]],
+    };
+    const neverCalled = vi.fn();
+    await expect(
+      reconcilePlanResources(
+        [permanentSaved, onlyGW7],
+        freshForecast,
+        defaultForecastConfiguration,
+        neverCalled,
+      ),
+    ).rejects.toThrow(PlanResourceError);
+    expect(neverCalled).not.toHaveBeenCalled();
+
+    const samePriceForecast = structuredClone(oldForecast);
+    samePriceForecast.next_gw = 8;
+    samePriceForecast.gameweeks = [8, 9];
+    expect(needsPlanReconciliation(oldForecast, samePriceForecast, [permanentSaved])).toBe(
+      true,
+    );
+    const clubTransferForecast = structuredClone(oldForecast);
+    clubTransferForecast.players[0].team = 99;
+    expect(needsPlanReconciliation(oldForecast, clubTransferForecast, [permanentSaved])).toBe(
+      true,
+    );
+    expect(activePlanGW(reconciled, "perm", freshForecast)).toBe(8);
+  }, 60000);
 });
 
 describe("transactional plan exports", () => {

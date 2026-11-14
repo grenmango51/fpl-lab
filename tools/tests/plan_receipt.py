@@ -3,12 +3,29 @@
 No lifespan, socket listener, data acquisition or collector is started.
 """
 import json
+import os
 import sys
 
-from fastapi.testclient import TestClient
-from backend import app as api
+os.environ.pop("OPEN_FPL_ORIGIN_TOKEN", None)
 
-request = json.load(sys.stdin)
-api.forecast_for = lambda _: request["forecast"]
-response = TestClient(api.app).post("/api/plan/validate", json=request["body"])
-json.dump({"status": response.status_code, "body": response.json()}, sys.stdout)
+from fastapi.testclient import TestClient  # noqa: E402
+from backend import app as api  # noqa: E402
+
+client = TestClient(api.app)
+for line in sys.stdin:
+    if not line.strip():
+        continue
+    request = json.loads(line)
+    api.forecast_for = lambda _: request["forecast"]
+    response = client.post("/api/plan/validate", json=request["body"])
+    sys.stdout.write(
+        json.dumps(
+            {
+                "id": request.get("id"),
+                "status": response.status_code,
+                "body": response.json(),
+            }
+        )
+        + "\n"
+    )
+    sys.stdout.flush()

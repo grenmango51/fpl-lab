@@ -1,17 +1,20 @@
 /// <reference types="vite/client" />
 import ts from "typescript";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import appSource from "./App.tsx?raw";
 import {
+  activePlanGW,
   defaultForecastConfiguration,
   defaultSolverSettings,
   solverSettingsForHorizon,
   planValidationRequest,
   loadPlanningState,
+  needsPlanReconciliation,
   PlanningRestoreError,
   PlanResourceError,
   reconcilePlanResources,
   sameResourcePrices,
+  sanitizeSolverSettings,
   rebasePlan,
   createPlanExport,
   preparePlanImport,
@@ -194,9 +197,9 @@ const actions = ts.transpileModule(
     api, teamPoints, planValidationRequest, livePlanningRef, operationRef, operationVersionRef, renderedOperationVersion, data,
     settings, solveInFlightRef, solveRequestRef, forecastBaseline, uid, chipNames,
     solverSettingsForHorizon, quickSolveHorizon, planWithOptimisedSuffix, initRef, planFromSquad, setTeamBank, setTeamFT, setModal,
-    loadPlanningState, PlanningRestoreError, PlanResourceError, reconcilePlanResources, sameResourcePrices, preparePlanImport, setLoadRecovery, archivePlanningInputs, dataRequestRef, loadedForecastArgsRef,
+    loadPlanningState, activePlanGW, needsPlanReconciliation, PlanningRestoreError, PlanResourceError, reconcilePlanResources, sameResourcePrices, sanitizeSolverSettings, preparePlanImport, setLoadRecovery, archivePlanningInputs, dataRequestRef, loadedForecastArgsRef,
     applyForecastConfiguration, setSettings, setData, setWatch,
-    setActiveId, setTab, setDetailId, setDeletedPlans, setPreviewingDraft,
+    setActiveId, setTab, setDetailId, setDetailGW, setDraftGW, setDeletedPlans, setPreviewingDraft,
     pitchExpanded, wideLayout, treeHidden, solveResult, solveContext,
     setSolveResult, setSolveContext, teamId, restoreDeletedRef, setEvalData,
     setPlans, setPlanHistory, setBusyStatus, setToast, setGw, setSelected, setProspective,
@@ -449,12 +452,14 @@ function harness(plans = [branch("A"), branch("B", [12, 13])]) {
       setActiveId: setter("activeId"),
       setTab: setter("tab"),
       setDetailId: setter("detailId"),
+      setDetailGW: setter("detailGW"),
+      setDraftGW: vi.fn(),
       setDeletedPlans: setter("deletedPlans"),
       setPreviewingDraft: setter("previewingDraft"),
       setEvalData: vi.fn(),
       setSolveResult: vi.fn(),
       setSolveContext: vi.fn(),
-      preparePlanImport, planValidationRequest, loadPlanningState, PlanningRestoreError, PlanResourceError, reconcilePlanResources, sameResourcePrices,
+      preparePlanImport, planValidationRequest, loadPlanningState, activePlanGW, needsPlanReconciliation, PlanningRestoreError, PlanResourceError, reconcilePlanResources, sameResourcePrices, sanitizeSolverSettings,
       setLoadRecovery: vi.fn(),
       setPlans: setter("plans"),
       setProspective: setter("prospective"),
@@ -2187,12 +2192,19 @@ describe("initial loader recovery", () => {
 // These tests start with real accepted receipts, then change the price pool.
 // The bridge executes FastAPI TestClient without a lifespan or socket listener.
 describe("restored resources through production callers and real server receipts", () => {
+  beforeAll(() => {
+    setup();
+  }, 120000);
+
   function setup(
     options: {
       bank?: number;
       purchase?: number;
       complex?: boolean;
       expiredFH?: boolean;
+      expiredFHBuyLater?: boolean;
+      advanceGW?: boolean;
+      samePrices?: boolean;
     } = {},
   ) {
     const gws = options.complex ? [7, 8, 9, 10, 11] : [7, 8, 9];
@@ -2245,6 +2257,9 @@ describe("restored resources through production callers and real server receipts
     } else if (options.expiredFH) {
       change(decisions[0], 14, 16);
       decisions[0].chip = "freehit";
+    } else if (options.expiredFHBuyLater) {
+      for (const week of decisions) change(week, 14, 16);
+      decisions[0].chip = "freehit";
     } else for (const week of decisions) change(week, 14, 16);
     const input: Plan = {
       id: "saved",
@@ -2265,8 +2280,10 @@ describe("restored resources through production callers and real server receipts
     };
     const fresh = structuredClone(old);
     fresh.loaded_at = "2026-11-06T20:00:00Z";
-    fresh.players.find((p) => p.id === 16)!.price = 6.5;
-    if (options.expiredFH) {
+    if (!options.samePrices) {
+      fresh.players.find((p) => p.id === 16)!.price = 6.5;
+    }
+    if (options.expiredFH || options.expiredFHBuyLater || options.advanceGW) {
       fresh.next_gw = 8;
       fresh.gameweeks = fresh.gameweeks.filter((gw) => gw >= 8);
     }
@@ -2688,4 +2705,255 @@ describe("restored resources through production callers and real server receipts
     expect(h.state.plans[0].weeks[0].bank).toBe(0.5);
     cleanup();
   }, 30000);
+
+  it.each(["projections", "snapshot", "import"] as const)(
+    "rebases GW7-9 plans to GW8-9, retains GW7 in history, and advances expired selected weeks through %s",
+    async (caller) => {
+      const { old, fresh, saved } = setup({ expiredFHBuyLater: true });
+      const importedSource = setup({ advanceGW: true }).saved;
+      importedSource.id = "file-source";
+      importedSource.name = "Imported GW7-9";
+
+      const h = harness([saved]);
+      h.render({ data: old });
+      h.state.gw = 7;
+      h.state.detailGW = 7;
+      h.state.detailId = 16;
+      const archive = vi.fn();
+      const { api, render } = connect(h, fresh);
+      let cleanup: (() => void) | undefined;
+
+      if (caller === "projections") {
+        cleanup = render({
+          archivePlanningInputs: archive,
+          forecastArgs: { ...defaultForecastConfiguration, use_market: false },
+        }).loadForecasts();
+        await vi.waitFor(() => expect(h.data).toBe(fresh));
+      } else if (caller === "snapshot") {
+        await render({ archivePlanningInputs: archive }).snapshot();
+      } else {
+        await render({ archivePlanningInputs: archive }).importPlans({
+          size: 1,
+          text: async () =>
+            JSON.stringify(
+              createPlanExport(
+                [importedSource],
+                defaultForecastConfiguration,
+                defaultSolverSettings,
+              ),
+            ),
+        });
+      }
+
+      expect(h.state.toast?.error, h.state.toast?.text).not.toBe(true);
+      expect(h.state.resourceError).toBe("");
+      const validateCalls = api.mock.calls.filter(
+        ([path]) => path === "/plan/validate",
+      );
+      expect(validateCalls).toHaveLength(caller === "import" ? 2 : 1);
+      for (const [, body] of validateCalls) {
+        expect(body.weeks.map((w: Week) => w.gw)).toEqual([8, 9]);
+      }
+
+      const config =
+        caller === "projections"
+          ? { ...defaultForecastConfiguration, use_market: false }
+          : defaultForecastConfiguration;
+      const rebasedExisting = rebasePlan(saved, fresh).plan;
+      const expectedExisting = planReceipt(
+        planValidationRequest(rebasedExisting, config),
+        fresh,
+      ).weeks;
+      expect(h.state.plans[0]).toEqual({
+        ...rebasedExisting,
+        weeks: expectedExisting,
+      });
+      expect(h.state.plans[0].history_weeks).toEqual([saved.weeks[0]]);
+      expect(h.state.plans[0].used_chips).toEqual([
+        { chip: "freehit", gw: 7 },
+      ]);
+      expect(h.state.plans[0].weeks.map((w) => w.bank)).toEqual([0.5, 0.5]);
+
+      if (caller === "import") {
+        const rebasedImported = rebasePlan(importedSource, fresh).plan;
+        const expectedImported = planReceipt(
+          planValidationRequest(rebasedImported, config),
+          fresh,
+        ).weeks;
+        expect(h.state.plans[1]).toMatchObject({
+          ...rebasedImported,
+          id: h.state.plans[1].id,
+          name: "Imported GW7-9",
+          weeks: expectedImported,
+        });
+        expect(h.state.plans[1].history_weeks).toEqual([
+          importedSource.weeks[0],
+        ]);
+        expect(h.state.plans[1].weeks.map((w) => w.bank)).toEqual([1, 1]);
+      }
+
+      expect(h.state.gw).toBe(8);
+      expect(h.state.detailGW).toBe(8);
+      expect(archive).toHaveBeenCalled();
+      cleanup?.();
+    },
+    30000,
+  );
+
+  it.each(["projections", "snapshot", "import"] as const)(
+    "rebases GW7-9 plans when forecast advances to GW8-9 without price changes and keeps valid GW9 selection through %s",
+    async (caller) => {
+      const { old, fresh, saved } = setup({
+        advanceGW: true,
+        samePrices: true,
+      });
+      expect(sameResourcePrices(old, fresh)).toBe(true);
+      const h = harness([saved]);
+      h.render({ data: old });
+      h.state.gw = 9;
+      h.state.detailGW = 9;
+      const { api, render } = connect(h, fresh);
+      let cleanup: (() => void) | undefined;
+
+      if (caller === "projections") {
+        cleanup = render({
+          forecastArgs: { ...defaultForecastConfiguration, use_market: false },
+        }).loadForecasts();
+        await vi.waitFor(() => expect(h.data).toBe(fresh));
+      } else if (caller === "snapshot") {
+        await render().snapshot();
+      } else {
+        await render().importPlans({
+          size: 1,
+          text: async () =>
+            JSON.stringify(
+              createPlanExport(
+                [saved],
+                defaultForecastConfiguration,
+                defaultSolverSettings,
+              ),
+            ),
+        });
+      }
+
+      expect(h.state.toast?.error, h.state.toast?.text).not.toBe(true);
+      const validateCalls = api.mock.calls.filter(
+        ([path]) => path === "/plan/validate",
+      );
+      expect(validateCalls).toHaveLength(caller === "import" ? 2 : 1);
+      for (const [, body] of validateCalls) {
+        expect(body.weeks.map((w: Week) => w.gw)).toEqual([8, 9]);
+      }
+      expect(h.state.plans[0].weeks.map((w) => w.gw)).toEqual([8, 9]);
+      expect(h.state.plans[0].history_weeks).toEqual([saved.weeks[0]]);
+      if (caller !== "import") {
+        expect(h.state.gw).toBe(9);
+        expect(h.state.detailGW).toBe(9);
+      } else {
+        expect(h.state.gw).toBe(8);
+        expect(h.state.detailGW).toBe(9);
+      }
+      cleanup?.();
+    },
+    30000,
+  );
+
+  it("clears a prior resourceError when forecast-settings reconciliation succeeds", async () => {
+    const { old, fresh, saved } = setup();
+    const h = harness([saved]);
+    h.render({ data: old });
+    const { api, render } = connect(h, fresh);
+    const actual = api.getMockImplementation()!;
+    let attempts = 0;
+    api.mockImplementation(async (path, body) => {
+      if (path === "/plan/validate" && ++attempts === 1)
+        throw new Error("HTTP 503");
+      return actual(path, body);
+    });
+    let cleanup = render({
+      forecastArgs: { ...defaultForecastConfiguration, use_market: false },
+    }).loadForecasts();
+    await vi.waitFor(() =>
+      expect(h.state.resourceError).toContain("HTTP 503"),
+    );
+    cleanup();
+
+    cleanup = render({
+      forecastArgs: { ...defaultForecastConfiguration, use_provider: false },
+    }).loadForecasts();
+    await vi.waitFor(() => expect(h.data).toBe(fresh));
+    expect(h.state.resourceError).toBe("");
+    expect(
+      render({
+        forecastArgs: { ...defaultForecastConfiguration, use_provider: false },
+      }).forecastStatus(),
+    ).toEqual({ stale: false, pending: false, error: "" });
+    expect(h.state.plans[0].weeks[0].bank).toBe(0.5);
+    cleanup();
+  }, 30000);
+
+  it.each(["refresh", "background", "shared", "projections", "snapshot", "import"] as const)(
+    "prunes expired GW7 undo history and advances open player detailGW on %s rollover",
+    async (caller) => {
+      const { old, fresh, saved } = setup({ expiredFHBuyLater: true });
+      const rebasedValidHistory = rebasePlan(saved, fresh).plan;
+      const h = harness([saved]);
+      h.render({ data: old });
+      h.state.gw = 7;
+      h.state.detailGW = 7;
+      h.state.selected = 14;
+      h.state.planHistory = {
+        [saved.id]: {
+          past: [saved, rebasedValidHistory],
+          future: [saved],
+        },
+      };
+      const { api, render, doc } = connect(h, fresh);
+      let cleanup: (() => void) | undefined;
+
+      if (caller === "background") await render().backgroundCheck();
+      else if (caller === "shared")
+        expect(await render().adoptShared(doc, () => true)).toBe(true);
+      else if (caller === "projections") {
+        cleanup = render({
+          forecastArgs: { ...defaultForecastConfiguration, use_market: false },
+        }).loadForecasts();
+        await vi.waitFor(() => expect(h.data).toBe(fresh));
+      } else if (caller === "import") {
+        await render().importPlans({
+          size: 1,
+          text: async () =>
+            JSON.stringify(
+              createPlanExport(
+                [saved],
+                defaultForecastConfiguration,
+                defaultSolverSettings,
+              ),
+            ),
+        });
+      } else await render()[caller]();
+
+      expect(h.state.gw).toBe(8);
+      expect(h.state.detailGW).toBe(8);
+      // Expired GW7 snapshots are never retained in Undo/Redo; shared pull resets history completely.
+      if (caller === "shared") {
+        expect(h.state.planHistory).toEqual({});
+      } else {
+        expect(h.state.planHistory[saved.id]).toEqual({
+          past: [rebasedValidHistory],
+          future: [],
+        });
+        api.mockClear();
+        h.state.activeId = saved.id;
+        await render().travelPlan("past");
+        const undoValidate = api.mock.calls.filter(
+          ([path]) => path === "/plan/validate",
+        );
+        expect(undoValidate).toHaveLength(1);
+        expect(undoValidate[0][1].weeks.map((w: Week) => w.gw)).toEqual([8, 9]);
+      }
+      cleanup?.();
+    },
+    30000,
+  );
 });

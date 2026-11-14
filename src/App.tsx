@@ -116,13 +116,16 @@ import { useViewState } from "./useViewState";
 import { canSwap, replacePlayer } from "./plannerInteractions";
 import { planWithOptimisedSuffix, quickSolveHorizon } from "./quickOptimise";
 import {
+  activePlanGW,
   createPlanExport,
   defaultSolverSettings,
   loadPlanningState,
+  needsPlanReconciliation,
   PlanningRestoreError,
   PlanResourceError,
   reconcilePlanResources,
   sameResourcePrices,
+  sanitizeSolverSettings,
   planValidationRequest,
   preparePlanImport,
   solverSettingsForHorizon,
@@ -446,6 +449,26 @@ export default function App() {
     // not the decisions captured when the forecast request started.
     setData(forecast);
     setPlans((current) => rescorePlans(nextPlans ? nextPlans(current) : current, forecast));
+    setPlanHistory((current) => {
+      let changed = false;
+      const filtered: Record<string, { past: Plan[]; future: Plan[] }> = {};
+      for (const [id, entry] of Object.entries(current)) {
+        const past = entry.past.filter((plan) =>
+          plan.weeks.every((w) => w.gw >= forecast.next_gw),
+        );
+        const future = entry.future.filter((plan) =>
+          plan.weeks.every((w) => w.gw >= forecast.next_gw),
+        );
+        if (
+          past.length !== entry.past.length ||
+          future.length !== entry.future.length
+        )
+          changed = true;
+        if (past.length || future.length) filtered[id] = { past, future };
+        else if (entry.past.length || entry.future.length) changed = true;
+      }
+      return changed ? filtered : current;
+    });
   }
   function forecastStatus() {
     const configuration = JSON.stringify(forecastArgs);
@@ -467,6 +490,7 @@ export default function App() {
   function retryLoading() {
     ++dataRequestRef.current;
     setLoadError("");
+    setLoadRecovery(null);
     setLoading(true);
     setLoadSlow(false);
     setLoadStage("Connecting saved plans…");
@@ -490,18 +514,24 @@ export default function App() {
     setCustomName(configuration.custom_name);
   }
   function archivePlanningInputs(savedPlans: unknown, configuration: unknown) {
-    const archives = stored<unknown[]>("open-fpl-archived-plans-v1", []);
-    localStorage.setItem(
-      "open-fpl-archived-plans-v1",
-      JSON.stringify([
-        ...(Array.isArray(archives) ? archives : []),
-        {
-          archived_at: new Date().toISOString(),
-          plans: savedPlans,
-          configuration,
-        },
-      ]),
-    );
+    try {
+      const archives = stored<unknown[]>("open-fpl-archived-plans-v1", []);
+      localStorage.setItem(
+        "open-fpl-archived-plans-v1",
+        JSON.stringify(
+          [
+            ...(Array.isArray(archives) ? archives : []),
+            {
+              archived_at: new Date().toISOString(),
+              plans: savedPlans,
+              configuration,
+            },
+          ].slice(-20),
+        ),
+      );
+    } catch {
+      // Archival is best-effort; storage quota limits must not block forecast adoption.
+    }
   }
 
   function sharedDocument(): SharedDocument {
@@ -540,9 +570,25 @@ export default function App() {
     setResourceError("");
     adoptForecast(restored.forecast, () => restored.plans);
     const context = livePlanningRef.current;
-    const selected = restored.plans.find(plan => plan.id === context.activeId);
-    setActiveId(selected?.id ?? restored.activeId);
-    if (!restored.forecast.gameweeks.includes(context.gw)) setGw(restored.gw);
+    const selectedPlan = restored.plans.find(plan => plan.id === context.activeId);
+    const selectedId = selectedPlan?.id ?? restored.activeId;
+    const adoptedActive = selectedPlan ?? restored.plans.find(plan => plan.id === selectedId) ?? restored.plans[0];
+    setActiveId(selectedId);
+    const nextGW = activePlanGW(restored.plans, selectedId, restored.forecast);
+    if (
+      !restored.forecast.gameweeks.includes(context.gw) ||
+      (["lineup", "optimise"].includes(locationTab()) &&
+        adoptedActive &&
+        !adoptedActive.weeks.some((week) => week.gw === context.gw))
+    ) {
+      setGw(nextGW);
+      setSelected(null);
+    }
+    setDetailGW((currentGW) =>
+      currentGW && !restored.forecast.gameweeks.includes(currentGW)
+        ? nextGW
+        : currentGW,
+    );
     setWatch(document.watch);
     setSolveResult(null);
     setSolveContext(null);
@@ -578,20 +624,20 @@ export default function App() {
           : api<Bootstrap>("/projections", configuration);
       },
       body => api("/plan/validate", body),
-    ).then(restored => ({ ...restored, watch: document.watch })); })
+    ).then(restored => ({ ...restored, watch: document.watch, sourcePlans: document.plans, sourceConfiguration: document.configuration })); })
       .then((restored) => {
         if (!current()) return;
         if (
           restored.notices.length ||
-          (Array.isArray(plans) &&
-            plans.some(
+          (Array.isArray(restored.sourcePlans) &&
+            restored.sourcePlans.some(
               (plan) =>
                 plan &&
                 Array.isArray(plan.weeks) &&
                 plan.weeks.some((week) => week.gw < restored.forecast.next_gw),
             ))
         ) {
-          archivePlanningInputs(plans, forecastArgs);
+          archivePlanningInputs(restored.sourcePlans, restored.sourceConfiguration);
         }
         loadedForecastArgsRef.current = JSON.stringify(restored.configuration);
         applyForecastConfiguration(restored.configuration);
@@ -768,7 +814,12 @@ export default function App() {
         );
         if (request !== dataRequestRef.current || !unchanged())
           return;
-        if (restored.notices.length)
+        if (
+          restored.notices.length ||
+          current.plans.some((plan) =>
+            plan.weeks.some((week) => week.gw < restored.forecast.next_gw),
+          )
+        )
           archivePlanningInputs(current.plans, current.forecastArgs);
         ++operationVersionRef.current;
         loadedForecastArgsRef.current = JSON.stringify(restored.configuration);
@@ -777,8 +828,15 @@ export default function App() {
         setResourceError("");
         adoptForecast(restored.forecast, () => restored.plans);
         setActiveId(restored.activeId);
-        if (!restored.forecast.gameweeks.includes(current.gw))
+        if (!restored.forecast.gameweeks.includes(current.gw)) {
           setGw(restored.gw);
+          setSelected(null);
+        }
+        setDetailGW((currentGW) =>
+          currentGW && !restored.forecast.gameweeks.includes(currentGW)
+            ? restored.gw
+            : currentGW,
+        );
         setSolveResult(null);
         setSolveContext(null);
         if (restored.notices.length) notify(restored.notices.join(" "));
@@ -871,13 +929,42 @@ export default function App() {
       .then(async (d) => {
         if (!current()) return;
         const previous = livePlanningRef.current;
+        const nextForecast = previous.data?.official_fixture_catalog
+          ? {
+              ...d,
+              official_fixture_catalog:
+                previous.data.next_gw === d.next_gw
+                  ? previous.data.official_fixture_catalog
+                  : previous.data.official_fixture_catalog.filter(
+                      (fixture) =>
+                        fixture.event === null ||
+                        fixture.event === undefined ||
+                        fixture.event >= d.next_gw,
+                    ),
+            }
+          : d;
         let reconciled: Plan[] | undefined;
-        if (previous.data && !sameResourcePrices(previous.data, d)) {
+        const notices: string[] = [];
+        if (
+          previous.data &&
+          previous.plans.length > 0 &&
+          (needsPlanReconciliation(
+            previous.data,
+            nextForecast,
+            previous.plans,
+          ) ||
+            Boolean(resourceErrorRef.current))
+        ) {
           if (operationRef.current) throw new Error("Plan update in progress. Retry forecasts after it finishes.");
           const version = operationVersionRef.current;
           reconcilingData = previous.data;
-          reconciled = await reconcilePlanResources(previous.plans, forecastArgs,
-            body => api("/plan/validate", body));
+          reconciled = await reconcilePlanResources(
+            previous.plans,
+            nextForecast,
+            forecastArgs,
+            (body) => api("/plan/validate", body),
+            notices,
+          );
           if (!current()) return;
           if (operationRef.current || version !== operationVersionRef.current ||
               livePlanningRef.current.plans !== previous.plans ||
@@ -886,12 +973,65 @@ export default function App() {
           ++operationVersionRef.current;
         }
         if (current()) {
+          if (
+            reconciled &&
+            (notices.length ||
+              previous.plans.some((plan) =>
+                plan.weeks.some((week) => week.gw < nextForecast.next_gw),
+              ))
+          ) {
+            archivePlanningInputs(previous.plans, forecastArgs);
+          }
           loadedForecastArgsRef.current = serialized;
-          adoptForecast({
-            ...d,
-            official_fixture_catalog: livePlanningRef.current.data?.official_fixture_catalog,
-          }, reconciled ? () => reconciled! : undefined);
+          if (reconciled || !previous.plans.length) {
+            setResourceError("");
+          }
+          if (
+            reconciled ||
+            (previous.data && previous.data.next_gw !== nextForecast.next_gw)
+          ) {
+            setSettings((currentSettings) =>
+              sanitizeSolverSettings(currentSettings, nextForecast),
+            );
+            setSolveResult(null);
+            setSolveContext(null);
+          }
+          adoptForecast(
+            nextForecast,
+            reconciled
+              ? (latest) =>
+                  reconciled!.map((plan) => ({
+                    ...plan,
+                    name:
+                      latest.find((entry) => entry.id === plan.id)?.name ??
+                      plan.name,
+                  }))
+              : undefined,
+          );
+          const context = livePlanningRef.current;
+          const adoptedPlans = reconciled ?? context.plans;
+          const nextGW = activePlanGW(
+            adoptedPlans,
+            context.activeId,
+            nextForecast,
+          );
+          if (
+            context.gw < nextForecast.next_gw ||
+            (reconciled && !nextForecast.gameweeks.includes(context.gw))
+          ) {
+            setGw(nextGW);
+            setSelected(null);
+          }
+          setDetailGW((currentGW) =>
+            currentGW > 0 &&
+            (currentGW < nextForecast.next_gw ||
+              (Boolean(reconciled) &&
+                !nextForecast.gameweeks.includes(currentGW)))
+              ? nextGW
+              : currentGW,
+          );
           setForecastUpdate(null);
+          if (notices.length) notify([...new Set(notices)].join(" "));
         }
       })
       .catch((e) => {
@@ -1945,9 +2085,19 @@ export default function App() {
         ...plan, name: current.find(latest => latest.id === plan.id)?.name ?? plan.name,
       })));
       const context = livePlanningRef.current;
-      const selected = restored.plans.find(plan => plan.id === context.activeId);
-      setActiveId(selected?.id ?? restored.activeId);
-      if (!restored.forecast.gameweeks.includes(context.gw)) setGw(restored.gw);
+      const selectedPlan = restored.plans.find(plan => plan.id === context.activeId);
+      const selectedId = selectedPlan?.id ?? restored.activeId;
+      setActiveId(selectedId);
+      const nextGW = activePlanGW(restored.plans, selectedId, restored.forecast);
+      if (!restored.forecast.gameweeks.includes(context.gw)) {
+        setGw(nextGW);
+        setSelected(null);
+      }
+      setDetailGW((currentGW) =>
+        currentGW && !restored.forecast.gameweeks.includes(currentGW)
+          ? nextGW
+          : currentGW,
+      );
       setSolveResult(null);
       setSolveContext(null);
       setEvalData(await api<Evaluation>("/evaluation"));
@@ -1984,15 +2134,84 @@ export default function App() {
         ]);
         assertPlanInputs(operation);
         const current = livePlanningRef.current;
-        const reconciled = current.data && !sameResourcePrices(current.data, forecasts)
-          ? await reconcilePlanResources(current.plans, forecastArgs,
-              body => api("/plan/validate", body)) : undefined;
+        const nextForecast = current.data?.official_fixture_catalog
+          ? {
+              ...forecasts,
+              official_fixture_catalog:
+                current.data.next_gw === forecasts.next_gw
+                  ? current.data.official_fixture_catalog
+                  : current.data.official_fixture_catalog.filter(
+                      (fixture) =>
+                        fixture.event === null ||
+                        fixture.event === undefined ||
+                        fixture.event >= forecasts.next_gw,
+                    ),
+            }
+          : forecasts;
+        const notices: string[] = [];
+        const reconciled =
+          current.data &&
+          current.plans.length > 0 &&
+          needsPlanReconciliation(current.data, nextForecast, current.plans)
+            ? await reconcilePlanResources(
+                current.plans,
+                nextForecast,
+                forecastArgs,
+                (body) => api("/plan/validate", body),
+                notices,
+              )
+            : undefined;
         assertPlanInputs(operation);
+        if (
+          reconciled &&
+          (notices.length ||
+            current.plans.some((plan) =>
+              plan.weeks.some((week) => week.gw < nextForecast.next_gw),
+            ))
+        ) {
+          archivePlanningInputs(current.plans, forecastArgs);
+        }
         ++dataRequestRef.current;
+        if (
+          reconciled ||
+          (current.data && current.data.next_gw !== nextForecast.next_gw)
+        ) {
+          setSettings((currentSettings) =>
+            sanitizeSolverSettings(currentSettings, nextForecast),
+          );
+          setSolveResult(null);
+          setSolveContext(null);
+        }
         setProspective(receipt);
-        adoptForecast(forecasts, reconciled ? current => reconciled.map(plan => ({
+        adoptForecast(nextForecast, reconciled ? current => reconciled.map(plan => ({
           ...plan, name: current.find(latest => latest.id === plan.id)?.name ?? plan.name,
         })) : undefined);
+        const context = livePlanningRef.current;
+        const adoptedPlans = reconciled ?? context.plans;
+        const nextGW = activePlanGW(
+          adoptedPlans,
+          context.activeId,
+          nextForecast,
+        );
+        if (
+          context.gw < nextForecast.next_gw ||
+          (reconciled && !nextForecast.gameweeks.includes(context.gw))
+        ) {
+          setGw(nextGW);
+          setSelected(null);
+        }
+        setDetailGW((currentGW) =>
+          currentGW > 0 &&
+          (currentGW < nextForecast.next_gw ||
+            (Boolean(reconciled) &&
+              !nextForecast.gameweeks.includes(currentGW)))
+            ? nextGW
+            : currentGW,
+        );
+        if (notices.length)
+          notify(
+            `Archived ${r.captured_gameweeks.length} gameweeks before the deadline. ${[...new Set(notices)].join(" ")}`,
+          );
       } catch (error) {
         if (error instanceof PlanResourceError && operationRef.current === operation &&
             livePlanningRef.current.data === data &&
@@ -2105,10 +2324,31 @@ export default function App() {
         uid,
       );
       assertPlanInputs(operation, true);
-      const existing = data && (!sameResourcePrices(data, prepared.forecast) || resourceErrorRef.current)
-        ? await reconcilePlanResources(livePlanningRef.current.plans, prepared.configuration,
-            body => api("/plan/validate", body)) : undefined;
+      const existingPlans = livePlanningRef.current.plans;
+      const existingNotices: string[] = [];
+      const existing =
+        data &&
+        existingPlans.length > 0 &&
+        (needsPlanReconciliation(data, prepared.forecast, existingPlans) ||
+          Boolean(resourceErrorRef.current))
+          ? await reconcilePlanResources(
+              existingPlans,
+              prepared.forecast,
+              prepared.configuration,
+              (body) => api("/plan/validate", body),
+              existingNotices,
+            )
+          : undefined;
       assertPlanInputs(operation, true);
+      if (
+        existing &&
+        (existingNotices.length ||
+          existingPlans.some((plan) =>
+            plan.weeks.some((week) => week.gw < prepared.forecast.next_gw),
+          ))
+      ) {
+        archivePlanningInputs(existingPlans, forecastArgs);
+      }
       if (
         prepared.notices.length ||
         value.plans.some((plan: Plan) =>
@@ -2121,18 +2361,30 @@ export default function App() {
       loadedForecastArgsRef.current = JSON.stringify(prepared.configuration);
       applyForecastConfiguration(prepared.configuration);
       setSettings(prepared.solver);
-      if (existing) setResourceError("");
+      if (existing || !existingPlans.length) setResourceError("");
       adoptForecast(prepared.forecast, ps => [
         ...(existing ? existing.map(plan => ({
           ...plan, name: ps.find(latest => latest.id === plan.id)?.name ?? plan.name,
         })) : ps), ...prepared.plans,
       ]);
+      const nextGW = activePlanGW(
+        prepared.plans,
+        prepared.plans[0].id,
+        prepared.forecast,
+      );
       setActiveId(prepared.plans[0].id);
-      setGw(prepared.plans[0].weeks[0].gw);
+      setGw(nextGW);
+      setSelected(null);
+      setDetailGW((currentGW) =>
+        currentGW && !prepared.forecast.gameweeks.includes(currentGW)
+          ? nextGW
+          : currentGW,
+      );
       setSolveResult(null);
       setSolveContext(null);
+      const allNotices = [...new Set([...existingNotices, ...prepared.notices])];
       notify(
-        `${prepared.plans.length} branches and settings imported.${prepared.notices.length ? ` ${prepared.notices.join(" ")}` : ""}`,
+        `${prepared.plans.length} branches and settings imported.${allNotices.length ? ` ${allNotices.join(" ")}` : ""}`,
       );
     } catch (e) {
       if (e instanceof PlanResourceError && operationRef.current === operation &&

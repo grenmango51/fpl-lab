@@ -34,11 +34,11 @@
 }
 
 .planner-board
-  .pitch-select-mode:not(.pitch-dragging):has(.pitch .player-selected)
+  .pitch-select-mode:not(.pitch-dragging):not(:has(.player-select:disabled)):has(.pitch .player-selected)
   .bench
   .player-tile:not(.swap-target),
 .planner-board
-  .pitch-select-mode:not(.pitch-dragging):has(.bench .player-selected)
+  .pitch-select-mode:not(.pitch-dragging):not(:has(.player-select:disabled)):has(.bench .player-selected)
   .pitch
   .player-tile:not(.swap-target) {
   opacity: 0.38;
@@ -46,12 +46,12 @@
 }
 
 .planner-board
-  .pitch-select-mode:not(.pitch-dragging):has(.pitch .player-selected)
+  .pitch-select-mode:not(.pitch-dragging):not(:has(.player-select:disabled)):has(.pitch .player-selected)
   .bench
   .player-tile:not(.swap-target)
   .player-select,
 .planner-board
-  .pitch-select-mode:not(.pitch-dragging):has(.bench .player-selected)
+  .pitch-select-mode:not(.pitch-dragging):not(:has(.player-select:disabled)):has(.bench .player-selected)
   .pitch
   .player-tile:not(.swap-target)
   .player-select {

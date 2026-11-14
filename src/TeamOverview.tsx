@@ -36,7 +36,7 @@ export function TeamOverview({
     .filter((player) => week.starters.includes(player.id))
     .sort((a, b) => xp(b, week.gw) - xp(a, week.gw));
   const captainOptions = sortedStarters.slice(0, 4);
-  const activeCaptain = lookup.get(week.captain);
+  const activeCaptain = sortedStarters.find((p) => p.id === week.captain);
   if (
     activeCaptain &&
     !captainOptions.some((player) => player.id === activeCaptain.id)

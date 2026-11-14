@@ -164,6 +164,9 @@ describe("PlanTree UI fixes", () => {
     expect(html).not.toMatch(/tree-pitch-toggle[^>]*aria-pressed/);
     // Mobile optimise button exposes aria-busy when optimising.
     expect(html).toMatch(/aria-busy="true"[^>]*>.*Optimising…/);
+    // Singular 1 GW option instead of "1 GWs".
+    expect(html).toContain(">1 GW</option>");
+    expect(html).not.toContain(">1 GWs</option>");
   });
 });
 
@@ -221,6 +224,9 @@ describe("PlannerBoard UI fixes", () => {
     expect(html).toMatch(/<div[^>]*><span>2 GW total<\/span>/);
     // Missing transfers_out[0] renders a disabled "New squad" button.
     expect(html).toMatch(/<button disabled="">New squad<\/button>/);
+    // Singular 1 GW option instead of "1 GWs".
+    expect(html).toContain(">1 GW</option>");
+    expect(html).not.toContain(">1 GWs</option>");
   });
 });
 
@@ -304,6 +310,24 @@ describe("TeamOverview UI & accessibility fixes", () => {
     );
     expect(unselectedHtml).toMatch(/aria-label="Watch Player 16"[^>]*aria-pressed="true"/);
     expect(unselectedHtml).toContain('fill="currentColor"');
+
+    // Non-starter captain id is ignored rather than injected into starter captainOptions.
+    const benchCaptainHtml = renderToStaticMarkup(
+      createElement(TeamOverview, {
+        data: bootstrap,
+        week: makeWeek(7, { captain: 6 }),
+        selected: null,
+        targets: [],
+        watch: [],
+        onWatch: vi.fn(),
+        onDetail: vi.fn(),
+        onSelect: vi.fn(),
+        onTransfer: vi.fn(),
+        onPlayers: vi.fn(),
+        onCaptain: vi.fn(),
+      }),
+    );
+    expect(benchCaptainHtml).not.toContain("· C</span>");
   });
 });
 
@@ -323,6 +347,19 @@ describe("LineupImage SVG & dialog fixes", () => {
     expect(svg).toMatch(/fill="#ffffff"[^>]*>AVL<\/text>/);
     expect(svg).toMatch(/fill="#132238"[^>]*>FUL<\/text>/);
     expect(svg).toMatch(/fill="#132238"[^>]*>NEW<\/text>/);
+    // Unmapped club fallback uses high-contrast #cad5e3 primary with dark #132238 text
+    const unmappedSvg = buildLineupSvg(
+      {
+        ...bootstrap,
+        players: bootstrap.players.map((p) =>
+          p.id === 3 ? { ...p, team_short: "WHU" } : p,
+        ),
+      },
+      longPlan,
+      w7,
+    );
+    expect(unmappedSvg).toContain('fill="#cad5e3"');
+    expect(unmappedSvg).toMatch(/fill="#132238"[^>]*>WHU<\/text>/);
     // Uniform bench scale instead of squished scale(1,.82)
     expect(svg).not.toContain("scale(1,.82)");
     expect(svg).toContain("scale(0.84)");

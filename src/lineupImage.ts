@@ -44,7 +44,7 @@ export function buildLineupSvg(
     const player = lookup.get(id) as Player | undefined;
     if (!player) return "";
     const gk = player.position_id === 1;
-    const colors = clubColors[player.team_short] ?? ["#9aa9bd", "#cad5e3"];
+    const colors = clubColors[player.team_short] ?? ["#cad5e3", "#9aa9bd"];
     const primary = gk ? "#a6b675" : colors[0];
     const secondary = colors[1];
     const textFill = gk

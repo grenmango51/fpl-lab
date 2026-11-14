@@ -262,7 +262,7 @@ export function PlanTree({
             >
               {horizonOptions.map((n) => (
                 <option key={n} value={n}>
-                  {n} GWs
+                  {`${n} GW${n === 1 ? "" : "s"}`}
                 </option>
               ))}
             </select>
@@ -367,7 +367,7 @@ export function PlanTree({
                 >
                   {horizonOptions.map((n) => (
                     <option key={n} value={n}>
-                      {n} GWs
+                      {`${n} GW${n === 1 ? "" : "s"}`}
                     </option>
                   ))}
                 </select>

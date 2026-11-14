@@ -428,7 +428,7 @@ export function PlannerBoard({
             .sort((a, b) => a - b)
             .map((n) => (
               <option key={n} value={n}>
-                {n} GWs
+                {`${n} GW${n === 1 ? "" : "s"}`}
               </option>
             ))}
         </select>

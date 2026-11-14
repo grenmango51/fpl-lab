@@ -1,4 +1,4 @@
-import { ArrowRight, Info, Star } from "lucide-react";
+import { AlertTriangle, ArrowRight, Info, Star } from "lucide-react";
 import { Badge, PlayerName } from "./components";
 import { fmt, money, xp } from "./lib";
 import type { Bootstrap, Player, Week } from "./types";
@@ -9,6 +9,7 @@ export function TeamOverview({
   selected,
   targets,
   watch,
+  busy = false,
   onWatch,
   onDetail,
   onSelect,
@@ -21,6 +22,7 @@ export function TeamOverview({
   selected?: Player | null;
   targets: Player[];
   watch: number[];
+  busy?: boolean;
   onWatch: (id: number) => void;
   onDetail: (id: number) => void;
   onSelect: (id: number | null) => void;
@@ -48,10 +50,6 @@ export function TeamOverview({
 
   return (
     <div className="team-overview">
-      <div className="view-heading compact-view-heading">
-        <h2>Lineup</h2>
-        <span className="subtle-tag">GW{week.gw}</span>
-      </div>
       <div className="overview-captains">
         <header>
           <h3>Captain comparison</h3>
@@ -68,11 +66,17 @@ export function TeamOverview({
               <button
                 key={player.id}
                 className={isCaptain ? "active" : ""}
+                disabled={busy}
                 aria-pressed={isCaptain}
                 onClick={() => onCaptain(player.id)}
               >
                 <Badge player={player} size={26} />
-                <b>{player.name}</b>
+                <b className="captain-card-name">
+                  <span>{player.name}</span>
+                  {player.status !== "a" && (
+                    <AlertTriangle size={12} className="orange" />
+                  )}
+                </b>
                 <strong>{fmt(xp(player, week.gw) * multiplier)}</strong>
                 <span>
                   {fixtureText}
@@ -105,6 +109,7 @@ export function TeamOverview({
                 {selected ? (
                   <button
                     className="button small primary"
+                    disabled={busy}
                     onClick={() => onTransfer(player.id)}
                   >
                     In
@@ -164,7 +169,12 @@ export function TeamOverview({
                       >
                         <Badge player={player} size={20} />
                         <span>
-                          {player.name}
+                          <strong className="squad-player-title">
+                            {player.name}
+                            {player.status !== "a" && (
+                              <AlertTriangle size={12} className="orange" />
+                            )}
+                          </strong>
                           <small>
                             {player.position}
                             {isBench ? " · Bench" : ""}
@@ -173,7 +183,7 @@ export function TeamOverview({
                         {player.id === week.captain ? (
                           <b className="role-pill">C</b>
                         ) : player.id === week.vice ? (
-                          <b className="role-pill">V</b>
+                          <b className="role-pill role-pill-vice">V</b>
                         ) : null}
                       </button>
                     </td>

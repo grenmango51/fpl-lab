@@ -67,7 +67,13 @@ export function buildLineupSvg(
       !gk && primary !== secondary
         ? `<path d="M-18 -11V54H-12V-11ZM12 -11V54H18V-11Z" fill="${secondary}" opacity=".9"/>`
         : "";
-    return `<g transform="${transform}"><path d="M-23 -15 L-45 0 -34 23 -22 17 -22 54 H22 V17 L34 23 45 0 23 -15 12 -10 Q0 1 -12 -10Z" fill="${primary}" stroke="#e8f0ff44" stroke-width="2"/>${stripes}<text y="27" text-anchor="middle" fill="${textFill}" font-size="10" font-weight="700">${escape(player.team_short)}</text>${week.captain === id || week.vice === id ? `<circle cx="30" cy="-2" r="12" fill="#ff8e63"/><text x="30" y="3" text-anchor="middle" fill="#131b28" font-size="13" font-weight="700">${week.captain === id ? "C" : "V"}</text>` : ""}<rect x="-67" y="61" width="134" height="24" rx="4" fill="#13243a"/><text y="77" text-anchor="middle" font-size="13" fill="#e8eef8">${escape(shortName)}</text><text y="100" text-anchor="middle" font-size="12" fill="#a7bad2">${escape(fixtures)}</text><text y="120" text-anchor="middle" font-size="15" font-weight="700" fill="#ff9d78">${fmt(player.gw[String(week.gw)]?.points ?? 0)} xPts</text></g>`;
+    const roleBadge =
+      week.captain === id
+        ? `<circle cx="30" cy="-2" r="12" fill="#ff8e63"/><text x="30" y="3" text-anchor="middle" fill="#131b28" font-size="13" font-weight="700">C</text>`
+        : week.vice === id
+          ? `<circle cx="30" cy="-2" r="12" fill="#475b73" stroke="#9fb4ce66" stroke-width="1"/><text x="30" y="3" text-anchor="middle" fill="#f1f6fc" font-size="13" font-weight="700">V</text>`
+          : "";
+    return `<g transform="${transform}"><path d="M-23 -15 L-45 0 -34 23 -22 17 -22 54 H22 V17 L34 23 45 0 23 -15 12 -10 Q0 1 -12 -10Z" fill="${primary}" stroke="#e8f0ff44" stroke-width="2"/>${stripes}<text y="27" text-anchor="middle" fill="${textFill}" font-size="10" font-weight="700">${escape(player.team_short)}</text>${roleBadge}<rect x="-67" y="61" width="134" height="24" rx="4" fill="#13243a"/><text y="77" text-anchor="middle" font-size="13" fill="#e8eef8">${escape(shortName)}</text><text y="100" text-anchor="middle" font-size="12" fill="#a7bad2">${escape(fixtures)}</text><text y="120" text-anchor="middle" font-size="15" font-weight="700" fill="#ff9d78">${fmt(player.gw[String(week.gw)]?.points ?? 0)} xPts</text></g>`;
   };
   const rows = [1, 2, 3, 4].map((pos) =>
     week.starters.filter((id) => lookup.get(id)?.position_id === pos),

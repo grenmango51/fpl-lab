@@ -224,9 +224,11 @@ describe("PlannerBoard UI fixes", () => {
     expect(html).toMatch(/<div[^>]*><span>2 GW total<\/span>/);
     // Missing transfers_out[0] renders a disabled "New squad" button.
     expect(html).toMatch(/<button disabled="">New squad<\/button>/);
-    // Singular 1 GW option instead of "1 GWs".
+    // Singular 1 GW option instead of "1 GWs", and includes 4 GWs option.
     expect(html).toContain(">1 GW</option>");
+    expect(html).toContain(">4 GWs</option>");
     expect(html).not.toContain(">1 GWs</option>");
+    expect(html).not.toContain(">0 GWs</option>");
   });
 });
 
@@ -274,6 +276,10 @@ describe("TeamOverview UI & accessibility fixes", () => {
     });
 
     const html = renderToStaticMarkup(tree);
+    // Redundant <h2>Lineup</h2> heading removed; vice badge uses slate role-pill-vice; injury triangle shown.
+    expect(html).not.toContain("<h2>Lineup</h2>");
+    expect(html).toContain('class="role-pill role-pill-vice">V</b>');
+    expect(html).toContain("lucide-triangle-alert");
     // Active low-xPts captain (player 15) is included with visible fixture text and aria-pressed="true".
     expect(html).toContain("Extraordinarily Long Forward Name");
     expect(html).toContain("MCI H · C");
@@ -328,6 +334,26 @@ describe("TeamOverview UI & accessibility fixes", () => {
       }),
     );
     expect(benchCaptainHtml).not.toContain("· C</span>");
+
+    // Busy prop disables captain buttons and shortlist In button.
+    const busyHtml = renderToStaticMarkup(
+      createElement(TeamOverview, {
+        data: bootstrap,
+        week: w7,
+        selected: players[14],
+        targets: [players[15]],
+        watch: [],
+        busy: true,
+        onWatch: vi.fn(),
+        onDetail: vi.fn(),
+        onSelect: vi.fn(),
+        onTransfer: vi.fn(),
+        onPlayers: vi.fn(),
+        onCaptain: vi.fn(),
+      }),
+    );
+    expect(busyHtml).toMatch(/class="button small primary" disabled="">In<\/button>/);
+    expect(busyHtml).toMatch(/class="active" disabled="" aria-pressed="true"/);
   });
 });
 
@@ -368,8 +394,10 @@ describe("LineupImage SVG & dialog fixes", () => {
     expect(svg).toContain(">1</text>");
     expect(svg).toContain(">2</text>");
     expect(svg).toContain(">3</text>");
-    // Active chip name
+    // Active chip name & differentiated captain (#ff8e63) vs vice-captain (#475b73) badges
     expect(svg).toContain("Bench Boost");
+    expect(svg).toContain('fill="#ff8e63"');
+    expect(svg).toContain('fill="#475b73"');
     // Clamped long names
     expect(clampImageText("Extraordinarily Long Forward Name", 16)).toBe(
       "Extraordinarily…",

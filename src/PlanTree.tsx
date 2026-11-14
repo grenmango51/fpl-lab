@@ -76,6 +76,8 @@ export function PlanTree({
   } | null>(null);
   const lookup = new Map(data.players.map((player) => [player.id, player]));
   const firstGW = active?.weeks[0]?.gw ?? data.next_gw;
+  const branchWeeks =
+    active?.weeks.filter((week) => week.gw !== firstGW) ?? [];
   const remaining = data.gameweeks.filter((week) => week >= firstGW).length;
   const visibleGameweeks = treeGameweeks(plans, active);
   const shown = visibleGameweeks.length;
@@ -113,11 +115,16 @@ export function PlanTree({
         Start a branch at
         <select
           aria-label="Branch start gameweek"
-          disabled={!active || busy}
-          value={firstGW}
-          onChange={(event) => onStart(+event.target.value)}
+          disabled={!active || busy || active.weeks.length <= 1}
+          value=""
+          onChange={(event) => {
+            if (event.target.value) onStart(+event.target.value);
+          }}
         >
-          {active?.weeks.map((week) => (
+          <option value="" disabled>
+            {branchWeeks.length ? "Choose GW" : "—"}
+          </option>
+          {branchWeeks.map((week) => (
             <option key={week.gw} value={week.gw}>
               GW{week.gw}
             </option>

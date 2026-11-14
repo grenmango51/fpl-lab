@@ -24,6 +24,11 @@
   color: #fff;
 }
 
+.planner-board .player-info:focus-visible,
+.planner-board .player-substitute:focus-visible {
+  outline-offset: -1px;
+}
+
 .planner-board .player-select:focus-visible {
   outline: 2px solid #ff996d;
   outline-offset: 2px;
@@ -85,6 +90,21 @@
 .pitch-meta b,
 .planner-board .pitch-meta b {
   flex-shrink: 0;
+}
+
+.bench-label,
+.bench-label > span:last-child,
+.planner-board .bench-label,
+.planner-board .bench-label span:last-child {
+  color: #8da2bf;
+}
+
+.board-timeline {
+  padding: 6px 6px 12px;
+}
+
+.tree-mobile-weeks {
+  padding: 6px 9px 8px;
 }
 
 .planner-board {
@@ -204,7 +224,7 @@
   height: 46px;
 }
 
-@container (max-width: 540px) {
+@container (max-width: 600px) {
   .planner-board .board-metrics,
   .planner-board .lineup-control-row,
   .planner-board .board-week-bar {
@@ -424,6 +444,55 @@
   }
 }
 
+@container (max-width: 340px) {
+  .plan-canvas .tree-toolbar {
+    padding: 6px 8px;
+    gap: 4px;
+    flex-wrap: wrap;
+  }
+
+  .plan-canvas .tree-toolbar .button {
+    padding: 5px 7px;
+    font-size: 11px;
+    gap: 4px;
+  }
+
+  .plan-canvas .tree-toolbar .tree-horizon-control {
+    padding: 0 6px;
+    gap: 4px;
+  }
+
+  .plan-canvas .tree-toolbar .tree-horizon-control select {
+    width: 64px;
+    height: 30px;
+    font-size: 11px;
+    padding: 4px 0;
+  }
+
+  .plan-canvas .tree-footer,
+  .tree-with-pitch .tree-footer {
+    left: 0;
+    right: 0;
+    margin: 0;
+    padding: 6px 8px;
+    gap: 4px;
+    flex-wrap: wrap;
+  }
+
+  .plan-canvas .tree-footer button {
+    padding: 5px 6px;
+    font-size: 11px;
+    gap: 3px;
+  }
+}
+
+@container (max-width: 320px) {
+  .tree-pitch-panel .board-metrics,
+  .planner-board .board-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 .plan-canvas > .tree-zoom {
   background: #070c17e6;
   border: 1px solid #1d293b;
@@ -519,6 +588,24 @@
   text-overflow: ellipsis;
 }
 
+.overview-captains button b.captain-card-name {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.overview-captains button b.captain-card-name > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.overview-captains button b.captain-card-name > svg {
+  flex-shrink: 0;
+}
+
 .overview-captains button span {
   font-size: 11px;
   color: #8fa4bf;
@@ -561,6 +648,17 @@
   gap: 8px;
 }
 
+.squad-name .squad-player-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 500;
+}
+
+.squad-name .squad-player-title > svg {
+  flex-shrink: 0;
+}
+
 .squad-name small {
   font-size: 11px;
   color: #8fa4bf;
@@ -576,6 +674,31 @@
   font-weight: 700;
   line-height: 1;
   flex-shrink: 0;
+}
+
+.role-pill-vice {
+  background: #2c3e55;
+  color: #dbe7f5;
+  border: 1px solid #4a6280;
+}
+
+.bench-table-row {
+  opacity: 1;
+  background: #0c1420;
+}
+
+.bench-table-row td,
+.bench-table-row td.muted,
+.bench-table-row .squad-name small {
+  color: #91a6c2;
+}
+
+.bench-table-row td.orange {
+  color: var(--orange);
+}
+
+.bench-table-row.selected-table-row {
+  background: #ff6a3d12;
 }
 
 /* LineupImageDialog frame border, loading placeholder and clean Save PNG row */

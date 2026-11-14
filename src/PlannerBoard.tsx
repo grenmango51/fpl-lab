@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import {
   ArrowRight,
+  CheckCircle2,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   Copy,
   GitBranch,
+  Image,
+  Lock,
   RefreshCw,
   Sparkles,
   Undo2,
@@ -284,13 +287,15 @@ export function PlannerBoard({
           }
         >
           <button role="menuitem" onClick={onShare}>
+            <Image size={14} />
             Lineup image
           </button>
           <button role="menuitem" disabled={busy} onClick={onLockTransfers}>
+            <Lock size={14} />
             Lock transfers for GW{week.gw}
           </button>
           <button role="menuitem" disabled={busy} onClick={onBestXI}>
-            <Sparkles size={14} />
+            <CheckCircle2 size={14} />
             Best XI & captain
           </button>
           <button role="menuitem" disabled={busy} onClick={onOptimise}>
@@ -423,8 +428,8 @@ export function PlannerBoard({
           disabled={busy}
           onChange={(event) => onHorizon(+event.target.value)}
         >
-          {[...new Set([weeks.length, 1, 3, 5, 6, 10, 14, 20, remaining])]
-            .filter((n) => n <= remaining)
+          {[...new Set([weeks.length, 1, 3, 4, 5, 6, 10, 14, 20, remaining])]
+            .filter((n) => n > 0 && (n <= remaining || n === weeks.length))
             .sort((a, b) => a - b)
             .map((n) => (
               <option key={n} value={n}>

@@ -139,13 +139,16 @@
   font-size: 13px;
   padding: 20px 12px;
 }
+.studio-feed-footer,
+.studio-feed-footer span,
+.studio-feed-footer button {
+  font-size: 10px;
+}
 .studio-feed-footer {
   min-height: 32px;
-  font-size: 10px;
 }
 .studio-feed-footer button {
   min-height: 24px;
-  font-size: 10px;
 }
 .tree-gw-card > span {
   font-size: 14px;
@@ -514,6 +517,21 @@
 .market-stats .eyebrow {
   font-size: 11px;
 }
+.solio-detail-panel .market-stats .stat .eyebrow {
+  font-size: 10px;
+}
+.player-name-cell small {
+  color: #8fa4bf;
+}
+.unavailable-transfer .player-name-cell {
+  opacity: 1;
+}
+.unavailable-transfer .player-name-cell b {
+  color: #9eb0c7;
+}
+.unavailable-transfer .player-name-cell small {
+  color: #8da2bf;
+}
 .price-scroll,
 .reference-scroll {
   max-height: calc(100dvh - 400px);
@@ -753,8 +771,9 @@
   }
   .studio-feed-footer {
     padding: 6px 8px;
-    font-size: 9px;
+    font-size: 10px;
   }
+  .studio-feed-footer span,
   .studio-feed-footer button {
     font-size: 10px;
   }

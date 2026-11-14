@@ -1368,7 +1368,7 @@ input[type="checkbox"] {
   gap: 4px;
   align-items: center;
   font-size: 7px;
-  color: #6982a2;
+  color: #8fa4bf;
   margin-top: 3px;
 }
 .club-badge {
@@ -2315,7 +2315,7 @@ input[type="checkbox"] {
   justify-content: center;
   align-items: center;
   gap: 18px;
-  font-size: 8px;
+  font-size: 10px;
   color: #839cbd;
   margin: 6px 0;
 }
@@ -2867,8 +2867,8 @@ input[type="checkbox"] {
 .toggle-row small,
 .setting-row small {
   display: block;
-  font-size: 8px;
-  color: #6d8eb5;
+  font-size: 10px;
+  color: #8ea4c2;
   margin-top: 6px;
 }
 .source-setting {
@@ -2956,7 +2956,7 @@ input[type="checkbox"] {
   align-items: center;
   gap: 5px;
   color: #bb9b82;
-  font-size: 9px;
+  font-size: 10px;
 }
 .player-detail-top {
   display: flex;
@@ -3041,8 +3041,8 @@ input[type="checkbox"] {
   border-top: 1px solid #2a3e58;
 }
 .player-underlying > span {
-  font-size: 8px;
-  color: #688aaf;
+  font-size: 10px;
+  color: #8da3c0;
 }
 .player-underlying b {
   display: block;
@@ -3064,8 +3064,8 @@ input[type="checkbox"] {
 }
 .fixture-source-detail small {
   display: block;
-  font-size: 7px;
-  color: #678ab5;
+  font-size: 10px;
+  color: #8da3c0;
   margin-top: 4px;
 }
 .detail-forecast {
@@ -3099,8 +3099,8 @@ input[type="checkbox"] {
   border-radius: 2px 2px 0 0;
 }
 .distribution-chart span {
-  font-size: 7px;
-  color: #6e8cb1;
+  font-size: 10px;
+  color: #8da3c0;
 }
 .distribution-stats {
   display: flex;
@@ -3928,7 +3928,7 @@ input[type="checkbox"] {
   }
   .chart-legend {
     gap: 11px;
-    font-size: 7px;
+    font-size: 10px;
     flex-wrap: wrap;
   }
   .analysis-plan {
@@ -3956,7 +3956,7 @@ input[type="checkbox"] {
     font-size: 19px;
   }
   .market-stats .stat .eyebrow {
-    font-size: 7px;
+    font-size: 10px;
   }
   .market-stats .stat > small {
     font-size: 7px;
@@ -4056,7 +4056,7 @@ input[type="checkbox"] {
     line-height: 1.5;
   }
   .reference-links a {
-    font-size: 8px;
+    font-size: 10px;
   }
   .button {
     font-size: 10px;

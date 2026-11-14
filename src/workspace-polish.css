@@ -294,6 +294,9 @@
 .fixture-table tbody tr:hover td:first-child {
   background: #152334;
 }
+.table-container:has(> .team-projection-table) {
+  max-height: min(72dvh, 760px);
+}
 .fixture-scroll {
   max-height: calc(100dvh - 255px);
 }
@@ -594,11 +597,17 @@
   z-index: 4;
   background: #132034;
 }
+.price-table th:nth-child(n + 3),
+.price-table td:nth-child(n + 3),
 .price-table th.numeric,
 .price-table td.numeric,
 .reference-table th.numeric,
 .reference-table td.numeric {
   text-align: right;
+}
+.price-table th:nth-child(n + 3) > button {
+  justify-content: flex-end;
+  width: 100%;
 }
 .price-table tbody tr:hover td:nth-child(-n + 2),
 .reference-table tbody tr:hover td:nth-child(-n + 2) {
@@ -866,6 +875,9 @@
 .player-window .stat-scenario-editor label,
 .player-window .minutes-schedule-editor label {
   font-size: 12px;
+}
+.player-detail-top > .stat {
+  min-width: 0;
 }
 .solio-detail-panel .benchmark-card > span,
 .solio-detail-panel .benchmark-card p,

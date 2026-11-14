@@ -2974,7 +2974,7 @@ input[type="checkbox"] {
 .player-detail-top > .stat {
   flex: 1;
   padding: 10px;
-  min-width: 100px;
+  min-width: 0;
 }
 .player-detail-top > .stat > strong {
   font-size: 23px;
@@ -4010,7 +4010,7 @@ input[type="checkbox"] {
   }
   .player-detail-top > .stat {
     padding: 8px;
-    min-width: 90px;
+    min-width: 0;
   }
   .player-detail-top > .stat > strong {
     font-size: 22px;

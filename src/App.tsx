@@ -23,7 +23,6 @@ import {
   Copy,
   Download,
   Database,
-  GitBranch,
   Info,
   LayoutGrid,
   LockKeyhole,
@@ -32,6 +31,8 @@ import {
   ArrowLeftRight,
   Link2,
   LoaderCircle,
+  PanelLeftClose,
+  PanelLeftOpen,
   Plus,
   RefreshCw,
   Search,
@@ -113,7 +114,11 @@ import { LineupImageDialog } from "./LineupImageDialog";
 import { WorkspaceDivider } from "./WorkspaceDivider";
 import { TabStrip } from "./TabStrip";
 import { useViewState } from "./useViewState";
-import { canSwap, replacePlayer } from "./plannerInteractions";
+import {
+  canSwap,
+  replacePlayer,
+  transferAllowance,
+} from "./plannerInteractions";
 import { planWithOptimisedSuffix, quickSolveHorizon } from "./quickOptimise";
 import {
   activePlanGW,
@@ -196,6 +201,56 @@ type OptimiseContext = {
   baselinePlan: Plan | null;
   prices: Record<string, number>;
 };
+
+const componentLabels: Record<string, string> = {
+  appearance: "Appearance",
+  goals: "Goals",
+  assists: "Assists",
+  clean_sheet: "Clean sheets",
+  clean_sheets: "Clean sheets",
+  defensive: "DefCon",
+  defensive_contribution: "DefCon",
+  defcon: "DefCon",
+  bonus: "Bonus",
+  saves: "Saves",
+  penalty_saves: "Pen saves",
+  goals_conceded: "Conceded",
+  cards: "Cards",
+  deductions: "Deductions",
+  provider_adjustment: "Provider adj.",
+  imported_adjustment: "CSV adj.",
+  solio_adjustment: "Solio adj.",
+  solio_extrapolation: "Solio extrap.",
+  user_points_adjustment: "Your scenario",
+};
+
+function formatSourceLabel(key: string): string {
+  const exact: Record<string, string> = {
+    fpl_bootstrap: "Official FPL",
+    fpl_fixtures: "Official fixtures",
+    fpljoe: "FPL Joe",
+    elevenify_sheet: "Elevenify",
+    solio_authenticated: "Solio planner",
+    solio_public: "Solio public",
+    elevenify_player_baselines: "Elevenify baselines",
+    elevenify_fast_fantasy: "Elevenify importance",
+    elevenify_next_gw_attack: "Elevenify next-GW attack",
+    elevenify_three_gw_goals: "Elevenify 3-GW goals",
+    elevenify_three_gw_assists: "Elevenify 3-GW assists",
+  };
+  if (exact[key]) return exact[key];
+  const formMatch = /^fplform_(\d{4}-\d{2})_gw(\d+)$/.exec(key);
+  if (formMatch) return `FPL Form · GW${formMatch[2]}`;
+  const liveMatch = /^fpl_live_(\d{4}-\d{2})_(\d+)$/.exec(key);
+  if (liveMatch) return `Official live · GW${liveMatch[2]}`;
+  const archiveMatch = /^archive_(\d{4}-\d{2})_(gws|players)$/.exec(key);
+  if (archiveMatch)
+    return `Archive ${archiveMatch[1].replace("-", "/")} (${archiveMatch[2] === "gws" ? "GWs" : "players"})`;
+  const flagMatch = /^flags_(\d{4}-\d{2})_([a-z]+)_\d+$/.exec(key);
+  if (flagMatch)
+    return `Flag archive ${flagMatch[1].replace("-", "/")} (${flagMatch[2]})`;
+  return key.replaceAll("_", " ");
+}
 
 export default function App() {
   const [data, setData] = useState<Bootstrap | null>(null),
@@ -317,7 +372,9 @@ export default function App() {
     >(null),
     [detailId, setDetailId] = useState<number | null>(null),
     [detail, setDetail] = useState<PlayerDetail | null>(null),
-    [detailLoading, setDetailLoading] = useState(false);
+    [detailLoading, setDetailLoading] = useState(false),
+    [detailError, setDetailError] = useState(""),
+    [detailRetry, setDetailRetry] = useState(0);
   const [selected, setSelected] = useState<number | null>(null),
     [playerQuery, setPlayerQuery] = useState(""),
     [listMode, setListMode] = useState<"targets" | "captains" | "watch">(
@@ -351,6 +408,8 @@ export default function App() {
     [solveContext, setSolveContext] = useState<OptimiseContext | null>(null);
   const initRef = useRef<Bootstrap | null>(null),
     analyticsRef = useRef<HTMLDivElement>(null),
+    urlSyncedRef = useRef(false),
+    popstateReplaceRef = useRef(false),
     dataRequestRef = useRef(0),
     loadedForecastArgsRef = useRef(""),
     solveRequestRef = useRef(0),
@@ -423,7 +482,10 @@ export default function App() {
     () => new Map(data?.players.map((p) => [p.id, p]) ?? []),
     [data],
   );
-  const selectedPlayer = selected === null ? null : lookup.get(selected);
+  const selectedPlayer =
+    selected === null || !week?.squad.includes(selected)
+      ? null
+      : (lookup.get(selected) ?? null);
   const detailPlayer = detailId === null ? null : lookup.get(detailId);
   const playerGW = detailGW || gw;
   const detailWeek = detailReadOnly
@@ -511,7 +573,13 @@ export default function App() {
     setProviderWeight(configuration.provider_weight);
     setExtrapolate(configuration.extrapolate);
     setAnchorHalfLife(configuration.anchor_half_life);
-    setCustomName(configuration.custom_name);
+    setCustomName(
+      !Object.keys(configuration.custom_points).length &&
+        configuration.blend_weight === 0 &&
+        configuration.custom_name === "Imported CSV"
+        ? ""
+        : configuration.custom_name,
+    );
   }
   function archivePlanningInputs(savedPlans: unknown, configuration: unknown) {
     try {
@@ -866,16 +934,21 @@ export default function App() {
     return () => clearTimeout(t);
   }, [toast]);
   useEffect(() => {
-    const escape = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setModal(null);
-        setDetailId(null);
-        setSelected(null);
-      }
-    };
-    document.addEventListener("keydown", escape);
-    return () => document.removeEventListener("keydown", escape);
-  }, []);
+    if (!loading && data && selected !== null && !week?.squad.includes(selected))
+      setSelected(null);
+  }, [loading, data, week, selected]);
+  useEffect(() => {
+    if (!solveResult && detailReadOnly) setDetailReadOnly(false);
+  }, [solveResult, detailReadOnly]);
+  useEffect(() => {
+    if (!data) return;
+    if (detailId !== null && !lookup.has(detailId)) {
+      setDetailId(null);
+      setDetailBack(null);
+    } else if (detailBack !== null && !lookup.has(detailBack)) {
+      setDetailBack(null);
+    }
+  }, [data, lookup, detailId, detailBack]);
   useEffect(() => {
     // Retry after other work settles, but only retry a failed initial solve
     // when new data arrives (for example, after Refresh).
@@ -1063,18 +1136,28 @@ export default function App() {
     forecastRetry,
   ]);
   useEffect(() => {
-    if (!data || detailId === null) {
+    if (!data || detailId === null || !lookup.has(detailId)) {
       setDetail(null);
+      setDetailError("");
+      setDetailLoading(false);
       return;
     }
     let alive = true;
     setDetailLoading(true);
+    setDetailError("");
     setDetail(null);
     api<PlayerDetail>(`/players/${detailId}?gw=${playerGW}`, forecastArgs)
       .then((d) => {
         if (alive) setDetail(d);
       })
-      .catch((e) => notify(e.message, true))
+      .catch((e) => {
+        if (alive) {
+          setDetailError(
+            (e as Error).message || "Could not load match history.",
+          );
+          notify((e as Error).message, true);
+        }
+      })
       .finally(() => {
         if (alive) setDetailLoading(false);
       });
@@ -1082,7 +1165,10 @@ export default function App() {
       alive = false;
     };
   }, [
+    data,
+    lookup,
     detailId,
+    detailRetry,
     playerGW,
     overrides,
     minutesSchedule,
@@ -1099,27 +1185,39 @@ export default function App() {
     anchorHalfLife,
   ]);
 
+  function openResourceModal(kind: "team" | "resources") {
+    setTeamBank(active?.base_bank ?? 0);
+    setTeamFT(active?.free_transfers ?? 1);
+    setModal(kind);
+  }
   function openPlayer(
     id: number,
     gameweek = gw,
     readOnly = false,
     sourcePlan = active,
     inline = false,
+    preserveAnchor = false,
   ) {
     const source = document.activeElement as HTMLElement | null;
-    const anchor = source
-      ?.closest(".player-select,.projection-value,.player-info")
-      ?.getBoundingClientRect();
-    setDetailAnchor(
-      anchor
-        ? {
-            left: anchor.left,
-            right: anchor.right,
-            top: anchor.top,
-            bottom: anchor.bottom,
-          }
-        : null,
-    );
+    if (inline) {
+      setDetailAnchor(null);
+    } else {
+      const anchor = source
+        ?.closest(
+          ".player-select,.projection-value,.player-info,.board-transfers button,.squad-table .icon-button,.overview-target-list .player-name-cell",
+        )
+        ?.getBoundingClientRect();
+      if (anchor) {
+        setDetailAnchor({
+          left: anchor.left,
+          right: anchor.right,
+          top: anchor.top,
+          bottom: anchor.bottom,
+        });
+      } else if (!preserveAnchor && !source?.closest(".player-window")) {
+        setDetailAnchor(null);
+      }
+    }
     setDetailReadOnly(readOnly);
     setDetailInline(inline);
     setDetailGW(gameweek);
@@ -1140,13 +1238,16 @@ export default function App() {
     if (analyticsRef.current)
       analyticsRef.current.scrollTop = scrollPositions.current[scrollKey] ?? 0;
   }, [scrollKey, loading]);
-  function navigateTab(value: Tab) {
-    if (
+  function navigateTab(value: Tab, nextGW?: number) {
+    if (nextGW !== undefined) {
+      setGw(nextGW);
+    } else if (
       ["lineup", "optimise"].includes(value) &&
       active &&
       !active.weeks.some((row) => row.gw === gw)
-    )
+    ) {
       setGw(active.weeks[0].gw);
+    }
     setDetailId(null);
     setTab(value);
   }
@@ -1155,45 +1256,86 @@ export default function App() {
       setDetailTab("overview");
   }, [detailId, detailSquad, detailTab]);
   useEffect(() => {
-    if (loading || !data) return;
+    if (loading || !data) {
+      urlSyncedRef.current = false;
+      return;
+    }
     const next = new URL(window.location.href);
     const desiredTab = tab === "analysis" ? "plans" : tab;
+    const desiredPlan = active?.id ?? activeId;
     if (
+      !next.searchParams.has("view") &&
       next.searchParams.get("tab") === desiredTab &&
       next.searchParams.get("gw") === String(gw) &&
-      next.searchParams.get("plan") === activeId
-    )
+      next.searchParams.get("plan") === desiredPlan
+    ) {
+      urlSyncedRef.current = true;
+      popstateReplaceRef.current = false;
       return;
-    next.searchParams.set("view", "tree");
+    }
+    const hadEmptyPlan = !next.searchParams.get("plan");
+    next.searchParams.delete("view");
     next.searchParams.set("tab", desiredTab);
     next.searchParams.set("gw", String(gw));
-    next.searchParams.set("plan", activeId);
-    window.history.pushState(null, "", next);
-  }, [tab, gw, activeId, loading]);
+    next.searchParams.set("plan", desiredPlan);
+    if (!urlSyncedRef.current || popstateReplaceRef.current || hadEmptyPlan) {
+      window.history.replaceState(null, "", next);
+    } else {
+      window.history.pushState(null, "", next);
+    }
+    urlSyncedRef.current = true;
+    popstateReplaceRef.current = false;
+  }, [tab, gw, active?.id, activeId, loading, Boolean(data)]);
   useEffect(() => {
     const back = () => {
+      if (!data) return;
       const params = new URLSearchParams(window.location.search),
         plan = plans.find((row) => row.id === params.get("plan")),
         week = Number(params.get("gw"));
       const nextTab = locationTab();
       const selectedPlan =
         plan ?? plans.find((row) => row.id === activeId) ?? plans[0];
-      setTab(nextTab);
-      if (selectedPlan) {
-        setActiveId(selectedPlan.id);
-        if (
-          ["lineup", "optimise"].includes(nextTab) &&
-          !selectedPlan.weeks.some((row) => row.gw === week)
-        )
-          setGw(selectedPlan.weeks[0].gw);
-        else if (data?.gameweeks.includes(week)) setGw(week);
+      const nextPlanId = selectedPlan?.id ?? activeId;
+      const nextGW =
+        selectedPlan &&
+        ["lineup", "optimise"].includes(nextTab) &&
+        !selectedPlan.weeks.some((row) => row.gw === week)
+          ? selectedPlan.weeks[0].gw
+          : data.gameweeks.includes(week)
+            ? week
+            : (selectedPlan?.weeks.find((row) => row.gw === gw)?.gw ??
+              selectedPlan?.weeks[0]?.gw ??
+              data.next_gw);
+      const desiredTab = nextTab === "analysis" ? "plans" : nextTab;
+      const next = new URL(window.location.href);
+      if (
+        next.searchParams.has("view") ||
+        next.searchParams.get("tab") !== desiredTab ||
+        next.searchParams.get("gw") !== String(nextGW) ||
+        next.searchParams.get("plan") !== nextPlanId
+      ) {
+        next.searchParams.delete("view");
+        next.searchParams.set("tab", desiredTab);
+        next.searchParams.set("gw", String(nextGW));
+        next.searchParams.set("plan", nextPlanId);
+        window.history.replaceState(null, "", next);
       }
+      if (
+        nextTab !== tab ||
+        nextGW !== gw ||
+        (Boolean(selectedPlan) && selectedPlan!.id !== activeId)
+      ) {
+        popstateReplaceRef.current = true;
+      }
+      setTab(nextTab);
+      if (selectedPlan) setActiveId(selectedPlan.id);
+      setGw(nextGW);
       setDetailId(null);
       setSelected(null);
     };
     window.addEventListener("popstate", back);
     return () => window.removeEventListener("popstate", back);
-  }, [plans, data?.gameweeks, activeId]);
+  }, [plans, data, activeId, gw, tab]);
 
   // Claim ownership before React renders disabled controls. The version also
   // rejects callbacks that captured decisions before a completed operation.
@@ -1336,30 +1478,56 @@ export default function App() {
   }
   useEffect(() => {
     const keyboard = (event: KeyboardEvent) => {
-      if (
-        (event.target as HTMLElement).closest(
-          'input,textarea,select,[contenteditable="true"]',
-        ) ||
-        modal ||
-        detailId !== null
-      )
-        return;
+      if (event.defaultPrevented || event.isComposing) return;
       if (event.key === "Escape") {
-        setSelected(null);
+        if (modal) {
+          setModal(null);
+        } else if (detailId !== null) {
+          setDetailId(null);
+        } else if (selected !== null) {
+          setSelected(null);
+        }
         return;
       }
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
+      if (
+        event.altKey ||
+        modal ||
+        detailId !== null ||
+        (event.target as HTMLElement | null)?.closest?.(
+          'input,textarea,select,[contenteditable="true"]',
+        )
+      )
+        return;
+      const key = event.key.toLowerCase();
+      if ((event.ctrlKey || event.metaKey) && key === "z") {
         event.preventDefault();
         void travelPlan(event.shiftKey ? "future" : "past");
+      } else if (
+        event.ctrlKey &&
+        !event.metaKey &&
+        !event.shiftKey &&
+        key === "y"
+      ) {
+        event.preventDefault();
+        void travelPlan("future");
       }
     };
     document.addEventListener("keydown", keyboard);
     return () => document.removeEventListener("keydown", keyboard);
-  }, [active, planHistory, busy, modal, detailId, renderedOperationVersion]);
+  }, [
+    active,
+    planHistory,
+    busy,
+    modal,
+    detailId,
+    selected,
+    renderedOperationVersion,
+  ]);
   function onWatch(id: number) {
     setWatch((v) => (v.includes(id) ? v.filter((i) => i !== id) : [...v, id]));
   }
   function togglePlayerConstraint(id: number, kind: "locked" | "excluded") {
+    const clearing = settings[kind].includes(id);
     setSettings((current) => ({
       ...current,
       [kind]: current[kind].includes(id)
@@ -1370,7 +1538,7 @@ export default function App() {
       ].filter((value) => value !== id),
     }));
     notify(
-      `${lookup.get(id)?.name}: ${kind === "locked" ? "include" : "exclude"} rule toggled.`,
+      `${lookup.get(id)?.name} ${clearing ? "rule cleared" : kind === "locked" ? "locked" : "excluded"}.`,
     );
   }
   function choosePlan(id: string) {
@@ -1408,7 +1576,9 @@ export default function App() {
       setPlans((current) => [...current, valid]);
       setActiveId(p.id);
       setGw(valid.weeks[0].gw);
-      notify("New scenario from the base team.");
+      setSelected(null);
+      setDetailId(null);
+      notify("Scenario created.");
     } catch (error) {
       if (operationRef.current === operation) notify((error as Error).message, true);
     } finally {
@@ -1470,10 +1640,9 @@ export default function App() {
       assertPlanInputs(operation);
       setPlans((current) => [...current, valid]);
       setActiveId(valid.id);
-      setGw(start);
-      setTab("lineup");
+      navigateTab("lineup", start);
       setSelected(null);
-      notify(`Branch starts at GW${start}. Original plan retained.`);
+      notify(`Branched from GW${start}.`);
     } catch (error) {
       if (operationRef.current === operation) notify((error as Error).message, true);
     } finally {
@@ -1502,6 +1671,8 @@ export default function App() {
       );
       setActiveId(valid.id);
       setGw(valid.weeks[0].gw);
+      setSelected(null);
+      setDetailId(null);
       notify("Plan restored.");
     } catch (error) {
       if (operationRef.current === operation) notify((error as Error).message, true);
@@ -1540,7 +1711,7 @@ export default function App() {
         ],
       },
     }));
-    notify(`GW${gw} transfers locked in optimiser rules.`);
+    notify(`GW${gw} transfers locked.`);
   }
   function clonePlan() {
     if (!active || !canStartOperation()) return;
@@ -1553,7 +1724,9 @@ export default function App() {
     };
     setPlans((ps) => [...ps, p]);
     setActiveId(p.id);
-    notify("New branch created. Explore another route.");
+    setSelected(null);
+    setDetailId(null);
+    notify("Branch duplicated.");
   }
   function deletePlan() {
     if (!active || plans.length <= 1 || !canStartOperation()) return;
@@ -1565,7 +1738,7 @@ export default function App() {
     choosePlan(rest[0].id);
     setPreviewingDraft(false);
     setToast({
-      text: "Branch moved to deleted plans.",
+      text: "Plan deleted.",
       action: { label: "Undo", run: () => restoreDeletedRef.current(removed) },
     });
   }
@@ -1617,7 +1790,7 @@ export default function App() {
     }
     void updatePlan(
       p,
-      `${lookup.get(id)?.name} selected as ${vice ? "vice-captain" : "captain"}.`,
+      `${lookup.get(id)?.name} set as ${vice ? "vice-captain" : "captain"}.`,
       true,
       "Updating plan…",
       atGW,
@@ -1628,7 +1801,7 @@ export default function App() {
     const first = lookup.get(from),
       second = lookup.get(id);
     if (!first || !second || !canSwap(week, first, second, data.players)) {
-      notify("Choose a legal starter / bench substitution.", true);
+      notify("Illegal substitution.", true);
       return;
     }
     const p = structuredClone(active),
@@ -1639,7 +1812,7 @@ export default function App() {
     w.bench = w.bench.map((i) => (i === reserve ? starter : i));
     if (w.captain === starter) w.captain = reserve;
     if (w.vice === starter) w.vice = reserve;
-    void updatePlan(p, "Starting lineup updated.", true, "Updating lineup…");
+    void updatePlan(p, "Lineup updated.", true, "Updating lineup…");
     setSelected(null);
   }
   function swapBench(id: number) {
@@ -1654,7 +1827,7 @@ export default function App() {
     const p = structuredClone(active),
       w = p.weeks.find((v) => v.gw === atGW)!;
     [w.bench[index], w.bench[target]] = [w.bench[target], w.bench[index]];
-    void updatePlan(p, "Bench substitution priority updated.", true, "Updating plan…", atGW);
+    void updatePlan(p, "Bench order updated.", true, "Updating plan…", atGW);
   }
   function changeHorizon(count: number) {
     if (!active || !data) return;
@@ -1681,8 +1854,9 @@ export default function App() {
           transfers_out: [],
         },
     );
-    void updatePlan(p, `Planning horizon updated to ${count} gameweeks.`, true, "Updating plan…", null);
+    void updatePlan(p, `Horizon set to ${count} GWs.`, true, "Updating plan…", null);
     if (!weeks.includes(gw)) setGw(weeks[0]);
+    setSelected(null);
   }
   function changeChip(chip: Chip) {
     if (!active) return;
@@ -1690,7 +1864,7 @@ export default function App() {
       w = p.weeks.find((v) => v.gw === gw);
     if (w) {
       w.chip = chip;
-      void updatePlan(p, `${chipNames[chip]} selected for GW${gw}.`);
+      void updatePlan(p, `${chipNames[chip]} set for GW${gw}.`);
     }
   }
   function autoLineup() {
@@ -1698,7 +1872,7 @@ export default function App() {
     const p = structuredClone(active),
       w = p.weeks.find((v) => v.gw === gw)!;
     Object.assign(w, optimalLineup(w.squad, data.players, gw, w.chip));
-    void updatePlan(p, "Starting XI and captain optimised for this gameweek.");
+    void updatePlan(p, "Best XI selected.");
   }
   function resetWeek() {
     if (!active || !week || !data) return;
@@ -1711,7 +1885,8 @@ export default function App() {
     w.squad = [...previous];
     w.chip = "none";
     Object.assign(w, optimalLineup(w.squad, data.players, gw));
-    void updatePlan(p, "Gameweek restored to the preceding squad.");
+    void updatePlan(p, "Gameweek reset.");
+    setSelected(null);
   }
   async function importTeam() {
     const operation = beginOperation("Reading your public FPL squad…");
@@ -1745,12 +1920,12 @@ export default function App() {
       setPlans((ps) => [...ps, valid]);
       setActiveId(valid.id);
       setGw(data.next_gw);
+      setSelected(null);
+      setDetailId(null);
       setTeamBank(imported.bank);
       setTeamFT(imported.free_transfers);
       setModal(null);
-      notify(
-        `Imported ${imported.name}. Verify bank and saved FTs in team settings.`,
-      );
+      notify(`Imported ${imported.name}. Check bank & FTs.`);
     } catch (e) {
       if (operationRef.current === operation) notify((e as Error).message, true);
     } finally {
@@ -1759,8 +1934,17 @@ export default function App() {
   }
   async function saveTeamSettings() {
     if (!active) return;
-    const p = { ...active, base_bank: teamBank, free_transfers: teamFT };
-    await updatePlan(p, "Starting bank and free transfers updated.", true, "Updating plan…", null);
+    const safeBank = Number.isFinite(teamBank)
+      ? Math.min(200, Math.max(0, teamBank))
+      : 0;
+    const safeFT = Number.isFinite(teamFT)
+      ? Math.min(5, Math.max(0, Math.trunc(teamFT)))
+      : 1;
+    setTeamBank(safeBank);
+    setTeamFT(safeFT);
+    const p = { ...active, base_bank: safeBank, free_transfers: safeFT };
+    if (await updatePlan(p, "Resources saved.", true, "Updating plan…", null))
+      setModal(null);
   }
   async function runSolve(fresh = false, inPlace = false) {
     if (!data || operationRef.current || solveInFlightRef.current) return;
@@ -1932,9 +2116,7 @@ export default function App() {
         setSolveResult(null);
         setSolveContext(null);
         setPreviewingDraft(false);
-        notify(
-          `Optimised ${sourcePlan.name} · GW${startGW}–${startGW + horizon - 1}. Undo is available.`,
-        );
+        notify(`Optimised ${sourcePlan.name} · GW${startGW}–${startGW + horizon - 1}.`);
         return;
       }
       setSolveResult(result);
@@ -2007,11 +2189,11 @@ export default function App() {
       assertPlanInputs(operation);
       setPlans((ps) => [...ps, valid]);
       setActiveId(p.id);
-      setGw(context.startGW);
       setSolveResult(null);
       setSolveContext(null);
       setPreviewingDraft(false);
-      setTab("lineup");
+      navigateTab("lineup", context.startGW);
+      setSelected(null);
       notify(`Branch saved · through GW${resultWeeks.at(-1)!.gw}.`);
     } catch (e) {
       if (operationRef.current === operation) notify((e as Error).message, true);
@@ -2024,7 +2206,18 @@ export default function App() {
     weeks: Week[],
     label: string,
   ) {
-    const start = job.settings.solve;
+    const start = job.settings.solve as SensitivityJob["settings"]["solve"] & {
+      entry_id?: number;
+      team_name?: string;
+    };
+    const sameSquad = (row: Plan) =>
+      JSON.stringify(row.base_squad) === JSON.stringify(start.squad);
+    const source =
+      plans.find((row) => row.name === job.settings.name && sameSquad(row)) ??
+      (active && sameSquad(active)
+        ? active
+        : (plans.find(sameSquad) ??
+          plans.find((row) => row.name === job.settings.name)));
     const p: Plan = {
       id: uid(),
       name: `${job.settings.name} · stress ${label}`,
@@ -2036,6 +2229,10 @@ export default function App() {
       weeks: structuredClone(weeks),
       created_at: new Date().toISOString(),
     };
+    const entryId = start.entry_id ?? source?.entry_id;
+    const teamName = start.team_name ?? source?.team_name;
+    if (entryId !== undefined) p.entry_id = entryId;
+    if (teamName !== undefined) p.team_name = teamName;
     const operation = beginOperation("Checking the stress-test branch…");
     if (!operation) return;
     try {
@@ -2043,9 +2240,9 @@ export default function App() {
       assertPlanInputs(operation);
       setPlans((ps) => [...ps, valid]);
       setActiveId(valid.id);
-      setGw(valid.weeks[0].gw);
-      setTab("lineup");
-      notify("New branch saved and rescored using your current forecasts.");
+      navigateTab("lineup", valid.weeks[0].gw);
+      setSelected(null);
+      notify("Stress branch saved.");
     } catch (e) {
       if (operationRef.current === operation) notify((e as Error).message, true);
     } finally {
@@ -2124,9 +2321,7 @@ export default function App() {
         "/snapshot",
         forecastArgs,
       );
-      notify(
-        `Archived ${r.captured_gameweeks.length} gameweeks before the deadline.`,
-      );
+      notify(`Snapshot saved (${r.captured_gameweeks.length} GWs).`);
       try {
         const [receipt, forecasts] = await Promise.all([
           api<Prospective>("/prospective"),
@@ -2210,16 +2405,14 @@ export default function App() {
         );
         if (notices.length)
           notify(
-            `Archived ${r.captured_gameweeks.length} gameweeks before the deadline. ${[...new Set(notices)].join(" ")}`,
+            `Snapshot saved (${r.captured_gameweeks.length} GWs). ${[...new Set(notices)].join(" ")}`,
           );
       } catch (error) {
         if (error instanceof PlanResourceError && operationRef.current === operation &&
             livePlanningRef.current.data === data &&
             JSON.stringify(livePlanningRef.current.forecastArgs) === JSON.stringify(forecastArgs))
           setResourceError(error.message);
-        notify(
-          "Forecast saved. Refresh the app to reload its capture receipt and forecasts.",
-        );
+        notify("Snapshot saved. Refresh to reload receipt.");
       }
     } catch (e) {
       notify((e as Error).message, true);
@@ -2255,7 +2448,7 @@ export default function App() {
         });
       setModal(null);
       notify(
-        `Imported ${count} point forecasts and ${Object.keys(minutes).length + Object.values(schedules).reduce((n, weeks) => n + Object.keys(weeks).length, 0)} minutes assumptions from ${file.name}.`,
+        `Imported ${count} forecasts, ${Object.keys(minutes).length + Object.values(schedules).reduce((n, weeks) => n + Object.keys(weeks).length, 0)} minutes rules (${file.name}).`,
       );
     } catch (e) {
       setCsvError((e as Error).message);
@@ -2302,7 +2495,7 @@ export default function App() {
       "\ufeff" + lines.join("\r\n"),
       "text/csv",
     );
-    notify("Current projections exported, including custom scenarios.");
+    notify("Projections exported.");
   }
   async function importPlans(file: File) {
     if (!data) return;
@@ -2384,7 +2577,7 @@ export default function App() {
       setSolveContext(null);
       const allNotices = [...new Set([...existingNotices, ...prepared.notices])];
       notify(
-        `${prepared.plans.length} branches and settings imported.${allNotices.length ? ` ${allNotices.join(" ")}` : ""}`,
+        `Imported ${prepared.plans.length} plans.${allNotices.length ? ` ${allNotices.join(" ")}` : ""}`,
       );
     } catch (e) {
       if (e instanceof PlanResourceError && operationRef.current === operation &&
@@ -2415,6 +2608,8 @@ export default function App() {
       setPlans((current) => [...current, valid]);
       setActiveId(valid.id);
       setGw(valid.weeks[0].gw);
+      setSelected(null);
+      setDetailId(null);
       notify("Chip branch saved.");
     } finally {
       finishOperation(operation);
@@ -2442,9 +2637,9 @@ export default function App() {
       assertPlanInputs(operation);
       setPlans((current) => [...current, valid]);
       setActiveId(valid.id);
-      setGw(job.scope.gameweeks[0] ?? valid.weeks[0].gw);
-      setTab("lineup");
-      notify("Strategy branch saved and rescored with current forecasts.");
+      navigateTab("lineup", job.scope.gameweeks[0] ?? valid.weeks[0].gw);
+      setSelected(null);
+      notify("Strategy branch saved.");
     } finally {
       finishOperation(operation);
     }
@@ -2459,12 +2654,28 @@ export default function App() {
           .toLowerCase()
           .includes(playerQuery.toLowerCase()),
     );
-    if (selectedPlayer && week)
+    if (selectedPlayer && active && week) {
+      const allowance = transferAllowance(
+        active,
+        week,
+        selectedPlayer,
+        data.players,
+      );
+      const clubCounts = new Map<number, number>();
+      for (const id of week.squad) {
+        if (id === selectedPlayer.id) continue;
+        const team = lookup.get(id)?.team;
+        if (team !== undefined)
+          clubCounts.set(team, (clubCounts.get(team) ?? 0) + 1);
+      }
       rows = rows.filter(
         (p) =>
           p.position_id === selectedPlayer.position_id &&
-          !week.squad.includes(p.id),
+          !week.squad.includes(p.id) &&
+          allowance.forTarget(p).bankAfter >= 0 &&
+          (clubCounts.get(p.team) ?? 0) < 3,
       );
+    }
     if (listMode === "watch") rows = rows.filter((p) => watch.includes(p.id));
     const horizon = data.gameweeks.filter((w) => w >= gw).slice(0, 6);
     return rows
@@ -2474,7 +2685,17 @@ export default function App() {
           : horizon.reduce((n, w) => n + xp(b, w) - xp(a, w), 0),
       )
       .slice(0, 8);
-  }, [data, gw, selectedPlayer, week, playerQuery, listMode, watch]);
+  }, [
+    data,
+    lookup,
+    gw,
+    selectedPlayer,
+    active,
+    week,
+    playerQuery,
+    listMode,
+    watch,
+  ]);
 
   if (loading || !data)
     return (
@@ -2530,13 +2751,87 @@ export default function App() {
   });
   const showLeftPitch =
     pitchExpanded && wideLayout && !treeHidden && tab !== "data";
+  const hasCustomCSV =
+    Object.keys(customPoints).length > 0 ||
+    blendWeight > 0 ||
+    (Boolean(customName) && customName !== "Imported CSV");
+  const primarySourceOrder = [
+    "fpl_bootstrap",
+    "fpl_fixtures",
+    "fpljoe",
+    "elevenify_sheet",
+    "solio_authenticated",
+    "solio_public",
+    `fplform_${data.season}_gw${data.next_gw}`,
+    "archive_2025-26_gws",
+  ];
+  const primarySourceSet = new Set(primarySourceOrder);
+  const topSources = [
+    ...primarySourceOrder
+      .filter((key) => key in data.sources)
+      .map((key) => [key, data.sources[key]] as const),
+    ...Object.entries(data.sources).filter(
+      ([key, s]) =>
+        !primarySourceSet.has(key) &&
+        (s.status === "stale" || s.status === "unavailable"),
+    ),
+  ];
+  const extraSources = Object.entries(data.sources).filter(
+    ([key, s]) =>
+      !primarySourceSet.has(key) &&
+      s.status !== "stale" &&
+      s.status !== "unavailable",
+  );
+  const renderSourceRow = ([key, s]: readonly [
+    string,
+    Bootstrap["sources"][string],
+  ]) => (
+    <a
+      className="source-setting"
+      key={key}
+      href={s.url}
+      target="_blank"
+      rel="noreferrer"
+    >
+      <span
+        className={`status-dot ${s.status === "stale" || s.status === "unavailable" ? "stale" : ""}`}
+        aria-hidden="true"
+      />
+      <span>
+        <b>{formatSourceLabel(key)}</b>
+        <small>
+          {s.fetched_at
+            ? new Date(s.fetched_at).toLocaleString()
+            : "Unavailable"}
+        </small>
+      </span>
+      <span className="subtle-tag">{s.status}</span>
+      <ArrowUpRight size={14} />
+    </a>
+  );
+  const teamOverview = week ? (
+    <TeamOverview
+      data={data}
+      week={week}
+      selected={selectedPlayer}
+      targets={availableTargets}
+      watch={watch}
+      onWatch={onWatch}
+      onDetail={openPlayer}
+      onSelect={setSelected}
+      onTransfer={(id) => void transferIn(id)}
+      onPlayers={() => navigateTab("projections")}
+      onCaptain={setCaptain}
+      {...({ busy: Boolean(busy) } as object)}
+    />
+  ) : null;
   const forecastState = forecastStatus();
   const forecastFeedback = forecastState.stale ? (
     <div className="forecast-feedback" role={forecastState.error ? "alert" : "status"}>
       {forecastState.pending ? <LoaderCircle size={15} className="spin" /> : <Info size={15} />}
       <span>
         <b>{forecastState.error ? "Forecast update failed." : "Updating forecasts…"}</b>{" "}
-        Previous player figures, totals and resources shown.
+        Showing previous values.
         {forecastState.error && <small>{forecastState.error}</small>}
       </span>
       {forecastState.error && <button className="button small" onClick={retryForecasts}>
@@ -2571,11 +2866,7 @@ export default function App() {
         onChip={changeChip}
         onBestXI={autoLineup}
         onReset={resetWeek}
-        onTeam={() => {
-          setTeamBank(active.base_bank);
-          setTeamFT(active.free_transfers);
-          setModal("resources");
-        }}
+        onTeam={() => openResourceModal("resources")}
         onShare={() => setModal("lineupImage")}
         onLockTransfers={lockTransfers}
         onOptimise={() => void runSolve(false, true)}
@@ -2596,40 +2887,22 @@ export default function App() {
         >
           <Logo />
         </button>
-        <button
-          className={
-            !["market", "projections", "data"].includes(tab) ? "active" : ""
-          }
-          onClick={() => navigateTab("lineup")}
-          title="Planner"
-          aria-label="Planner"
-        >
-          <GitBranch size={19} />
-        </button>
-        <button
-          className={tab === "projections" ? "active" : ""}
-          onClick={() => navigateTab("projections")}
-          title="Player data"
-          aria-label="Player data"
-        >
-          <Activity size={19} />
-        </button>
-        <button
-          className={tab === "data" ? "active" : ""}
-          onClick={() => navigateTab("data")}
-          title="Season stats"
-          aria-label="Season stats"
-        >
-          <Database size={19} />
-        </button>
-        <button
-          className={tab === "market" ? "active" : ""}
-          onClick={() => navigateTab("market")}
-          title="Market data"
-          aria-label="Market data"
-        >
-          <TrendingUp size={19} />
-        </button>
+        {tabs.map((item) => {
+          const Icon = item.icon;
+          const current = tab === item.id;
+          return (
+            <button
+              key={item.id}
+              className={current ? "active" : ""}
+              aria-current={current ? "page" : undefined}
+              onClick={() => navigateTab(item.id)}
+              title={item.label}
+              aria-label={item.label}
+            >
+              <Icon size={18} />
+            </button>
+          );
+        })}
         <div className="rail-bottom">
           <button
             onClick={refresh}
@@ -2674,7 +2947,7 @@ export default function App() {
           }}
           onCreate={() => void createPlan()}
           onCopy={clonePlan}
-          onEvaluate={() => setTab("analysis")}
+          onEvaluate={() => navigateTab("analysis")}
           pitchExpanded={showLeftPitch}
           onPitchExpanded={(expanded) => {
             setPitchExpanded(expanded);
@@ -2686,11 +2959,7 @@ export default function App() {
           busy={Boolean(busy)}
           optimising={solveInFlightRef.current}
           onDelete={deletePlan}
-          onConfigure={() => {
-            setTeamBank(active?.base_bank ?? 0);
-            setTeamFT(active?.free_transfers ?? 1);
-            setModal("team");
-          }}
+          onConfigure={() => openResourceModal("team")}
           onHorizon={changeHorizon}
           onOptimise={() => void runSolve(false, true)}
           onOptimiseSettings={() => navigateTab("optimise")}
@@ -2703,48 +2972,58 @@ export default function App() {
           }}
         />
         <main className="main-content solio-detail-panel">
-          <div className="detail-panel-heading" hidden={tab === "data"}>
-            <button
-              className="icon-button tree-toggle"
-              aria-label={
-                treeHidden ? "Show planning tree" : "Hide planning tree"
-              }
-              onClick={() => setTreeHidden(!treeHidden)}
-            >
-              <GitBranch size={15} />
-            </button>
-            <label className="workspace-context">
-              <span className="sr-only">Active plan</span>
-              <select
-                aria-label="Active plan"
-                value={active?.id ?? ""}
-                onChange={(event) => choosePlan(event.target.value)}
-              >
-                {plans.map((plan) => (
-                  <option key={plan.id} value={plan.id}>
-                    {plan.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <select
-              aria-label="View gameweek"
-              value={gw}
-              onChange={(event) => {
-                setGw(+event.target.value);
-                setSelected(null);
-                setDetailId(null);
-              }}
-            >
-              {(["lineup", "optimise"].includes(tab)
-                ? (active?.weeks.map((row) => row.gw) ?? [])
-                : data.gameweeks
-              ).map((value) => (
-                <option key={value} value={value}>
-                  GW{value}
-                </option>
-              ))}
-            </select>
+          <div className="detail-panel-heading">
+            {tab !== "data" && (
+              <>
+                <button
+                  className="icon-button tree-toggle"
+                  aria-label="Planning tree"
+                  aria-pressed={!treeHidden}
+                  title={
+                    treeHidden ? "Show planning tree" : "Hide planning tree"
+                  }
+                  onClick={() => setTreeHidden(!treeHidden)}
+                >
+                  {treeHidden ? (
+                    <PanelLeftOpen size={15} />
+                  ) : (
+                    <PanelLeftClose size={15} />
+                  )}
+                </button>
+                <label className="workspace-context">
+                  <span className="sr-only">Active plan</span>
+                  <select
+                    aria-label="Active plan"
+                    value={active?.id ?? ""}
+                    onChange={(event) => choosePlan(event.target.value)}
+                  >
+                    {plans.map((plan) => (
+                      <option key={plan.id} value={plan.id}>
+                        {plan.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <select
+                  aria-label="View gameweek"
+                  value={gw}
+                  onChange={(event) => {
+                    setGw(+event.target.value);
+                    setSelected(null);
+                    setDetailId(null);
+                  }}
+                >
+                  {(["lineup", "optimise"].includes(tab)
+                    ? (active?.weeks.map((row) => row.gw) ?? [])
+                    : data.gameweeks
+                  ).map((value) => (
+                    <option key={value} value={value}>
+                      GW{value}
+                    </option>
+                  ))}
+                </select>
+              </>
+            )}
             <span>{data.season.replace("-", "/")}</span>
             {saveStatus !== "local" && saveStatus !== "loading" && <button
               className="icon-button"
@@ -2754,7 +3033,8 @@ export default function App() {
             >{saveStatus === "saving" ? <LoaderCircle size={15} className="spin" /> : saveStatus === "saved" ? <Check size={15} /> : <Info size={15} />}</button>}
             <button
               className="icon-button"
-              onClick={() => setModal("team")}
+              onClick={() => openResourceModal("team")}
+              title="Import team"
               aria-label="Import team"
             >
               <Users size={15} />
@@ -2797,7 +3077,7 @@ export default function App() {
                       >
                         <button
                           className="button primary"
-                          onClick={() => setModal("team")}
+                          onClick={() => openResourceModal("team")}
                         >
                           Import team
                         </button>
@@ -2813,25 +3093,14 @@ export default function App() {
                   </div>
                 )}
                 {week ? (
-                  <details
-                    className="lineup-details"
-                    open={showLeftPitch || undefined}
-                  >
-                    <summary>Squad stats & captain comparison</summary>
-                    <TeamOverview
-                      data={data}
-                      week={week}
-                      selected={selectedPlayer}
-                      targets={availableTargets}
-                      watch={watch}
-                      onWatch={onWatch}
-                      onDetail={openPlayer}
-                      onSelect={setSelected}
-                      onTransfer={(id) => void transferIn(id)}
-                      onPlayers={() => setTab("projections")}
-                      onCaptain={setCaptain}
-                    />
-                  </details>
+                  showLeftPitch ? (
+                    <div className="lineup-details">{teamOverview}</div>
+                  ) : (
+                    <details className="lineup-details">
+                      <summary>Squad stats &amp; captain comparison</summary>
+                      {teamOverview}
+                    </details>
+                  )
                 ) : null}
               </>
             ) : tab === "projections" ? (
@@ -2839,7 +3108,17 @@ export default function App() {
                 data={data}
                 gw={gw}
                 onDetail={(id, gameweek) =>
-                  openPlayer(id, gameweek ?? gw, false, active, true)
+                  openPlayer(
+                    id,
+                    gameweek ?? gw,
+                    false,
+                    active,
+                    Boolean(
+                      (document.activeElement as HTMLElement | null)?.closest?.(
+                        ".projection-value",
+                      ),
+                    ),
+                  )
                 }
                 onEditorTarget={setProjectionEditorTarget}
                 editing={
@@ -2849,7 +3128,11 @@ export default function App() {
                 }
                 watch={watch}
                 onWatch={onWatch}
-                onCSV={() => setModal("csv")}
+                onCSV={() => {
+                  setCsvError("");
+                  setCsvWeight(Math.round(blendWeight * 100) || 50);
+                  setModal("csv");
+                }}
                 onExport={exportCSV}
                 teamStrengths={teamStrengths}
                 onTeamStrengths={setTeamStrengths}
@@ -2971,11 +3254,18 @@ export default function App() {
           </div>
 
           <footer className="studio-feed-footer">
-            <button onClick={() => setModal("settings")}>
+            <button
+              onClick={() => {
+                setSettingsTab("sources");
+                setModal("settings");
+              }}
+            >
               <i
                 className={
                   Object.values(data.sources).some(
-                    (source) => source.status === "stale",
+                    (source) =>
+                      source.status === "stale" ||
+                      source.status === "unavailable",
                   )
                     ? "stale"
                     : ""
@@ -2992,21 +3282,34 @@ export default function App() {
         </main>
       </div>
 
-      {busy && (
-        <div className="global-busy">
-          <LoaderCircle size={14} className="spin" />
-          <span>{planBusyLabel}</span>
-        </div>
-      )}
+      {busy &&
+        !(
+          tab === "lineup" &&
+          Boolean(week) &&
+          !modal &&
+          (detailId === null || (Boolean(detailAnchor) && wideLayout))
+        ) && (
+          <div className="global-busy" role="status" aria-live="polite">
+            <LoaderCircle size={14} className="spin" />
+            <span>{planBusyLabel}</span>
+          </div>
+        )}
       {toast && (
         <div
           className={`toast ${toast.error ? "toast-error" : ""}`}
-          role="status"
+          role={toast.error ? "alert" : "status"}
         >
           {toast.error ? <Info size={17} /> : <Check size={17} />}
           <span>{planToastText}</span>
           {toast.action ? (
-            <button className="toast-undo" onClick={toast.action.run}>
+            <button
+              className="toast-undo"
+              onClick={() => {
+                const run = toast.action!.run;
+                setToast(null);
+                run();
+              }}
+            >
               {toast.action.label}
             </button>
           ) : null}
@@ -3041,10 +3344,14 @@ export default function App() {
                   aria-label="Starting bank"
                   type="number"
                   min="0"
-                  max="100"
+                  max="200"
                   step="0.1"
-                  value={teamBank}
-                  onChange={(event) => setTeamBank(+event.target.value)}
+                  value={Number.isFinite(teamBank) ? teamBank : ""}
+                  onChange={(event) =>
+                    setTeamBank(
+                      event.target.value === "" ? NaN : +event.target.value,
+                    )
+                  }
                 />
               </label>
               <label>
@@ -3063,7 +3370,7 @@ export default function App() {
               </label>
             </div>
             <button
-              className="button primary"
+              className="button primary full"
               disabled={Boolean(busy)}
               onClick={() => void saveTeamSettings()}
             >
@@ -3100,14 +3407,14 @@ export default function App() {
               </div>
             </label>
             <p className="help-text">
-              Find your ID in your FPL Points-page URL: /entry/<b>123456</b>
-              /event/… Latest published squad only.
+              From your FPL Points URL: /entry/<b>123456</b>/event/… (latest
+              published squad).
             </p>
             <div className="divider" />
-            <h3>Your plan's starting resources</h3>
+            <h3>Starting resources</h3>
             <p className="help-text">
-              Verify these after import. Original purchase prices may be
-              estimated from the first observed price.
+              Verify bank and FTs; purchase prices may use first observed
+              values.
             </p>
             <div className="field-grid">
               <label>
@@ -3118,8 +3425,10 @@ export default function App() {
                   min="0"
                   max="200"
                   step="0.1"
-                  value={teamBank}
-                  onChange={(e) => setTeamBank(+e.target.value)}
+                  value={Number.isFinite(teamBank) ? teamBank : ""}
+                  onChange={(e) =>
+                    setTeamBank(e.target.value === "" ? NaN : +e.target.value)
+                  }
                 />
               </label>
               <label>
@@ -3138,36 +3447,46 @@ export default function App() {
             <button
               className="button full"
               disabled={!active || !!busy}
-              onClick={saveTeamSettings}
+              onClick={() => void saveTeamSettings()}
             >
               Update plan resources
             </button>
             <p className="privacy-note">
               <ShieldCheck size={14} />
-              {saveStatus === "local" ? "Plans stay in this browser." : "Plans save across your devices."} No transfers are submitted to FPL.
+              {saveStatus === "local"
+                ? "Saved locally."
+                : "Synced across devices."}{" "}
+              Never submits transfers to FPL.
             </p>
           </div>
         </Modal>
       )}
       {modal === "csv" && (
         <Modal
-          title="Bring your own model."
-          subtitle="Blend another projection source, or import your minutes scenarios."
+          title="Import CSV"
+          subtitle="Blend external points or load minutes scenarios"
           onClose={() => setModal(null)}
         >
           <div className="modal-body">
-            <p>
-              Use a CSV with <code>player_id, gameweek, expected_points</code>,
-              or a provider export with <code>ID, 6_Pts, 7_Pts, …</code>. For
-              conditional minutes scenarios, use{" "}
-              <code>player_id, conditional_minutes</code> for a global duration,
-              or{" "}
-              <code>
-                player_id, gameweek, conditional_minutes, availability
-              </code>
-              for weekly assumptions. Availability uses 0–1. Scheduled weeks
-              take priority over point blends.
-            </p>
+            <ul
+              className="help-text"
+              style={{ paddingLeft: 16, margin: 0, display: "grid", gap: 4 }}
+            >
+              <li>
+                Points: <code>player_id, gameweek, expected_points</code> or{" "}
+                <code>ID, 6_Pts, …</code>
+              </li>
+              <li>
+                Global minutes: <code>player_id, conditional_minutes</code>
+              </li>
+              <li>
+                Weekly minutes:{" "}
+                <code>
+                  player_id, gameweek, conditional_minutes, availability
+                </code>{" "}
+                (0–1; overrides blends)
+              </li>
+            </ul>
             <label className="range-label">
               Imported model weight<b>{csvWeight}%</b>
               <input
@@ -3180,16 +3499,13 @@ export default function App() {
                 onChange={(e) => setCsvWeight(+e.target.value)}
               />
             </label>
-            <p className="help-text">
-              Matched weeks use the imported forecasts. With extrapolation on,
-              later weeks carry a fading player-level adjustment through the
-              future fixture schedule. Event components and simulations retain
-              the base model; the point adjustment is shown separately.
-            </p>
             <label className="toggle-row">
               <span>
                 <b>Extend beyond imported weeks</b>
-                <small>Fading fixture-aware extrapolation through GW38</small>
+                <small>
+                  Fading fixture-aware point adjustment; components and
+                  simulations keep the base model
+                </small>
               </span>
               <input
                 type="checkbox"
@@ -3206,7 +3522,9 @@ export default function App() {
                 type="file"
                 accept=".csv,text/csv"
                 onChange={(e) => {
-                  if (e.target.files?.[0]) void importCSV(e.target.files[0]);
+                  const file = e.target.files?.[0];
+                  e.target.value = "";
+                  if (file) void importCSV(file);
                 }}
               />
             </label>
@@ -3222,7 +3540,7 @@ export default function App() {
               }
             >
               <Download size={15} />
-              Download a valid template
+              Download template
             </button>
           </div>
         </Modal>
@@ -3246,25 +3564,6 @@ export default function App() {
               ]}
             />
             <div className="settings-body">
-              <section hidden={settingsTab !== "plans"}>
-                {window.location.hostname.endsWith("workers.dev") && <form method="post" action="/auth/signout"><button className="button small" type="submit">Sign out</button></form>}
-                {deletedPlans.length ? (
-                  <details className="compact-details deleted-plans">
-                    <summary>Deleted plans · {deletedPlans.length}</summary>
-                    {deletedPlans.map((plan) => (
-                      <div key={plan.id}>
-                        <span>{plan.name}</span>
-                        <button
-                          className="button small"
-                          onClick={() => restoreDeleted(plan)}
-                        >
-                          Restore
-                        </button>
-                      </div>
-                    ))}
-                  </details>
-                ) : null}
-              </section>
               <section hidden={settingsTab !== "inputs"}>
                 <h3>Forecast inputs</h3>
                 <DataRefreshSettings />
@@ -3387,10 +3686,37 @@ export default function App() {
                   </span>
                   <button
                     className="button small"
+                    disabled={
+                      !Object.keys(overrides).length &&
+                      !Object.keys(minutesSchedule).length
+                    }
                     onClick={() => {
                       setOverrides({});
                       setMinutesSchedule({});
                       notify("Minutes scenarios cleared.");
+                    }}
+                  >
+                    Reset all
+                  </button>
+                </div>
+                <div className="setting-row">
+                  <span>
+                    <b>Player stat scenarios</b>
+                    <small>
+                      {
+                        Object.values(statSchedule).filter(
+                          (weeks) => Object.keys(weeks).length > 0,
+                        ).length
+                      }{" "}
+                      players customised
+                    </small>
+                  </span>
+                  <button
+                    className="button small"
+                    disabled={!Object.keys(statSchedule).length}
+                    onClick={() => {
+                      setStatSchedule({});
+                      notify("Player stat scenarios cleared.");
                     }}
                   >
                     Reset all
@@ -3416,18 +3742,40 @@ export default function App() {
                 </div>
                 <div className="setting-row">
                   <span>
-                    <b>Imported points model</b>
+                    <b>Fixture schedule moves</b>
                     <small>
-                      {customName || "No external CSV loaded"} ·{" "}
-                      {fmt(blendWeight * 100, 0)}% weight
+                      {Object.keys(fixtureMoves).length} fixtures moved
                     </small>
                   </span>
                   <button
                     className="button small"
+                    disabled={!Object.keys(fixtureMoves).length}
+                    onClick={() => {
+                      setFixtureMoves({});
+                      notify("Fixture schedule restored.");
+                    }}
+                  >
+                    Reset all
+                  </button>
+                </div>
+                <div className="setting-row">
+                  <span>
+                    <b>Imported points model</b>
+                    <small>
+                      {hasCustomCSV
+                        ? customName || "Imported CSV"
+                        : "No external CSV loaded"}{" "}
+                      · {fmt(blendWeight * 100, 0)}% weight
+                    </small>
+                  </span>
+                  <button
+                    className="button small"
+                    disabled={!hasCustomCSV}
                     onClick={() => {
                       setCustomPoints({});
                       setBlendWeight(0);
                       setCustomName("");
+                      notify("Imported CSV cleared.");
                     }}
                   >
                     Clear
@@ -3440,11 +3788,18 @@ export default function App() {
                     <b>{({ local: "Saved in this browser", loading: "Connecting shared plans…", saved: "Saved across devices", saving: "Saving shared plans…", error: "Shared saving paused", conflict: "Plans changed on another device" })[saveStatus]}</b>
                     {(saveStatus === "error" || saveStatus === "conflict") && <small>Your local copy is retained.</small>}
                   </span>
-                  {saveStatus === "error" && <button className="button small" onClick={() => void sharedRef.current!.flush()}>Retry save</button>}
-                  {saveStatus === "conflict" && <button className="button small" onClick={() => {
-                    download("open-fpl-before-sync.json", JSON.stringify(createPlanExport(plans, forecastArgs, settings), null, 2));
-                    void sharedRef.current!.pull((document, current) => adoptSharedRef.current(document, current), true);
-                  }}>Back up &amp; load shared</button>}
+                  {(saveStatus === "error" ||
+                    saveStatus === "conflict" ||
+                    window.location.hostname.endsWith("workers.dev")) && (
+                    <div className="button-row">
+                      {saveStatus === "error" && <button className="button small" onClick={() => void sharedRef.current!.flush()}>Retry save</button>}
+                      {saveStatus === "conflict" && <button className="button small" onClick={() => {
+                        download("open-fpl-before-sync.json", JSON.stringify(createPlanExport(plans, forecastArgs, settings), null, 2));
+                        void sharedRef.current!.pull((document, current) => adoptSharedRef.current(document, current), true);
+                      }}>Back up &amp; load shared</button>}
+                      {window.location.hostname.endsWith("workers.dev") && <form method="post" action="/auth/signout"><button className="button small" type="submit">Sign out</button></form>}
+                    </div>
+                  )}
                 </div>
                 <h3>Planning branches</h3>
                 <div className="button-row">
@@ -3466,15 +3821,22 @@ export default function App() {
                   </button>
                   <button
                     className="button"
-                    onClick={() =>
-                      setBackupText(
-                        JSON.stringify(
-                          createPlanExport(plans, forecastArgs, settings),
-                          null,
-                          2,
-                        ),
-                      )
-                    }
+                    onClick={() => {
+                      const json = JSON.stringify(
+                        createPlanExport(plans, forecastArgs, settings),
+                        null,
+                        2,
+                      );
+                      setBackupText(json);
+                      if (navigator.clipboard?.writeText) {
+                        void navigator.clipboard.writeText(json).then(
+                          () => notify("Backup copied."),
+                          () => notify("Backup ready below."),
+                        );
+                      } else {
+                        notify("Backup ready below.");
+                      }
+                    }}
                   >
                     <Copy size={15} />
                     Backup text
@@ -3535,8 +3897,7 @@ export default function App() {
                   </button>
                 </details>
                 <p className="help-text">
-                  Plan files are checked against current FPL rules before being
-                  loaded. Browser storage stays on this device.
+                  Checked against current FPL rules on import.
                 </p>
                 <button
                   className="button full"
@@ -3546,42 +3907,37 @@ export default function App() {
                   <RefreshCw size={15} />
                   Refresh public feeds
                 </button>
+                {deletedPlans.length ? (
+                  <details className="compact-details deleted-plans">
+                    <summary>Deleted plans · {deletedPlans.length}</summary>
+                    {deletedPlans.map((plan) => (
+                      <div key={plan.id}>
+                        <span>{plan.name}</span>
+                        <button
+                          className="button small"
+                          disabled={Boolean(busy)}
+                          onClick={() => void restoreDeleted(plan)}
+                        >
+                          Restore
+                        </button>
+                      </div>
+                    ))}
+                  </details>
+                ) : null}
               </section>
               <section hidden={settingsTab !== "sources"}>
                 <h3>Connected sources</h3>
-                {Object.entries(data.sources)
-                  .filter(([key]) =>
-                    [
-                      "fpl_bootstrap",
-                      "fpl_fixtures",
-                      "fpljoe",
-                      "elevenify_sheet",
-                      "solio_public",
-                      `fplform_${data.season}_gw${data.next_gw}`,
-                      "archive_2025-26_gws",
-                    ].includes(key),
-                  )
-                  .map(([key, s]) => (
-                    <a
-                      className="source-setting"
-                      key={key}
-                      href={s.url}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      <span
-                        className={`status-dot ${s.status === "stale" || s.status === "unavailable" ? "stale" : ""}`}
-                      />
-                      <span>
-                        <b>{key.replaceAll("_", " ")}</b>
-                        <small>
-                          {s.fetched_at
-                            ? new Date(s.fetched_at).toLocaleString()
-                            : "Unavailable"}
-                        </small>
-                      </span>
-                      <ArrowUpRight size={14} />
-                    </a>
+                {topSources.map(renderSourceRow)}
+                {extraSources.length > 0 &&
+                  (extraSources.length <= 6 ? (
+                    extraSources.map(renderSourceRow)
+                  ) : (
+                    <details className="compact-details">
+                      <summary>
+                        Additional feeds · {extraSources.length}
+                      </summary>
+                      {extraSources.map(renderSourceRow)}
+                    </details>
                   ))}
                 <p className="help-text">
                   Vendor data is locally cached and attributed. Public access is
@@ -3603,8 +3959,8 @@ export default function App() {
       )}
       {modal === "help" && (
         <Modal
-          title="A clearer way to play."
-          subtitle="Free planning, explainable predictions, and honest evaluation."
+          title="Quick guide"
+          subtitle="Forecasts, planning and evaluation"
           onClose={() => setModal(null)}
           wide
         >
@@ -3613,23 +3969,23 @@ export default function App() {
               {[
                 [
                   "1",
-                  "Make it yours",
-                  "Import a public FPL ID, or explore the generated legal £100m squad. Check your bank and saved transfers.",
+                  "Import squad",
+                  "Load a public FPL ID or £100m squad, then verify bank and free transfers.",
                 ],
                 [
                   "2",
-                  "Explore the upside",
-                  "Use projections, fixture views and watchlists. Select any player to inspect the components and adjust conditional minutes.",
+                  "Inspect forecasts",
+                  "Browse projections and fixtures. Click a player to inspect components or edit minutes.",
                 ],
                 [
                   "3",
-                  "Think a few moves ahead",
-                  "Switch gameweeks, transfer players, choose captains and chips. Duplicate your plan to compare another route.",
+                  "Plan branches",
+                  "Make transfers, set captains and chips, and duplicate branches to compare routes.",
                 ],
                 [
                   "4",
-                  "Measure the decisions",
-                  "Run a constrained solve, review its assumptions, and freeze forecasts before the deadline for prospective evaluation.",
+                  "Optimise & score",
+                  "Run constrained solves and save pre-deadline snapshots for prospective scoring.",
                 ],
               ].map(([n, t, p]) => (
                 <div key={n}>
@@ -3640,26 +3996,18 @@ export default function App() {
               ))}
             </div>
             <div className="divider" />
-            <h3>How expected points work</h3>
+            <h3>Model &amp; limits</h3>
             <p>
-              Our model separates appearance and 60-minute probabilities from
-              attacking rates. It shrinks recent xG and xA toward historical
-              position averages, adjusts them to fixture-level team
-              expectations, and adds scoring events under the current official
-              FPL rules. Displayed team totals include expected automatic
-              substitutions and vice-captain fallback, assuming independent
-              player appearances. These probabilities are uncalibrated.
+              Expected points combine appearance/60-minute probabilities,
+              shrunk xG/xA rates, fixture team expectations and official FPL
+              scoring, with independent autosub and vice-captain fallback.
+              Bonus uses a historical rate; probabilities and simulated ranges
+              are uncalibrated, and manual minutes are conditional scenarios.
             </p>
             <p>
-              Manual minutes are conditional scenario assumptions, not a
-              guaranteed appearance. Bonus is a historical approximation.
-              Simulated ranges assume independent events and have not been
-              calibrated.
-            </p>
-            <p>
-              The walk-forward benchmark against the previous model is in
-              Analysis. A competitive paid-provider comparison needs forecasts
-              from the same deadlines and has not been established.
+              Walk-forward component benchmarks live in Plans. Provider blends
+              require prospective pre-deadline scoring; paid-provider parity is
+              unproven.
             </p>
             <div className="reference-links">
               <a
@@ -3719,7 +4067,9 @@ export default function App() {
           }
         >
           <div className={`modal-body player-detail detail-tab-${detailTab}`}>
-            {forecastFeedback}
+            {!(detailInline && tab === "projections" && projectionEditorTarget) &&
+              !(detailAnchor && wideLayout) &&
+              forecastFeedback}
             <div className="player-context-bar">
               {detailReadOnly ? (
                 <span className="subtle-tag">Draft preview</span>
@@ -3757,6 +4107,7 @@ export default function App() {
                           false,
                           active,
                           detailInline,
+                          true,
                         );
                       }}
                     >
@@ -3810,26 +4161,32 @@ export default function App() {
               />
             </div>
             <div className="player-dialog-actions">
-              <button
-                className={`button small ${detailWeek?.captain === detailId ? "selected" : ""}`}
-                title="Captain"
-                disabled={
-                  Boolean(busy) || !detailWeek?.starters.includes(detailId)
-                }
-                onClick={() => setCaptain(detailId, false, playerGW)}
-              >
-                C<span>Captain</span>
-              </button>
-              <button
-                className={`button small ${detailWeek?.vice === detailId ? "selected" : ""}`}
-                title="Vice-captain"
-                disabled={
-                  Boolean(busy) || !detailWeek?.starters.includes(detailId)
-                }
-                onClick={() => setCaptain(detailId, true, playerGW)}
-              >
-                VC<span>Vice</span>
-              </button>
+              {!detailReadOnly && (
+                <>
+                  <button
+                    className={`button small ${detailWeek?.captain === detailId ? "selected" : ""}`}
+                    aria-pressed={detailWeek?.captain === detailId}
+                    title="Captain"
+                    disabled={
+                      Boolean(busy) || !detailWeek?.starters.includes(detailId)
+                    }
+                    onClick={() => setCaptain(detailId, false, playerGW)}
+                  >
+                    Captain
+                  </button>
+                  <button
+                    className={`button small ${detailWeek?.vice === detailId ? "selected" : ""}`}
+                    aria-pressed={detailWeek?.vice === detailId}
+                    title="Vice-captain"
+                    disabled={
+                      Boolean(busy) || !detailWeek?.starters.includes(detailId)
+                    }
+                    onClick={() => setCaptain(detailId, true, playerGW)}
+                  >
+                    Vice
+                  </button>
+                </>
+              )}
               <button
                 className={`button small ${settings.locked.includes(detailId) ? "selected" : ""}`}
                 aria-pressed={settings.locked.includes(detailId)}
@@ -3848,22 +4205,21 @@ export default function App() {
                 <Ban size={14} />
                 Ban
               </button>
-              {detailSquad ? (
+              {!detailReadOnly && detailSquad ? (
                 <button
                   className="button small"
                   disabled={Boolean(busy)}
                   onClick={() => {
-                    setGw(playerGW);
                     setSelected(detailId);
-                    setDetailId(null);
-                    setTab("lineup");
+                    navigateTab("lineup", playerGW);
                   }}
                 >
                   <ArrowLeftRight size={14} />
                   Substitute
                 </button>
               ) : null}
-              {detailWeek?.bench.includes(detailId) &&
+              {!detailReadOnly &&
+              detailWeek?.bench.includes(detailId) &&
               detailPlayer.position_id !== 1 ? (
                 <>
                   <button
@@ -3946,7 +4302,9 @@ export default function App() {
                     detailPlayer.gw[String(playerGW)]?.components ?? {},
                   ).map(([key, value]) => (
                     <div key={key}>
-                      <span>{key.replaceAll("_", " ")}</span>
+                      <span>
+                        {componentLabels[key] ?? key.replaceAll("_", " ")}
+                      </span>
                       <div>
                         <i
                           className={value < 0 ? "negative" : ""}
@@ -3973,7 +4331,7 @@ export default function App() {
               </section>
               <section>
                 <StatScenarioEditor
-                  key={`stats-${detailId}-${playerGW}`}
+                  key={`stats-${detailId}`}
                   player={detailPlayer}
                   weeks={data.gameweeks}
                   gw={playerGW}
@@ -3990,10 +4348,10 @@ export default function App() {
                   }
                   onNotify={notify}
                 />
-                <details className="player-minutes-options">
+                <details className="player-minutes-options" open>
                   <summary>Edit minutes</summary>
                   <MinutesScenarioEditor
-                    key={`minutes-${detailId}-${playerGW}`}
+                    key={`minutes-${detailId}`}
                     player={detailPlayer}
                     weeks={data.gameweeks}
                     gw={playerGW}
@@ -4039,25 +4397,29 @@ export default function App() {
                     <b>{fmt(detailPlayer.dc_probability * 100, 0)}%</b>
                   </span>
                 </div>
-                <div className="fixture-source-detail">
-                  {detailPlayer.gw[String(playerGW)]?.fixtures.map((f) => (
-                    <p key={f.id}>
-                      <Badge
-                        code={
-                          data.teams.find((t) => t.id === f.opponent_id)?.code
-                        }
-                        size={18}
-                      />
-                      <span>
-                        <b>
-                          {f.opponent} ({f.home ? "H" : "A"}) ·{" "}
-                          {fmt(f.cs * 100, 0)}% CS
-                        </b>
-                        <small>{f.source}</small>
-                      </span>
-                    </p>
-                  ))}
-                </div>
+                {Boolean(
+                  detailPlayer.gw[String(playerGW)]?.fixtures.length,
+                ) && (
+                  <div className="fixture-source-detail">
+                    {detailPlayer.gw[String(playerGW)]?.fixtures.map((f) => (
+                      <p key={f.id}>
+                        <Badge
+                          code={
+                            data.teams.find((t) => t.id === f.opponent_id)?.code
+                          }
+                          size={18}
+                        />
+                        <span>
+                          <b>
+                            {f.opponent} ({f.home ? "H" : "A"}) ·{" "}
+                            {fmt(f.cs * 100, 0)}% CS
+                          </b>
+                          <small>{f.source}</small>
+                        </span>
+                      </p>
+                    ))}
+                  </div>
+                )}
               </section>
             </div>
             <section className="detail-forecast">
@@ -4075,91 +4437,103 @@ export default function App() {
             </section>
             {detailTab === "history" &&
               (detailLoading ? (
-                <Busy text="Loading match history and scenario simulation…" />
-              ) : (
-                detail && (
-                  <>
-                    <div className="detail-grid history-grid">
-                      <section>
-                        <h3>Simulated points</h3>
-                        <div className="distribution-chart">
-                          {detail.simulation.histogram.map((v) => (
-                            <div
-                              key={v.points}
-                              title={`${v.points} points · ${fmt(v.probability * 100, 1)}%`}
-                            >
-                              <i
-                                style={{
-                                  height: `${Math.max(2, (v.probability / Math.max(...detail.simulation.histogram.map((x) => x.probability))) * 95)}px`,
-                                }}
-                              />
-                              <span>{v.points}</span>
-                            </div>
-                          ))}
-                        </div>
-                        <div className="distribution-stats">
-                          <span>
-                            ≤2 points{" "}
-                            <b>
-                              {fmt(
-                                detail.simulation.blank_probability * 100,
-                                0,
-                              )}
-                              %
-                            </b>
-                          </span>
-                          <span>
-                            10+ points{" "}
-                            <b>
-                              {fmt(detail.simulation.haul_probability * 100, 0)}
-                              %
-                            </b>
-                          </span>
-                          <span>
-                            10th–90th percentile{" "}
-                            <b>
-                              {fmt(detail.simulation.p10, 0)}–
-                              {fmt(detail.simulation.p90, 0)}
-                            </b>
-                          </span>
-                        </div>
-                        <p className="source-caption">
-                          {detail.simulation.label} ·{" "}
-                          {detail.simulation.trials.toLocaleString()} trials.
-                          Base model, excluding custom overrides/blends.
-                        </p>
-                      </section>
-                      <section>
-                        <h3>Recent match record</h3>
-                        <div className="history-list">
-                          {!detail.history.length ? (
-                            <p className="inline-empty">
-                              No recent match records.
-                            </p>
-                          ) : null}
-                          {detail.history
-                            .slice(-6)
-                            .reverse()
-                            .map((r, i) => (
-                              <div key={`${r.date}-${i}`}>
-                                <span>
-                                  GW{r.gw}
-                                  <small>{r.season}</small>
-                                </span>
-                                <span>{r.opponent || "—"}</span>
-                                <span>{r.minutes} min</span>
-                                <b>{r.total_points} pts</b>
-                              </div>
-                            ))}
-                        </div>
-                        <p className="source-caption">
-                          Official FPL and vaastav archive · per-fixture actual
-                          points
-                        </p>
-                      </section>
+                <Busy text="Loading history & simulation…" />
+              ) : detail ? (
+                <div className="detail-grid history-grid">
+                  <section>
+                    <h3>Simulated points</h3>
+                    <div className="distribution-chart">
+                      {detail.simulation.histogram.map((v) => {
+                        const showLabel =
+                          detail.simulation.histogram.length <= 14 ||
+                          v.points % 2 === 0;
+                        return (
+                          <div
+                            key={v.points}
+                            title={`${v.points} points · ${fmt(v.probability * 100, 1)}%`}
+                          >
+                            <i
+                              style={{
+                                height: `${Math.max(2, (v.probability / Math.max(...detail.simulation.histogram.map((x) => x.probability))) * 95)}px`,
+                              }}
+                            />
+                            <span aria-hidden={!showLabel || undefined}>
+                              {showLabel ? v.points : "\u00a0"}
+                            </span>
+                          </div>
+                        );
+                      })}
                     </div>
-                  </>
-                )
+                    <div className="distribution-stats">
+                      <span>
+                        ≤2 points{" "}
+                        <b>
+                          {fmt(detail.simulation.blank_probability * 100, 0)}%
+                        </b>
+                      </span>
+                      <span>
+                        10+ points{" "}
+                        <b>
+                          {fmt(detail.simulation.haul_probability * 100, 0)}%
+                        </b>
+                      </span>
+                      <span>
+                        10th–90th percentile{" "}
+                        <b>
+                          {fmt(detail.simulation.p10, 0)}–
+                          {fmt(detail.simulation.p90, 0)}
+                        </b>
+                      </span>
+                    </div>
+                    <p className="source-caption">
+                      {detail.simulation.label} ·{" "}
+                      {detail.simulation.trials.toLocaleString()} trials. Base
+                      model, excluding custom overrides/blends.
+                    </p>
+                  </section>
+                  <section>
+                    <h3>Recent match record</h3>
+                    <div className="history-list">
+                      {!detail.history.length ? (
+                        <p className="inline-empty">No recent match records.</p>
+                      ) : null}
+                      {detail.history
+                        .slice(-6)
+                        .reverse()
+                        .map((r, i) => (
+                          <div key={`${r.date}-${i}`}>
+                            <span>
+                              GW{r.gw}
+                              <small>{r.season}</small>
+                            </span>
+                            <span>{r.opponent || "—"}</span>
+                            <span>{r.minutes} min</span>
+                            <b>{r.total_points} pts</b>
+                          </div>
+                        ))}
+                    </div>
+                    <p className="source-caption">
+                      Official FPL and vaastav archive · per-fixture actual
+                      points
+                    </p>
+                  </section>
+                </div>
+              ) : (
+                <Empty
+                  title="History unavailable"
+                  text={
+                    detailError ||
+                    "Could not load match history and simulation."
+                  }
+                >
+                  <button
+                    className="button small"
+                    onClick={() => setDetailRetry((n) => n + 1)}
+                  >
+                    <RefreshCw size={14} />
+                    Retry
+                  </button>
+                </Empty>
               ))}
           </div>
         </PlayerSurface>

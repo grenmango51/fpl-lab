@@ -130,6 +130,10 @@
 .solio-detail-panel .solver-preview .bench-player .pitch-meta > span {
   font-size: 9px;
 }
+.solio-detail-panel .solver-preview .bench-label > span:last-child {
+  font-size: 9px;
+  color: #8da2bf;
+}
 .solio-detail-panel .result-week-foot {
   font-size: 11px;
 }

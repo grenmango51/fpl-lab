@@ -517,7 +517,13 @@ export default function App() {
     setProviderWeight(configuration.provider_weight);
     setExtrapolate(configuration.extrapolate);
     setAnchorHalfLife(configuration.anchor_half_life);
-    setCustomName(configuration.custom_name);
+    setCustomName(
+      !Object.keys(configuration.custom_points).length &&
+        configuration.blend_weight === 0 &&
+        configuration.custom_name === "Imported CSV"
+        ? ""
+        : configuration.custom_name,
+    );
   }
   function archivePlanningInputs(savedPlans: unknown, configuration: unknown) {
     try {
@@ -872,9 +878,9 @@ export default function App() {
     return () => clearTimeout(t);
   }, [toast]);
   useEffect(() => {
-    if (week && selected !== null && !week.squad.includes(selected))
+    if (!loading && data && selected !== null && !week?.squad.includes(selected))
       setSelected(null);
-  }, [week, selected]);
+  }, [loading, data, week, selected]);
   useEffect(() => {
     if (!solveResult && detailReadOnly) setDetailReadOnly(false);
   }, [solveResult, detailReadOnly]);
@@ -1132,7 +1138,7 @@ export default function App() {
     } else {
       const anchor = source
         ?.closest(
-          ".player-select,.projection-value,.player-info,.board-transfers button,.squad-name,.overview-target-list .player-name-cell",
+          ".player-select,.projection-value,.player-info,.board-transfers button,.squad-table .icon-button,.overview-target-list .player-name-cell",
         )
         ?.getBoundingClientRect();
       if (anchor) {
@@ -1248,7 +1254,13 @@ export default function App() {
         next.searchParams.set("plan", nextPlanId);
         window.history.replaceState(null, "", next);
       }
-      popstateReplaceRef.current = true;
+      if (
+        nextTab !== tab ||
+        nextGW !== gw ||
+        (Boolean(selectedPlan) && selectedPlan!.id !== activeId)
+      ) {
+        popstateReplaceRef.current = true;
+      }
       setTab(nextTab);
       if (selectedPlan) setActiveId(selectedPlan.id);
       setGw(nextGW);
@@ -1257,7 +1269,7 @@ export default function App() {
     };
     window.addEventListener("popstate", back);
     return () => window.removeEventListener("popstate", back);
-  }, [plans, data, activeId, gw]);
+  }, [plans, data, activeId, gw, tab]);
 
   // Claim ownership before React renders disabled controls. The version also
   // rejects callbacks that captured decisions before a completed operation.
@@ -1498,6 +1510,8 @@ export default function App() {
       setPlans((current) => [...current, valid]);
       setActiveId(p.id);
       setGw(valid.weeks[0].gw);
+      setSelected(null);
+      setDetailId(null);
       notify("Scenario created.");
     } catch (error) {
       if (operationRef.current === operation) notify((error as Error).message, true);
@@ -1591,6 +1605,8 @@ export default function App() {
       );
       setActiveId(valid.id);
       setGw(valid.weeks[0].gw);
+      setSelected(null);
+      setDetailId(null);
       notify("Plan restored.");
     } catch (error) {
       if (operationRef.current === operation) notify((error as Error).message, true);
@@ -1642,6 +1658,8 @@ export default function App() {
     };
     setPlans((ps) => [...ps, p]);
     setActiveId(p.id);
+    setSelected(null);
+    setDetailId(null);
     notify("Branch duplicated.");
   }
   function deletePlan() {
@@ -1836,6 +1854,8 @@ export default function App() {
       setPlans((ps) => [...ps, valid]);
       setActiveId(valid.id);
       setGw(data.next_gw);
+      setSelected(null);
+      setDetailId(null);
       setTeamBank(imported.bank);
       setTeamFT(imported.free_transfers);
       setModal(null);
@@ -2107,6 +2127,7 @@ export default function App() {
       setSolveContext(null);
       setPreviewingDraft(false);
       navigateTab("lineup", context.startGW);
+      setSelected(null);
       notify(`Branch saved · through GW${resultWeeks.at(-1)!.gw}.`);
     } catch (e) {
       if (operationRef.current === operation) notify((e as Error).message, true);
@@ -2123,15 +2144,14 @@ export default function App() {
       entry_id?: number;
       team_name?: string;
     };
+    const sameSquad = (row: Plan) =>
+      JSON.stringify(row.base_squad) === JSON.stringify(start.squad);
     const source =
-      plans.find(
-        (row) =>
-          row.name === job.settings.name &&
-          JSON.stringify(row.base_squad) === JSON.stringify(start.squad),
-      ) ??
-      (active && JSON.stringify(active.base_squad) === JSON.stringify(start.squad)
+      plans.find((row) => row.name === job.settings.name && sameSquad(row)) ??
+      (active && sameSquad(active)
         ? active
-        : (plans.find((row) => row.name === job.settings.name) ?? active));
+        : (plans.find(sameSquad) ??
+          plans.find((row) => row.name === job.settings.name)));
     const p: Plan = {
       id: uid(),
       name: `${job.settings.name} · stress ${label}`,
@@ -2155,6 +2175,7 @@ export default function App() {
       setPlans((ps) => [...ps, valid]);
       setActiveId(valid.id);
       navigateTab("lineup", valid.weeks[0].gw);
+      setSelected(null);
       notify("Stress branch saved.");
     } catch (e) {
       if (operationRef.current === operation) notify((e as Error).message, true);
@@ -2521,6 +2542,8 @@ export default function App() {
       setPlans((current) => [...current, valid]);
       setActiveId(valid.id);
       setGw(valid.weeks[0].gw);
+      setSelected(null);
+      setDetailId(null);
       notify("Chip branch saved.");
     } finally {
       finishOperation(operation);
@@ -2549,6 +2572,7 @@ export default function App() {
       setPlans((current) => [...current, valid]);
       setActiveId(valid.id);
       navigateTab("lineup", job.scope.gameweeks[0] ?? valid.weeks[0].gw);
+      setSelected(null);
       notify("Strategy branch saved.");
     } finally {
       finishOperation(operation);
@@ -2635,6 +2659,10 @@ export default function App() {
   });
   const showLeftPitch =
     pitchExpanded && wideLayout && !treeHidden && tab !== "data";
+  const hasCustomCSV =
+    Object.keys(customPoints).length > 0 ||
+    blendWeight > 0 ||
+    (Boolean(customName) && customName !== "Imported CSV");
   const forecastState = forecastStatus();
   const forecastFeedback = forecastState.stale ? (
     <div className="forecast-feedback" role={forecastState.error ? "alert" : "status"}>
@@ -2787,9 +2815,7 @@ export default function App() {
               <>
                 <button
                   className="icon-button tree-toggle"
-                  aria-label={
-                    treeHidden ? "Show planning tree" : "Hide planning tree"
-                  }
+                  aria-label="Planning tree"
                   aria-pressed={!treeHidden}
                   title={
                     treeHidden ? "Show planning tree" : "Hide planning tree"
@@ -3090,12 +3116,18 @@ export default function App() {
         </main>
       </div>
 
-      {busy && !(tab === "lineup" && Boolean(week)) && (
-        <div className="global-busy" role="status" aria-live="polite">
-          <LoaderCircle size={14} className="spin" />
-          <span>{planBusyLabel}</span>
-        </div>
-      )}
+      {busy &&
+        !(
+          tab === "lineup" &&
+          Boolean(week) &&
+          !modal &&
+          (detailId === null || (Boolean(detailAnchor) && wideLayout))
+        ) && (
+          <div className="global-busy" role="status" aria-live="polite">
+            <LoaderCircle size={14} className="spin" />
+            <span>{planBusyLabel}</span>
+          </div>
+        )}
       {toast && (
         <div
           className={`toast ${toast.error ? "toast-error" : ""}`}
@@ -3512,17 +3544,15 @@ export default function App() {
                   <span>
                     <b>Imported points model</b>
                     <small>
-                      {customName || "No external CSV loaded"} ·{" "}
-                      {fmt(blendWeight * 100, 0)}% weight
+                      {hasCustomCSV
+                        ? customName || "Imported CSV"
+                        : "No external CSV loaded"}{" "}
+                      · {fmt(blendWeight * 100, 0)}% weight
                     </small>
                   </span>
                   <button
                     className="button small"
-                    disabled={
-                      !Object.keys(customPoints).length &&
-                      !customName &&
-                      blendWeight === 0
-                    }
+                    disabled={!hasCustomCSV}
                     onClick={() => {
                       setCustomPoints({});
                       setBlendWeight(0);
@@ -3540,12 +3570,18 @@ export default function App() {
                     <b>{({ local: "Saved in this browser", loading: "Connecting shared plans…", saved: "Saved across devices", saving: "Saving shared plans…", error: "Shared saving paused", conflict: "Plans changed on another device" })[saveStatus]}</b>
                     {(saveStatus === "error" || saveStatus === "conflict") && <small>Your local copy is retained.</small>}
                   </span>
-                  {saveStatus === "error" && <button className="button small" onClick={() => void sharedRef.current!.flush()}>Retry save</button>}
-                  {saveStatus === "conflict" && <button className="button small" onClick={() => {
-                    download("open-fpl-before-sync.json", JSON.stringify(createPlanExport(plans, forecastArgs, settings), null, 2));
-                    void sharedRef.current!.pull((document, current) => adoptSharedRef.current(document, current), true);
-                  }}>Back up &amp; load shared</button>}
-                  {window.location.hostname.endsWith("workers.dev") && <form method="post" action="/auth/signout"><button className="button small" type="submit">Sign out</button></form>}
+                  {(saveStatus === "error" ||
+                    saveStatus === "conflict" ||
+                    window.location.hostname.endsWith("workers.dev")) && (
+                    <div className="button-row">
+                      {saveStatus === "error" && <button className="button small" onClick={() => void sharedRef.current!.flush()}>Retry save</button>}
+                      {saveStatus === "conflict" && <button className="button small" onClick={() => {
+                        download("open-fpl-before-sync.json", JSON.stringify(createPlanExport(plans, forecastArgs, settings), null, 2));
+                        void sharedRef.current!.pull((document, current) => adoptSharedRef.current(document, current), true);
+                      }}>Back up &amp; load shared</button>}
+                      {window.location.hostname.endsWith("workers.dev") && <form method="post" action="/auth/signout"><button className="button small" type="submit">Sign out</button></form>}
+                    </div>
+                  )}
                 </div>
                 <h3>Planning branches</h3>
                 <div className="button-row">

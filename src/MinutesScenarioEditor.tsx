@@ -181,6 +181,7 @@ export function MinutesScenarioEditor({
         </button>
         <button
           className="button small"
+          disabled={!Object.keys(schedule).length && globalMinutes === undefined}
           onClick={() => {
             syncLocalToRow(undefined, undefined);
             onReset();

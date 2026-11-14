@@ -4,8 +4,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ActionMenu,
   computeModalPosition,
+  hexLuminance,
   LineChart,
   PlayerName,
+  Shirt,
 } from "./components";
 import { MinutesScenarioEditor } from "./MinutesScenarioEditor";
 import { PlayerSurface } from "./PlayerSurface";
@@ -740,5 +742,188 @@ describe("TransferPanel, PlayerSurface, Modal, ActionMenu & PlayerName", () => {
     expect(chartHtml).toContain("<title>Expected points · GW11: 6.25</title>");
     expect(errSpy).not.toHaveBeenCalled();
     errSpy.mockRestore();
+  });
+
+  it("ensures >=4.5:1 Shirt text contrast across light/sky/amber/unmapped kits and caps LineChart maxY without GW37/GW38 collision", () => {
+    for (const code of [
+      "BRE",
+      "NEW",
+      "MCI",
+      "COV",
+      "HUL",
+      "FUL",
+      "LEE",
+      "TOT",
+      "UNK",
+    ]) {
+      const svg = renderToStaticMarkup(
+        Shirt({ player: makePlayer({ id: 30, team_short: code }) }),
+      );
+      expect(svg, code).toContain('fill="#132238"');
+    }
+    const gkSvg = renderToStaticMarkup(
+      Shirt({ player: makePlayer({ id: 31, position_id: 1, position: "GKP" }) }),
+    );
+    expect(gkSvg).toContain('fill="#132238"');
+    expect((hexLuminance("#91a1b7") + 0.05) / (hexLuminance("#132238") + 0.05)).toBeGreaterThanOrEqual(4.5);
+
+    for (const code of ["ARS", "CHE", "LIV", "AVL"]) {
+      const svg = renderToStaticMarkup(
+        Shirt({ player: makePlayer({ id: 32, team_short: code }) }),
+      );
+      expect(svg, code).toContain('fill="#ffffff"');
+    }
+
+    const labels38 = Array.from({ length: 38 }, (_, i) => `GW${i + 1}`);
+    const chart38 = renderToStaticMarkup(
+      LineChart({
+        series: [{ name: "CS%", values: labels38.map(() => 65) }],
+        labels: labels38,
+        maxY: 100,
+      }),
+    );
+    expect(chart38).toContain(">100.0</text>");
+    expect(chart38).not.toContain(">110.0</text>");
+    expect(chart38).toContain(">GW38</text>");
+    expect(chart38).not.toContain(">GW37</text>");
+  });
+
+  it("isolates editing compact state to Players sub-tab, omits duplicate 1-GW TransferPanel delta, formats StatScenarioEditor chips, and disables Use model when unedited", () => {
+    state.viewStore["projections.section"] = "teams";
+    const player = makePlayer({ id: 1 });
+    const data = {
+      gameweeks: [11],
+      teams: [{ id: 1, name: "Arsenal", short_name: "ARS", code: 3 }],
+      players: [player],
+    } as unknown as Bootstrap;
+
+    const teamsTree = ProjectionsView({
+      data,
+      gw: 11,
+      editing: { id: 1, gw: 11 },
+      busy: true,
+      onDetail: vi.fn(),
+      onEditorTarget: vi.fn(),
+      watch: [],
+      onWatch: vi.fn(),
+      onCSV: vi.fn(),
+      onExport: vi.fn(),
+      squad: [],
+      onTransfer: vi.fn(),
+      onCancelTransfer: vi.fn(),
+      teamStrengths: {},
+      onTeamStrengths: vi.fn(),
+      fixtureMoves: {},
+      onFixtureMoves: vi.fn(),
+    });
+    expect(teamsTree.props.className).not.toContain("projection-editing-compact");
+    expect(
+      nodes(teamsTree).some((n) =>
+        n.props.className?.includes("projection-controls-toggle"),
+      ),
+    ).toBe(false);
+    const slot = nodes(teamsTree).find(
+      (n) => n.props.className === "projection-player-slot",
+    )!;
+    expect(slot.props.hidden).toBe(true);
+
+    // 1-GW TransferPanel confirmation renders 2 impact boxes (Bank after + GW11 Δ xPts), not a duplicate 3rd
+    state.values = [];
+    state.cursor = 0;
+    const target = makePlayer({ id: 2, name: "Palmer", team: 2 });
+    const week: Week = {
+      gw: 11,
+      squad: [1],
+      starters: [1],
+      bench: [],
+      captain: 1,
+      vice: 1,
+      chip: "none",
+      bank: 5,
+      free_transfers: 1,
+      next_free_transfers: 2,
+      hits: 0,
+      points: 0,
+      net_points: 0,
+      transfers_in: [],
+      transfers_out: [],
+    };
+    const plan: Plan = {
+      id: "p",
+      name: "P",
+      weeks: [week],
+      base_squad: [1],
+      base_bank: 5,
+      free_transfers: 1,
+      purchase_prices: {},
+      created_at: "",
+    };
+    let tp = TransferPanel({
+      data: { players: [player, target], gameweeks: [11], teams: [] } as unknown as Bootstrap,
+      plan,
+      week,
+      outgoing: player,
+      busy: false,
+      watch: [],
+      onWatch: vi.fn(),
+      onInspect: vi.fn(),
+      onTransfer: vi.fn(async () => false),
+    });
+    nodes(tp).find((n) => n.props["aria-label"] === "Choose Palmer")!.props.onClick({});
+    state.cursor = 0;
+    tp = TransferPanel({
+      data: { players: [player, target], gameweeks: [11], teams: [] } as unknown as Bootstrap,
+      plan,
+      week,
+      outgoing: player,
+      busy: false,
+      watch: [],
+      onWatch: vi.fn(),
+      onInspect: vi.fn(),
+      onTransfer: vi.fn(async () => false),
+    });
+    const impact = nodes(tp).find((n) => n.props.className === "transfer-impact")!;
+    expect(impact.props.children.filter(Boolean)).toHaveLength(2);
+
+    // StatScenarioEditor chip labels xPts, xG, xA, CS%
+    state.values = [];
+    state.cursor = 0;
+    const statHtml = renderToStaticMarkup(
+      StatScenarioEditor({
+        player,
+        weeks: [11],
+        gw: 11,
+        onGWChange: vi.fn(),
+        schedule: {
+          "11": {
+            expected_points: 7.5,
+            xg: 0.45,
+            xa: 0.25,
+            clean_sheet_probability: 0.35,
+          },
+        },
+        onSchedule: vi.fn(),
+        onNotify: vi.fn(),
+      }),
+    );
+    expect(statHtml).toContain("xPts 7.50 · xG 0.45 · xA 0.25 · CS% 35");
+
+    // MinutesScenarioEditor Use model disabled when schedule is empty and globalMinutes is undefined
+    state.values = [];
+    state.cursor = 0;
+    const minTree = MinutesScenarioEditor({
+      player,
+      weeks: [11],
+      gw: 11,
+      onGWChange: vi.fn(),
+      schedule: {},
+      onSchedule: vi.fn(),
+      onReset: vi.fn(),
+      onNotify: vi.fn(),
+    });
+    const useModelBtn = nodes(minTree).find(
+      (n) => n.type === "button" && n.props.children === "Use model",
+    )!;
+    expect(useModelBtn.props.disabled).toBe(true);
   });
 });

@@ -253,10 +253,22 @@ export function StatScenarioEditor({
                 <button onClick={() => selectWeek(+week)}>
                   GW{week} ·{" "}
                   {Object.entries(row)
-                    .map(
-                      ([key, value]) =>
-                        `${key === "clean_sheet_probability" ? "CS" : key === "expected_points" ? "xPts" : key} ${fmt(value * (key === "clean_sheet_probability" ? 100 : 1), key === "clean_sheet_probability" ? 0 : 2)}${key === "clean_sheet_probability" ? "%" : ""}`,
-                    )
+                    .map(([key, value]) => {
+                      const label =
+                        key === "clean_sheet_probability"
+                          ? "CS%"
+                          : key === "expected_points"
+                            ? "xPts"
+                            : key === "xg"
+                              ? "xG"
+                              : key === "xa"
+                                ? "xA"
+                                : key;
+                      return `${label} ${fmt(
+                        value * (key === "clean_sheet_probability" ? 100 : 1),
+                        key === "clean_sheet_probability" ? 0 : 2,
+                      )}`;
+                    })
                     .join(" · ")}
                 </button>
                 <button

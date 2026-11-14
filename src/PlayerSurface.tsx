@@ -23,8 +23,15 @@ export function PlayerSurface({
   const opener = useRef<HTMLElement | null>(null);
   useEffect(() => {
     if (!target) return;
+    const node = inline.current;
     return () => {
-      if (opener.current?.isConnected) {
+      const active = document.activeElement;
+      if (
+        opener.current?.isConnected &&
+        (!active ||
+          active === document.body ||
+          (inline.current ?? node)?.contains(active))
+      ) {
         opener.current.focus({ preventScroll: true });
       }
       opener.current = null;

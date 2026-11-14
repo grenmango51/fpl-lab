@@ -52,6 +52,28 @@ export function Badge({
     />
   );
 }
+export function hexLuminance(hex: string): number {
+  const clean = hex.replace("#", "").trim();
+  const full =
+    clean.length === 3
+      ? clean
+          .split("")
+          .map((ch) => ch + ch)
+          .join("")
+      : clean;
+  const num = Number.parseInt(full, 16);
+  if (!Number.isFinite(num)) return 0;
+  const channels = [(num >> 16) & 255, (num >> 8) & 255, num & 255].map((v) => {
+    const s = v / 255;
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+}
+
+export function isLightHex(hex: string, threshold = 0.34): boolean {
+  return hexLuminance(hex) >= threshold;
+}
+
 export function Shirt({
   player,
   small = false,
@@ -61,6 +83,8 @@ export function Shirt({
 }) {
   const colors = clubColors[player.team_short] ?? ["#91a1b7", "#cad5e3"];
   const gk = player.position_id === 1;
+  const baseFill = gk ? "#a6b675" : colors[0];
+  const lightTextBg = isLightHex(baseFill);
   return (
     <svg
       viewBox="0 0 72 72"
@@ -69,7 +93,7 @@ export function Shirt({
     >
       <path
         d="M23 9l-13 6-8 17 14 6 5-9v33h30V29l5 9 14-6-8-17-13-6-7 6H30z"
-        fill={gk ? "#a6b675" : colors[0]}
+        fill={baseFill}
         stroke="rgba(255,255,255,.23)"
         strokeWidth="1.2"
       />
@@ -91,15 +115,13 @@ export function Shirt({
         x="36"
         y="44"
         textAnchor="middle"
-        fill={
-          gk
-            ? "#243120"
-            : colors[0] === "#f1f2ef" ||
-                colors[0] === "#f5f4eb" ||
-                colors[0] === "#eff1f5"
-              ? "#24334b"
-              : "#fff"
+        fill={lightTextBg ? "#132238" : "#ffffff"}
+        stroke={
+          lightTextBg ? "rgba(255,255,255,.72)" : "rgba(11,21,37,.78)"
         }
+        strokeWidth="2.2"
+        strokeLinejoin="round"
+        paintOrder="stroke"
         fontSize="10"
         fontWeight="700"
         fontFamily="inherit"
@@ -376,7 +398,9 @@ export function Modal({
       const target = event.target instanceof Element ? event.target : null;
       if (
         !dialog.current?.contains(event.target as Node) &&
-        !target?.closest(".player-select,.player-info,.projection-value")
+        !target?.closest(
+          ".player-select,.player-info,.projection-value,.board-transfers button,.overview-target-list .player-name-cell,.squad-table .icon-button,.pi-player-name,.result-transfers button",
+        )
       )
         close.current();
     };
@@ -435,7 +459,13 @@ export function Modal({
     document.addEventListener("keydown", keyboard, true);
     return () => {
       document.removeEventListener("keydown", keyboard, true);
-      if (previous?.isConnected) previous.focus({ preventScroll: true });
+      const active = document.activeElement;
+      if (
+        previous?.isConnected &&
+        (!active || active === document.body || node.contains(active))
+      ) {
+        previous.focus({ preventScroll: true });
+      }
     };
   }, []);
   return (
@@ -604,8 +634,34 @@ export function ActionMenu({
             items[next]?.focus();
           }}
           onClick={(event) => {
-            if ((event.target as HTMLElement).closest("button:not(:disabled)"))
+            const target =
+              event.target instanceof Element ? event.target : null;
+            if (target?.closest("button:not(:disabled)")) {
+              const active = document.activeElement;
+              if (
+                !active ||
+                active === document.body ||
+                menu.current?.contains(active)
+              ) {
+                trigger.current?.focus({ preventScroll: true });
+              }
               setOpen(false);
+            }
+          }}
+          onChange={(event) => {
+            const target =
+              event.target instanceof Element ? event.target : null;
+            if (target?.closest("select")) {
+              const active = document.activeElement;
+              if (
+                !active ||
+                active === document.body ||
+                menu.current?.contains(active)
+              ) {
+                trigger.current?.focus({ preventScroll: true });
+              }
+              setOpen(false);
+            }
           }}
         >
           {resolvedRole === "menu" ? children : stripMenuItemRoles(children)}
@@ -735,18 +791,20 @@ export function LineChart({
   height = 200,
   yLabel = "Expected points",
   colors = ["#ff764d", "#61ba9a", "#7c94cb"],
+  maxY,
 }: {
   series: { name: string; values: (number | null)[] }[];
   labels: string[];
   height?: number;
   yLabel?: string;
   colors?: string[];
+  maxY?: number;
 }) {
   const width = 760,
-    top = 18,
+    top = 28,
     left = 46,
     bottom = 35,
-    right = 15;
+    right = 28;
   const plotHeight = height - top - bottom,
     plotWidth = width - left - right;
   const values = series.flatMap((s) =>
@@ -754,9 +812,13 @@ export function LineChart({
       (value): value is number => value !== null && Number.isFinite(value),
     ),
   );
-  const max = Math.max(1, ...values) * 1.1;
+  const peak = values.length ? Math.max(...values) : 0;
+  const max =
+    maxY !== undefined && peak <= maxY
+      ? maxY
+      : Math.max(1, ...values) * 1.1;
   const min = Math.min(0, ...values);
-  const range = max - min;
+  const range = Math.max(1e-6, max - min);
   return (
     <div className="chart">
       <svg
@@ -817,7 +879,9 @@ export function LineChart({
         ))}
         {labels.map(
           (label, i) =>
-            (labels.length <= 12 || i % 4 === 0 || i === labels.length - 1) && (
+            (labels.length <= 12 ||
+              (i % 4 === 0 && labels.length - 1 - i >= 2) ||
+              i === labels.length - 1) && (
               <text
                 key={`${i}-${label}`}
                 x={left + (i * plotWidth) / Math.max(1, labels.length - 1)}

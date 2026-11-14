@@ -353,13 +353,13 @@
   background: #152334;
 }
 
-.projection-explorer:has(.projection-player-editor) .projection-scroll {
+.projection-explorer:has(> .projection-player-slot:not([hidden]) .projection-player-editor) .projection-scroll {
   min-height: 130px;
   max-height: 20vh;
 }
-.projection-explorer:has(.projection-player-editor) .projection-topline,
-.projection-explorer:has(.projection-player-editor) .projection-controls,
-.projection-explorer:has(.projection-player-editor) .projection-position-tabs {
+.projection-explorer:has(> .projection-player-slot:not([hidden]) .projection-player-editor) .projection-topline,
+.projection-explorer:has(> .projection-player-slot:not([hidden]) .projection-player-editor) .projection-controls,
+.projection-explorer:has(> .projection-player-slot:not([hidden]) .projection-player-editor) .projection-position-tabs {
   margin-bottom: 6px;
 }
 .projection-player-slot:empty {
@@ -390,6 +390,16 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.projection-value b {
+  color: #eef4fc;
+}
+.projection-value small {
+  color: #d6e3f5;
+}
+.projection-value sup {
+  color: #ffd4bd;
+  font-size: 8px;
 }
 .projection-value[aria-pressed="true"] {
   outline: 2px solid var(--orange);
@@ -446,9 +456,17 @@
 .projection-player-editor .player-detail-top .stat > strong {
   font-size: 18px;
 }
-.projection-player-editor .detail-tab-edit > .player-detail-top,
 .projection-player-editor .player-dialog-actions {
+  margin: 8px 0;
+  gap: 5px;
+}
+.projection-player-editor .detail-tab-edit > .player-detail-top,
+.projection-player-editor .detail-tab-edit .player-dialog-actions {
   display: none;
+}
+.modal:not(.projection-player-editor) .player-detail-tabs {
+  background: #101a28;
+  box-shadow: 0 0 0 5px #101a28;
 }
 .projection-player-editor .detail-tab-edit .detail-grid > section:last-child {
   display: grid;
@@ -517,6 +535,15 @@
   margin: 8px 0 10px;
   color: #8ca0bc;
 }
+details.player-minutes-options > .minutes-schedule-editor > h3 {
+  display: none;
+}
+.player-window .minutes-schedule-editor .editor-actions {
+  background: #0b1525;
+}
+.modal:not(.projection-player-editor) .minutes-schedule-editor .editor-actions {
+  background: #101a28;
+}
 .minutes-assumption-list > div > .icon-button,
 .solio-detail-panel .minutes-assumption-list > div > .icon-button {
   flex-shrink: 0;
@@ -531,6 +558,17 @@
 }
 .transfer-budget-details summary {
   justify-content: flex-end;
+}
+.transfer-eligibility {
+  flex-wrap: wrap;
+}
+.solio-detail-panel .transfer-eligibility .segmented > button {
+  min-height: 32px;
+  padding: 6px 10px;
+  font-size: 11px;
+}
+.transfer-impact {
+  grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
 }
 .transfer-pair {
   display: grid;
@@ -570,7 +608,7 @@
 }
 .projection-player-editor .transfer-list {
   max-height: none;
-  overflow-y: visible;
+  overflow: visible;
 }
 .transfer-player-cell {
   display: flex;
@@ -641,6 +679,7 @@
   }
   .projection-player-editor .transfer-list {
     max-height: none;
+    overflow: visible;
   }
   .transfer-list td:last-child {
     width: 66px;

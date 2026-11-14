@@ -203,12 +203,14 @@ export function TransferPanel({
                 {fmt(confirmGwDelta)}
               </b>
             </div>
-            <div>
-              <small>{comparisonRange} Δ xPts</small>
-              <b className={confirmRangeDelta >= 0 ? "green" : "red"}>
-                {fmt(confirmRangeDelta)}
-              </b>
-            </div>
+            {comparisonRange !== `GW${week.gw}` ? (
+              <div>
+                <small>{comparisonRange} Δ xPts</small>
+                <b className={confirmRangeDelta >= 0 ? "green" : "red"}>
+                  {fmt(confirmRangeDelta)}
+                </b>
+              </div>
+            ) : null}
           </div>
           <div className="transfer-hit-preview" role="status">
             <span>GW{week.gw} hit</span>

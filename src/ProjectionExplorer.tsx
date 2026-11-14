@@ -82,6 +82,7 @@ export function ProjectionsView({
   onTeamStrengths,
   fixtureMoves,
   onFixtureMoves,
+  busy = false,
 }: {
   data: Bootstrap;
   gw: number;
@@ -100,6 +101,7 @@ export function ProjectionsView({
   onTeamStrengths: (strengths: TeamStrengthsSchedule) => void;
   fixtureMoves: Record<string, number | null>;
   onFixtureMoves: (moves: Record<string, number | null>) => void;
+  busy?: boolean;
 }) {
   const [section, setSection] = useViewState("projections.section", "players");
   const [controlsOpen, setControlsOpen] = useState(false);
@@ -271,9 +273,10 @@ export function ProjectionsView({
           : metric === "bonus"
             ? 2
             : 100;
+  const editingPlayers = Boolean(editing) && section === "players";
   return (
     <div
-      className={`projection-explorer ${editing && !controlsOpen ? "projection-editing-compact" : ""}`}
+      className={`projection-explorer ${editingPlayers && !controlsOpen ? "projection-editing-compact" : ""}`}
     >
       <div className="projection-topline">
         <TabStrip
@@ -305,7 +308,7 @@ export function ProjectionsView({
           </button>
         </div>
       </div>
-      {editing ? (
+      {editingPlayers ? (
         <button
           type="button"
           className="button small projection-controls-toggle"
@@ -637,7 +640,10 @@ export function ProjectionsView({
                             type="button"
                             className="button small primary"
                             aria-label={`Transfer ${player.name} in`}
-                            onClick={() => onTransfer(player.id)}
+                            disabled={busy}
+                            onClick={() => {
+                              if (!busy) onTransfer(player.id);
+                            }}
                           >
                             <ArrowRight size={12} />
                           </button>
@@ -726,7 +732,11 @@ export function ProjectionsView({
           ) : null}
         </>
       )}
-      <div className="projection-player-slot" ref={onEditorTarget} />
+      <div
+        className="projection-player-slot"
+        hidden={section !== "players"}
+        ref={onEditorTarget}
+      />
       <details className="compact-details projection-notes">
         <summary>Sources & metric notes</summary>
         <p>

@@ -163,6 +163,7 @@
   width: 84px;
   height: 34px;
   display: block;
+  margin-inline: auto;
   fill: #ff9c70;
 }
 .fixture-trend-line {

@@ -172,8 +172,8 @@ export function strengthLabels(
   width = 640,
 ) {
   const slots: { x: number; y: number }[] = [];
-  for (let y = 30; y <= 254; y += 28) {
-    for (let x = 40; x <= width - 40; x += 52) slots.push({ x, y });
+  for (let y = 34; y <= 254; y += 27) {
+    for (let x = 68; x <= width - 36; x += 52) slots.push({ x, y });
   }
   const labels: { x: number; y: number }[] = [];
   for (const point of points) {

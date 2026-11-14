@@ -369,6 +369,27 @@ describe("FixtureExplorer & FixtureTrend UI fixes", () => {
     )!;
     expect(chip.props["aria-haspopup"]).toBe("dialog");
     expect(chip.props["aria-label"]).toContain("Alpha GW7");
+
+    // Clearing Filter GWs renders "" ("—") on From / Through selects so picking available[0] fires onChange.
+    const clearWeeksBtn = nodes(detailsList()[1]).find(
+      (n) => n.type === "button" && textContent(n.props.children) === "Clear",
+    )!;
+    clearWeeksBtn.props.onClick();
+    tree = render();
+    const fromSelect = nodes(tree).find(
+      (n) => n.props["aria-label"] === "Fixture range from",
+    )!;
+    const throughSelect = nodes(tree).find(
+      (n) => n.props["aria-label"] === "Fixture range through",
+    )!;
+    expect(fromSelect.props.value).toBe("");
+    expect(throughSelect.props.value).toBe("");
+    fromSelect.props.onChange({ target: { value: "7" } });
+    tree = render();
+    expect(
+      nodes(tree).find((n) => n.props["aria-label"] === "Fixture range from")!
+        .props.value,
+    ).toBe(7);
   });
 
   it("scales CS sparkline with 0.5 min span, clamps all-negative GD high >= 0, distinguishes Blank vs unavailable, and inverts difficulty y", () => {
@@ -598,6 +619,14 @@ describe("FixtureMarkets & FixtureDetail guards and deadline clamping", () => {
       "#e0b15b",
     ]);
     expect(chart.props.series[0].values).toEqual([1.85, 0, null]);
+
+    // Graph view shows empty-state message instead of empty chart when rows is empty.
+    resetHooks();
+    const emptyGraphTree = renderWithHooks(() =>
+      FixtureMarkets({ data: graphData, gw: 39, onDetail: vi.fn() }),
+    );
+    expect(nodes(emptyGraphTree).some((n) => n.type === LineChart)).toBe(false);
+    expect(textContent(emptyGraphTree)).toContain("No matching fixtures.");
   });
 
   it("clamps expired gw to data.next_gw in FixtureDetail, guards invalid dates, and falls back to fixture.opponent", () => {
@@ -657,6 +686,18 @@ describe("FixtureMarkets & FixtureDetail guards and deadline clamping", () => {
     )!;
     playerBtn.props.onClick();
     expect(onDetail).toHaveBeenCalledExactlyOnceWith(11, 8);
+
+    // Missing forecast shows "Forecast unavailable" and "—" instead of "Blank" and "0.0".
+    const missingTree = FixtureDetail({
+      data,
+      team: 1,
+      gw: 9,
+      onClose,
+      onDetail,
+    });
+    expect(textContent(missingTree)).toContain("Forecast unavailable for GW9.");
+    expect(textContent(missingTree)).toContain("—");
+    expect(textContent(missingTree)).not.toContain("0.0");
   });
 });
 
@@ -681,11 +722,13 @@ describe("TeamStrengths & MarketMovement UI fixes", () => {
     );
     const svg = nodes(tree).find((n) => n.type === "svg")!;
     expect(svg.props["aria-label"]).toContain("Arrow keys");
+    expect(svg.props.preserveAspectRatio).toBeUndefined();
 
     const points = nodes(tree).filter((n) =>
       String(n.props.className ?? "").includes("ts-point"),
     );
     expect(points).toHaveLength(2);
+    expect(points.map((p) => p.props.tabIndex)).toEqual([0, -1]);
     expect(points[0].props["aria-label"]).toBe(
       "Alpha: 1.85 goals, 0.95 conceded",
     );
@@ -855,6 +898,29 @@ describe("TeamStrengths & MarketMovement UI fixes", () => {
       expect(
         nodes(tree).filter((n) => n.type === "tr")[2].props.className,
       ).toContain("selected-fixture");
+    });
+
+    // Error state renders Retry button that re-fetches /api/market-history.
+    resetHooks();
+    const retryFetch = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 503 })
+      .mockResolvedValueOnce({ ok: true, json: async () => singlePayload });
+    vi.stubGlobal("fetch", retryFetch);
+    render();
+    await vi.waitFor(() => {
+      const errorTree = render();
+      expect(textContent(errorTree)).toContain(
+        "Market history unavailable (503)",
+      );
+      const retryBtn = nodes(errorTree).find(
+        (n) => n.type === "button" && textContent(n.props.children) === "Retry",
+      )!;
+      retryBtn.props.onClick();
+    });
+    render();
+    await vi.waitFor(() => {
+      expect(retryFetch).toHaveBeenCalledTimes(2);
     });
   });
 });

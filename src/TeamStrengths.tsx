@@ -340,7 +340,7 @@ export function TeamStrengths({
         <svg
           ref={svg}
           viewBox={`0 0 ${plotWidth} 300`}
-          preserveAspectRatio="none"
+          style={{ aspectRatio: `${plotWidth} / 300` }}
           aria-label="Remaining-fixture goals vs conceded (up = better attack, right = better defence). Focus a club and use Arrow keys to preview ±0.01 (Shift ±0.1), Enter to apply, Escape to cancel."
         >
           <text x="58" y="16" className="ts-direction">
@@ -368,53 +368,60 @@ export function TeamStrengths({
               </g>
             );
           })}
-          {plotRows.map(({ team: row, baseline: base }, i) => (
-            <g
-              key={row.id}
-              className={`ts-point ${row.id === team.id ? "is-selected" : ""}`}
-              role="button"
-              tabIndex={0}
-              aria-pressed={row.id === team.id}
-              aria-label={`${row.name}: ${base.derivedGoals!.toFixed(2)} goals, ${base.derivedConceded!.toFixed(2)} conceded`}
-              onFocus={() => {
-                if (row.id !== team.id) select(row.id);
-              }}
-              onClick={() => {
-                if (row.id !== team.id) select(row.id);
-              }}
-              onDoubleClick={() => onTeam?.(row.id)}
-              onKeyDown={(event) => keyboard(event, row.id)}
-              onPointerDown={(event) => pointerDown(event, row.id)}
-              onPointerMove={pointerMove}
-              onPointerUp={pointerUp}
-              onPointerCancel={() => {
-                drag.current = null;
-                setDraft(null);
-              }}
-            >
-              <title>
-                {`${row.name}: ${base.derivedGoals!.toFixed(2)} goals / fixture; ${base.derivedConceded!.toFixed(2)} conceded / fixture`}
-              </title>
-              <line
-                x1={points[i].x}
-                y1={points[i].y}
-                x2={labels[i].x}
-                y2={labels[i].y}
-                className="ts-leader"
-              />
-              <circle cx={points[i].x} cy={points[i].y} r="3" />
-              <rect
-                x={labels[i].x - 23}
-                y={labels[i].y - 12}
-                width="46"
-                height="24"
-                rx="6"
-              />
-              <text x={labels[i].x} y={labels[i].y + 4} textAnchor="middle">
-                {row.short_name}
-              </text>
-            </g>
-          ))}
+          {plotRows.map(({ team: row, baseline: base }, i) => {
+            const focusableId = plotRows.some(
+              ({ team: candidate }) => candidate.id === team.id,
+            )
+              ? team.id
+              : plotRows[0]?.team.id;
+            return (
+              <g
+                key={row.id}
+                className={`ts-point ${row.id === team.id ? "is-selected" : ""}`}
+                role="button"
+                tabIndex={row.id === focusableId ? 0 : -1}
+                aria-pressed={row.id === team.id}
+                aria-label={`${row.name}: ${base.derivedGoals!.toFixed(2)} goals, ${base.derivedConceded!.toFixed(2)} conceded`}
+                onFocus={() => {
+                  if (row.id !== team.id) select(row.id);
+                }}
+                onClick={() => {
+                  if (row.id !== team.id) select(row.id);
+                }}
+                onDoubleClick={() => onTeam?.(row.id)}
+                onKeyDown={(event) => keyboard(event, row.id)}
+                onPointerDown={(event) => pointerDown(event, row.id)}
+                onPointerMove={pointerMove}
+                onPointerUp={pointerUp}
+                onPointerCancel={() => {
+                  drag.current = null;
+                  setDraft(null);
+                }}
+              >
+                <title>
+                  {`${row.name}: ${base.derivedGoals!.toFixed(2)} goals / fixture; ${base.derivedConceded!.toFixed(2)} conceded / fixture`}
+                </title>
+                <line
+                  x1={points[i].x}
+                  y1={points[i].y}
+                  x2={labels[i].x}
+                  y2={labels[i].y}
+                  className="ts-leader"
+                />
+                <circle cx={points[i].x} cy={points[i].y} r="3" />
+                <rect
+                  x={labels[i].x - 23}
+                  y={labels[i].y - 12}
+                  width="46"
+                  height="24"
+                  rx="6"
+                />
+                <text x={labels[i].x} y={labels[i].y + 4} textAnchor="middle">
+                  {row.short_name}
+                </text>
+              </g>
+            );
+          })}
         </svg>
         <span className="ts-defence-direction">Better defence →</span>
       </div>

@@ -153,7 +153,11 @@ export function FixtureMarkets({
         />
         FPL Joe fixtures only
       </label>
-      {view === "graph" ? (
+      {!rows.length ? (
+        <p className="inline-empty">
+          No matching fixtures. Change the club or source filter.
+        </p>
+      ) : view === "graph" ? (
         <div className="panel market-chart">
           <h3>Fixture expectations</h3>
           <p className="source-caption">
@@ -182,10 +186,16 @@ export function FixtureMarkets({
                       (sum, side) => sum + (side?.fixture.team_goals ?? 0),
                       0,
                     )
-                  : sides.reduce(
-                      (sum, side) => sum + (side?.cs ?? 0) * 100,
-                      0,
-                    ) / sides.length;
+                  : Math.min(
+                      100,
+                      Math.max(
+                        0,
+                        sides.reduce(
+                          (sum, side) => sum + (side?.cs ?? 0) * 100,
+                          0,
+                        ) / sides.length,
+                      ),
+                    );
               }),
             }))}
           />
@@ -240,7 +250,7 @@ export function FixtureMarkets({
                           ? fmt(
                               metric === "goals"
                                 ? side.fixture.team_goals
-                                : side.cs * 100,
+                                : Math.min(100, Math.max(0, side.cs * 100)),
                               metric === "goals" ? 2 : 1,
                             )
                           : "—"}
@@ -262,11 +272,6 @@ export function FixtureMarkets({
               </button>
             );
           })}
-          {!rows.length ? (
-            <p className="inline-empty">
-              No matching fixtures. Change the club or source filter.
-            </p>
-          ) : null}
         </div>
       )}
       <details className="compact-details">

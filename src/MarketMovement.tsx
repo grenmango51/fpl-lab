@@ -388,9 +388,18 @@ export function MarketMovement({ gw }: { gw: number }) {
         </button>
       </div>
       {error && (
-        <p role="alert" className="movement-error">
-          {error}
-        </p>
+        <div className="movement-error-row">
+          <p role="alert" className="movement-error">
+            {error}
+          </p>
+          <button
+            type="button"
+            className="button small"
+            onClick={() => setRevision((n) => n + 1)}
+          >
+            Retry
+          </button>
+        </div>
       )}
       {!history && !error && <p>Loading archives…</p>}
       {history && (

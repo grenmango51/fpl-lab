@@ -259,10 +259,10 @@ describe("manual team strength inputs", () => {
         const labels = strengthLabels(points, width);
         expect(new Set(labels.map((p) => `${p.x}:${p.y}`)).size).toBe(20);
         for (const [i, label] of labels.entries()) {
-          expect(label.x).toBeGreaterThanOrEqual(40);
-          expect(label.x).toBeLessThanOrEqual(width - 40);
-          expect(label.y).toBeGreaterThanOrEqual(24);
-          expect(label.y).toBeLessThanOrEqual(264);
+          expect(label.x).toBeGreaterThanOrEqual(68);
+          expect(label.x).toBeLessThanOrEqual(width - 36);
+          expect(label.y).toBeGreaterThanOrEqual(34);
+          expect(label.y).toBeLessThanOrEqual(254);
           for (const other of labels.slice(i + 1)) {
             expect(
               Math.abs(label.x - other.x) >= 48 ||

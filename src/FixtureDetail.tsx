@@ -160,7 +160,11 @@ export function FixtureDetail({
             );
           })
         ) : (
-          <p className="inline-empty">Blank in GW{effectiveGW}.</p>
+          <p className="inline-empty">
+            {forecast
+              ? `Blank in GW${effectiveGW}.`
+              : `Forecast unavailable for GW${effectiveGW}.`}
+          </p>
         )}
         {onDetail ? (
           <>
@@ -170,7 +174,8 @@ export function FixtureDetail({
                 .filter((row) => row.team === team)
                 .sort(
                   (a, b) =>
-                    (b.gw[weekKey]?.points ?? 0) - (a.gw[weekKey]?.points ?? 0),
+                    (b.gw[weekKey]?.points ?? -Infinity) -
+                    (a.gw[weekKey]?.points ?? -Infinity),
                 )
                 .slice(0, 8)
                 .map((row) => (
@@ -182,7 +187,7 @@ export function FixtureDetail({
                         onDetail(row.id, effectiveGW);
                       }}
                     />
-                    <b>{fmt(row.gw[weekKey]?.points ?? 0)}</b>
+                    <b>{row.gw[weekKey] ? fmt(row.gw[weekKey].points) : "—"}</b>
                   </div>
                 ))}
             </div>

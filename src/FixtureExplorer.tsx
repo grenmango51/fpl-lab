@@ -162,8 +162,8 @@ export function FixtureExplorer({
   );
   const allTeams =
     selectedTeams === null || chosenTeams.length === data.teams.length;
-  const rangeFrom = weeks[0] ?? available[0];
-  const rangeThrough = weeks.at(-1) ?? available.at(-1);
+  const rangeFrom = weeks[0];
+  const rangeThrough = weeks.at(-1);
   function setRangeFrom(from: number) {
     setSelectedWeeks(
       fixtureRangeWeeks(available, from, Math.max(from, rangeThrough ?? from)),
@@ -381,9 +381,17 @@ export function FixtureExplorer({
                 From
                 <select
                   aria-label="Fixture range from"
-                  value={rangeFrom}
-                  onChange={(event) => setRangeFrom(Number(event.target.value))}
+                  value={rangeFrom ?? ""}
+                  onChange={(event) => {
+                    if (event.target.value)
+                      setRangeFrom(Number(event.target.value));
+                  }}
                 >
+                  {rangeFrom === undefined && (
+                    <option value="" disabled>
+                      —
+                    </option>
+                  )}
                   {available.map((week) => (
                     <option key={week} value={week}>
                       GW{week}
@@ -396,7 +404,7 @@ export function FixtureExplorer({
                   min={available[0]}
                   max={available.at(-1)}
                   step={1}
-                  value={rangeFrom}
+                  value={rangeFrom ?? available[0] ?? 1}
                   onChange={(event) => setRangeFrom(Number(event.target.value))}
                 />
               </label>
@@ -404,11 +412,17 @@ export function FixtureExplorer({
                 Through
                 <select
                   aria-label="Fixture range through"
-                  value={rangeThrough}
-                  onChange={(event) =>
-                    setRangeThrough(Number(event.target.value))
-                  }
+                  value={rangeThrough ?? ""}
+                  onChange={(event) => {
+                    if (event.target.value)
+                      setRangeThrough(Number(event.target.value));
+                  }}
                 >
+                  {rangeThrough === undefined && (
+                    <option value="" disabled>
+                      —
+                    </option>
+                  )}
                   {available.map((week) => (
                     <option key={week} value={week}>
                       GW{week}
@@ -421,7 +435,7 @@ export function FixtureExplorer({
                   min={available[0]}
                   max={available.at(-1)}
                   step={1}
-                  value={rangeThrough}
+                  value={rangeThrough ?? available.at(-1) ?? 38}
                   onChange={(event) =>
                     setRangeThrough(Number(event.target.value))
                   }

@@ -137,6 +137,13 @@
 .market-movement details p + p {
   margin-top: 6px;
 }
+.movement-error-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 10px 0;
+}
 .movement-error {
   color: #ff997b;
   font-size: 12px;

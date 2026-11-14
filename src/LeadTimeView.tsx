@@ -12,13 +12,16 @@ export function LeadTimeView({
 }) {
   const [report, setReport] = useState<LeadTimeReport | null>(null);
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [model, setModel] = useState("Component model");
   const [scope, setScope] = useState<"primary" | "all" | "exploratory">(
     "primary",
   );
+  const [retryCount, setRetryCount] = useState(0);
   useEffect(() => {
     let alive = true;
+    setLoading(true);
     api<LeadTimeReport>("/lead-time")
       .then((value) => {
         if (alive) {
@@ -28,11 +31,14 @@ export function LeadTimeView({
       })
       .catch((e) => {
         if (alive) setError(e.message);
+      })
+      .finally(() => {
+        if (alive) setLoading(false);
       });
     return () => {
       alive = false;
     };
-  }, [captureKey]);
+  }, [captureKey, retryCount]);
   async function score() {
     setBusy(true);
     setError("");
@@ -95,9 +101,16 @@ export function LeadTimeView({
         </button>
       </div>
       {error && (
-        <p className="orange help-text">
+        <p className="orange help-text" role="alert">
           {error}{" "}
-          <button className="text-button" onClick={score} disabled={busy}>
+          <button
+            type="button"
+            className="text-button"
+            onClick={() =>
+              report ? void score() : setRetryCount((n) => n + 1)
+            }
+            disabled={busy}
+          >
             Retry
           </button>
         </p>
@@ -157,7 +170,12 @@ export function LeadTimeView({
           );
         })}
       </div>
-      {!targets.length && (
+      {loading && !report && (
+        <p className="help-text" role="status">
+          Loading lead-time evaluation…
+        </p>
+      )}
+      {!loading && !error && !targets.length && (
         <p className="help-text">Capture forecasts to start.</p>
       )}
       {!!targets.length && !scored.length && (
@@ -170,206 +188,205 @@ export function LeadTimeView({
           New captures ready · score to update.
         </p>
       )}
-      <details className="reference-limitations">
-        <summary>Detailed metrics</summary>
-        <div className="table-container">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>LEAD TIME</th>
-                <th>ROWS</th>
-                <th>LIVE MAE</th>
-                <th>{model.toUpperCase()} MAE</th>
-                <th>LIVE RMSE</th>
-                <th>LIVE BIAS</th>
-              </tr>
-            </thead>
-            <tbody>
-              {bins.map((bin) => {
-                const value = report?.bins?.find((saved) => saved.id === bin.id)
-                  ?.pairwise_comparisons[model]?.[scope];
-                return (
-                  <tr key={bin.id}>
-                    <td>{bin.label}</td>
-                    <td>{value?.count ?? 0}</td>
-                    <td className="orange">
-                      {value?.ensemble ? fmt(value.ensemble.mae, 3) : "—"}
-                    </td>
-                    <td>{value?.model ? fmt(value.model.mae, 3) : "—"}</td>
-                    <td>
-                      {value?.ensemble ? fmt(value.ensemble.rmse, 3) : "—"}
-                    </td>
-                    <td>
-                      {value?.ensemble ? fmt(value.ensemble.bias, 3) : "—"}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </details>
-      <details className="reference-limitations">
-        <summary>Captures and coverage</summary>
-        <div className="table-container">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>LEAD TIME</th>
-                <th>TARGET</th>
-                <th>DAYS</th>
-                <th>STATUS</th>
-                <th>COVERAGE</th>
-                <th>ORIGIN</th>
-                <th>CONFIGURATION</th>
-                <th>SCHEDULE</th>
-              </tr>
-            </thead>
-            <tbody>
-              {bins.flatMap((bin) =>
-                bin.captured_targets.map((target) => (
-                  <tr key={`${bin.id}-${target.gw}`}>
-                    <td>{bin.label}</td>
-                    <td>GW{target.gw}</td>
-                    <td>{fmt(target.lead_hours / 24, 1)} days</td>
-                    <td
-                      className={target.deadline_changed ? "orange" : "muted"}
-                    >
-                      {target.status.replaceAll("_", " ")}
-                      {target.deadline_changed ? " · deadline changed" : ""}
-                    </td>
-                    <td>
-                      {target.coverage["FPL Form"]?.forecast_count ?? 0}/
-                      {target.cohort.eligible_count} eligible
-                    </td>
-                    <td>GW{target.origin_gameweek}</td>
-                    <td>
-                      {target.model_version} ·{" "}
-                      {target.configuration_hash?.slice(0, 8) ?? "legacy"}
-                      {target.manual_configuration
-                        ? " · manual assumptions"
-                        : ""}
-                    </td>
-                    <td>
-                      {target.fixtures ? (
-                        <details>
-                          <summary
-                            className={
-                              target.fixture_schedule_changed
-                                ? "orange"
-                                : "muted"
-                            }
-                          >
-                            {target.fixtures.length} fixtures
-                            {target.fixture_schedule_changed
-                              ? " · changed"
-                              : ""}
-                          </summary>
-                          {target.fixtures.map((fixture) => (
-                            <p className="help-text" key={fixture.id}>
-                              {club(fixture.team_h)} vs {club(fixture.team_a)} ·{" "}
-                              {fixture.kickoff_time
-                                ? new Date(
-                                    fixture.kickoff_time,
-                                  ).toLocaleString()
-                                : "Unscheduled"}
-                            </p>
-                          ))}
-                        </details>
-                      ) : (
-                        "Legacy: unavailable"
-                      )}
-                    </td>
-                  </tr>
-                )),
-              )}
-            </tbody>
-          </table>
-        </div>
-        {(report?.bins ?? []).flatMap((bin) =>
-          bin.gameweeks.map((target) => (
-            <details key={`${bin.id}-${target.gw}`} className="capture-receipt">
-              <summary>
-                GW{target.gw} · {bin.label} · {fmt(target.lead_hours / 24, 1)}{" "}
-                days before deadline
-              </summary>
-              <small className="muted">
-                {target.snapshot} · frozen deadline{" "}
-                {new Date(target.deadline).toLocaleString()}
-                {target.deadline_changed
-                  ? ` · current deadline ${new Date(target.current_deadline).toLocaleString()}`
-                  : ""}
-              </small>
-              <div className="table-container">
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>MODEL</th>
-                      <th>PLAYERS</th>
-                      <th>MODEL MAE</th>
-                      <th>LIVE MAE</th>
-                      <th>STATUS</th>
+      {!!bins.length && (
+        <details className="reference-limitations">
+          <summary>Detailed metrics</summary>
+          <div className="table-container">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>LEAD TIME</th>
+                  <th>ROWS</th>
+                  <th>LIVE MAE</th>
+                  <th>{model.toUpperCase()} MAE</th>
+                  <th>LIVE RMSE</th>
+                  <th>LIVE BIAS</th>
+                </tr>
+              </thead>
+              <tbody>
+                {bins.map((bin) => {
+                  const value = report?.bins?.find(
+                    (saved) => saved.id === bin.id,
+                  )?.pairwise_comparisons[model]?.[scope];
+                  return (
+                    <tr key={bin.id}>
+                      <td>{bin.label}</td>
+                      <td>{value?.count ?? 0}</td>
+                      <td className="orange">
+                        {value?.ensemble ? fmt(value.ensemble.mae, 3) : "—"}
+                      </td>
+                      <td>{value?.model ? fmt(value.model.mae, 3) : "—"}</td>
+                      <td>
+                        {value?.ensemble ? fmt(value.ensemble.rmse, 3) : "—"}
+                      </td>
+                      <td>
+                        {value?.ensemble ? fmt(value.ensemble.bias, 3) : "—"}
+                      </td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {Object.entries(target.pairwise_comparisons ?? {}).map(
-                      ([name, pair]) => (
-                        <tr key={name}>
-                          <td>{name}</td>
-                          <td>{pair.count}</td>
-                          <td>{pair.model ? fmt(pair.model.mae, 3) : "—"}</td>
-                          <td>
-                            {pair.ensemble ? fmt(pair.ensemble.mae, 3) : "—"}
-                          </td>
-                          <td
-                            className={
-                              pair.eligible_primary ? "green" : "orange"
-                            }
-                          >
-                            {pair.eligibility}
-                          </td>
-                        </tr>
-                      ),
-                    )}
-                  </tbody>
-                </table>
-              </div>
-              {Object.entries(target.pairwise_comparisons ?? {}).flatMap(
-                ([name, pair]) =>
-                  pair.eligibility_reasons.map((reason) => (
-                    <p className="help-text" key={`${name}-${reason}`}>
-                      {name}: {reason}
-                    </p>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </details>
+      )}
+      {!!targets.length && (
+        <details className="reference-limitations">
+          <summary>Captures and coverage</summary>
+          <div className="table-container">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>LEAD TIME</th>
+                  <th>TARGET</th>
+                  <th>DAYS</th>
+                  <th>STATUS</th>
+                  <th>COVERAGE</th>
+                  <th>ORIGIN</th>
+                  <th>CONFIGURATION</th>
+                  <th>SCHEDULE</th>
+                </tr>
+              </thead>
+              <tbody>
+                {bins.flatMap((bin) =>
+                  bin.captured_targets.map((target) => (
+                    <tr key={`${bin.id}-${target.gw}`}>
+                      <td>{bin.label}</td>
+                      <td>GW{target.gw}</td>
+                      <td>{fmt(target.lead_hours / 24, 1)} days</td>
+                      <td
+                        className={target.deadline_changed ? "orange" : "muted"}
+                      >
+                        {target.status.replaceAll("_", " ")}
+                        {target.deadline_changed ? " · deadline changed" : ""}
+                      </td>
+                      <td>
+                        {target.coverage[model]?.forecast_count ?? 0}/
+                        {target.cohort.eligible_count} eligible
+                      </td>
+                      <td>GW{target.origin_gameweek}</td>
+                      <td>
+                        {target.model_version} ·{" "}
+                        {target.configuration_hash?.slice(0, 8) ?? "legacy"}
+                        {target.manual_configuration
+                          ? " · manual assumptions"
+                          : ""}
+                      </td>
+                      <td>
+                        {target.fixtures ? (
+                          <details>
+                            <summary
+                              className={
+                                target.fixture_schedule_changed
+                                  ? "orange"
+                                  : "muted"
+                              }
+                            >
+                              {target.fixtures.length} fixtures
+                              {target.fixture_schedule_changed
+                                ? " · changed"
+                                : ""}
+                            </summary>
+                            {target.fixtures.map((fixture) => (
+                              <p className="help-text" key={fixture.id}>
+                                {club(fixture.team_h)} vs {club(fixture.team_a)}{" "}
+                                ·{" "}
+                                {fixture.kickoff_time
+                                  ? new Date(
+                                      fixture.kickoff_time,
+                                    ).toLocaleString()
+                                  : "Unscheduled"}
+                              </p>
+                            ))}
+                          </details>
+                        ) : (
+                          "Legacy: unavailable"
+                        )}
+                      </td>
+                    </tr>
                   )),
-              )}
-            </details>
-          )),
-        )}
-      </details>
+                )}
+              </tbody>
+            </table>
+          </div>
+          {(report?.bins ?? []).flatMap((bin) =>
+            bin.gameweeks.map((target) => (
+              <details
+                key={`${bin.id}-${target.gw}`}
+                className="capture-receipt"
+              >
+                <summary>
+                  GW{target.gw} · {bin.label} · {fmt(target.lead_hours / 24, 1)}{" "}
+                  days before deadline
+                </summary>
+                <small className="muted">
+                  {target.snapshot} · frozen deadline{" "}
+                  {new Date(target.deadline).toLocaleString()}
+                  {target.deadline_changed
+                    ? ` · current deadline ${new Date(target.current_deadline).toLocaleString()}`
+                    : ""}
+                </small>
+                <div className="table-container">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>MODEL</th>
+                        <th>PLAYERS</th>
+                        <th>MODEL MAE</th>
+                        <th>LIVE MAE</th>
+                        <th>STATUS</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {Object.entries(target.pairwise_comparisons ?? {}).map(
+                        ([name, pair]) => (
+                          <tr key={name}>
+                            <td>{name}</td>
+                            <td>{pair.count}</td>
+                            <td>{pair.model ? fmt(pair.model.mae, 3) : "—"}</td>
+                            <td>
+                              {pair.ensemble ? fmt(pair.ensemble.mae, 3) : "—"}
+                            </td>
+                            <td
+                              className={
+                                pair.eligible_primary ? "green" : "orange"
+                              }
+                            >
+                              {pair.eligibility}
+                            </td>
+                          </tr>
+                        ),
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+                {Object.entries(target.pairwise_comparisons ?? {}).flatMap(
+                  ([name, pair]) =>
+                    pair.eligibility_reasons.map((reason) => (
+                      <p className="help-text" key={`${name}-${reason}`}>
+                        {name}: {reason}
+                      </p>
+                    )),
+                )}
+              </details>
+            )),
+          )}
+        </details>
+      )}
       <details className="reference-limitations">
         <summary>
           <Info size={13} /> Method
         </summary>
         <p className="help-text">
-          Every capture freezes the remaining season. Each time window selects
-          its latest valid capture for each target gameweek. Live ensemble and{" "}
-          {model} use identical player-GW rows. Counts labelled captured are
-          saved targets, not scored forecasts. Missing results remain
-          unavailable.
+          Latest valid capture per window and GW on matched player-GW rows.
+          Descriptive only: cohorts, versions and manual assumptions can differ
+          across windows, missing provider weeks stay blank, and rescheduled
+          fixtures remain in the error.
         </p>
         <p className="help-text">
-          Metrics pool individual matched player-GW errors within each window.
-          Cohorts, model versions and manual assumptions can differ across
-          windows; the same outcomes recur across windows. These are descriptive
-          results, with no claim that one horizon is more accurate until those
-          differences are controlled. Provider coverage stays missing beyond its
-          supplied weeks. Fixture changes remain part of the error; they are not
-          discarded after outcomes.
-        </p>
-        <p className="help-text">
-          Primary eligibility requires the declared capture policy and checked
-          official outcomes. Exploratory results can include stale inputs,
-          legacy receipts or changed deadlines.
+          Primary requires fresh inputs and checked official outcomes;
+          exploratory includes stale inputs, legacy captures or changed
+          deadlines.
         </p>
       </details>
       {report?.generated_at && (

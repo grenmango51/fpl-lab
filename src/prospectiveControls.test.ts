@@ -13,7 +13,7 @@ vi.mock("./useViewState", () => ({
 
 describe("benchmark operation controls", () => {
   it.each([false, true])(
-    "both score controls and capture reflect busy=%s",
+    "capture and single score control reflect busy=%s without duplicate header score button",
     (busy) => {
       const html = renderToStaticMarkup(
         createElement(AnalysisView, {
@@ -38,15 +38,14 @@ describe("benchmark operation controls", () => {
       const buttons = [
         ...html.matchAll(/<button\b([^>]*)>([\s\S]*?)<\/button>/g),
       ];
-      for (const label of [
-        "Capture forecasts",
-        "Score completed",
-        "Score weeks",
-      ]) {
+      for (const label of ["Capture forecasts", "Score weeks"]) {
         const button = buttons.find((match) => match[2].includes(label));
         expect(button, label).toBeDefined();
         expect(button![1].includes('disabled=""'), label).toBe(busy);
       }
+      expect(
+        buttons.some((match) => match[2].includes("Score completed")),
+      ).toBe(false);
     },
   );
 });

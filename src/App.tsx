@@ -114,7 +114,11 @@ import { LineupImageDialog } from "./LineupImageDialog";
 import { WorkspaceDivider } from "./WorkspaceDivider";
 import { TabStrip } from "./TabStrip";
 import { useViewState } from "./useViewState";
-import { canSwap, replacePlayer } from "./plannerInteractions";
+import {
+  canSwap,
+  replacePlayer,
+  transferAllowance,
+} from "./plannerInteractions";
 import { planWithOptimisedSuffix, quickSolveHorizon } from "./quickOptimise";
 import {
   activePlanGW,
@@ -197,6 +201,56 @@ type OptimiseContext = {
   baselinePlan: Plan | null;
   prices: Record<string, number>;
 };
+
+const componentLabels: Record<string, string> = {
+  appearance: "Appearance",
+  goals: "Goals",
+  assists: "Assists",
+  clean_sheet: "Clean sheets",
+  clean_sheets: "Clean sheets",
+  defensive: "DefCon",
+  defensive_contribution: "DefCon",
+  defcon: "DefCon",
+  bonus: "Bonus",
+  saves: "Saves",
+  penalty_saves: "Pen saves",
+  goals_conceded: "Conceded",
+  cards: "Cards",
+  deductions: "Deductions",
+  provider_adjustment: "Provider adj.",
+  imported_adjustment: "CSV adj.",
+  solio_adjustment: "Solio adj.",
+  solio_extrapolation: "Solio extrap.",
+  user_points_adjustment: "Your scenario",
+};
+
+function formatSourceLabel(key: string): string {
+  const exact: Record<string, string> = {
+    fpl_bootstrap: "Official FPL",
+    fpl_fixtures: "Official fixtures",
+    fpljoe: "FPL Joe",
+    elevenify_sheet: "Elevenify",
+    solio_authenticated: "Solio planner",
+    solio_public: "Solio public",
+    elevenify_player_baselines: "Elevenify baselines",
+    elevenify_fast_fantasy: "Elevenify importance",
+    elevenify_next_gw_attack: "Elevenify next-GW attack",
+    elevenify_three_gw_goals: "Elevenify 3-GW goals",
+    elevenify_three_gw_assists: "Elevenify 3-GW assists",
+  };
+  if (exact[key]) return exact[key];
+  const formMatch = /^fplform_(\d{4}-\d{2})_gw(\d+)$/.exec(key);
+  if (formMatch) return `FPL Form · GW${formMatch[2]}`;
+  const liveMatch = /^fpl_live_(\d{4}-\d{2})_(\d+)$/.exec(key);
+  if (liveMatch) return `Official live · GW${liveMatch[2]}`;
+  const archiveMatch = /^archive_(\d{4}-\d{2})_(gws|players)$/.exec(key);
+  if (archiveMatch)
+    return `Archive ${archiveMatch[1].replace("-", "/")} (${archiveMatch[2] === "gws" ? "GWs" : "players"})`;
+  const flagMatch = /^flags_(\d{4}-\d{2})_([a-z]+)_\d+$/.exec(key);
+  if (flagMatch)
+    return `Flag archive ${flagMatch[1].replace("-", "/")} (${flagMatch[2]})`;
+  return key.replaceAll("_", " ");
+}
 
 export default function App() {
   const [data, setData] = useState<Bootstrap | null>(null),
@@ -318,7 +372,9 @@ export default function App() {
     >(null),
     [detailId, setDetailId] = useState<number | null>(null),
     [detail, setDetail] = useState<PlayerDetail | null>(null),
-    [detailLoading, setDetailLoading] = useState(false);
+    [detailLoading, setDetailLoading] = useState(false),
+    [detailError, setDetailError] = useState(""),
+    [detailRetry, setDetailRetry] = useState(0);
   const [selected, setSelected] = useState<number | null>(null),
     [playerQuery, setPlayerQuery] = useState(""),
     [listMode, setListMode] = useState<"targets" | "captains" | "watch">(
@@ -1082,17 +1138,26 @@ export default function App() {
   useEffect(() => {
     if (!data || detailId === null || !lookup.has(detailId)) {
       setDetail(null);
+      setDetailError("");
       setDetailLoading(false);
       return;
     }
     let alive = true;
     setDetailLoading(true);
+    setDetailError("");
     setDetail(null);
     api<PlayerDetail>(`/players/${detailId}?gw=${playerGW}`, forecastArgs)
       .then((d) => {
         if (alive) setDetail(d);
       })
-      .catch((e) => notify(e.message, true))
+      .catch((e) => {
+        if (alive) {
+          setDetailError(
+            (e as Error).message || "Could not load match history.",
+          );
+          notify((e as Error).message, true);
+        }
+      })
       .finally(() => {
         if (alive) setDetailLoading(false);
       });
@@ -1103,6 +1168,7 @@ export default function App() {
     data,
     lookup,
     detailId,
+    detailRetry,
     playerGW,
     overrides,
     minutesSchedule,
@@ -2588,12 +2654,28 @@ export default function App() {
           .toLowerCase()
           .includes(playerQuery.toLowerCase()),
     );
-    if (selectedPlayer && week)
+    if (selectedPlayer && active && week) {
+      const allowance = transferAllowance(
+        active,
+        week,
+        selectedPlayer,
+        data.players,
+      );
+      const clubCounts = new Map<number, number>();
+      for (const id of week.squad) {
+        if (id === selectedPlayer.id) continue;
+        const team = lookup.get(id)?.team;
+        if (team !== undefined)
+          clubCounts.set(team, (clubCounts.get(team) ?? 0) + 1);
+      }
       rows = rows.filter(
         (p) =>
           p.position_id === selectedPlayer.position_id &&
-          !week.squad.includes(p.id),
+          !week.squad.includes(p.id) &&
+          allowance.forTarget(p).bankAfter >= 0 &&
+          (clubCounts.get(p.team) ?? 0) < 3,
       );
+    }
     if (listMode === "watch") rows = rows.filter((p) => watch.includes(p.id));
     const horizon = data.gameweeks.filter((w) => w >= gw).slice(0, 6);
     return rows
@@ -2603,7 +2685,17 @@ export default function App() {
           : horizon.reduce((n, w) => n + xp(b, w) - xp(a, w), 0),
       )
       .slice(0, 8);
-  }, [data, gw, selectedPlayer, week, playerQuery, listMode, watch]);
+  }, [
+    data,
+    lookup,
+    gw,
+    selectedPlayer,
+    active,
+    week,
+    playerQuery,
+    listMode,
+    watch,
+  ]);
 
   if (loading || !data)
     return (
@@ -2663,6 +2755,76 @@ export default function App() {
     Object.keys(customPoints).length > 0 ||
     blendWeight > 0 ||
     (Boolean(customName) && customName !== "Imported CSV");
+  const primarySourceOrder = [
+    "fpl_bootstrap",
+    "fpl_fixtures",
+    "fpljoe",
+    "elevenify_sheet",
+    "solio_authenticated",
+    "solio_public",
+    `fplform_${data.season}_gw${data.next_gw}`,
+    "archive_2025-26_gws",
+  ];
+  const primarySourceSet = new Set(primarySourceOrder);
+  const topSources = [
+    ...primarySourceOrder
+      .filter((key) => key in data.sources)
+      .map((key) => [key, data.sources[key]] as const),
+    ...Object.entries(data.sources).filter(
+      ([key, s]) =>
+        !primarySourceSet.has(key) &&
+        (s.status === "stale" || s.status === "unavailable"),
+    ),
+  ];
+  const extraSources = Object.entries(data.sources).filter(
+    ([key, s]) =>
+      !primarySourceSet.has(key) &&
+      s.status !== "stale" &&
+      s.status !== "unavailable",
+  );
+  const renderSourceRow = ([key, s]: readonly [
+    string,
+    Bootstrap["sources"][string],
+  ]) => (
+    <a
+      className="source-setting"
+      key={key}
+      href={s.url}
+      target="_blank"
+      rel="noreferrer"
+    >
+      <span
+        className={`status-dot ${s.status === "stale" || s.status === "unavailable" ? "stale" : ""}`}
+        aria-hidden="true"
+      />
+      <span>
+        <b>{formatSourceLabel(key)}</b>
+        <small>
+          {s.fetched_at
+            ? new Date(s.fetched_at).toLocaleString()
+            : "Unavailable"}
+        </small>
+      </span>
+      <span className="subtle-tag">{s.status}</span>
+      <ArrowUpRight size={14} />
+    </a>
+  );
+  const teamOverview = week ? (
+    <TeamOverview
+      data={data}
+      week={week}
+      selected={selectedPlayer}
+      targets={availableTargets}
+      watch={watch}
+      onWatch={onWatch}
+      onDetail={openPlayer}
+      onSelect={setSelected}
+      onTransfer={(id) => void transferIn(id)}
+      onPlayers={() => navigateTab("projections")}
+      onCaptain={setCaptain}
+      {...({ busy: Boolean(busy) } as object)}
+    />
+  ) : null;
   const forecastState = forecastStatus();
   const forecastFeedback = forecastState.stale ? (
     <div className="forecast-feedback" role={forecastState.error ? "alert" : "status"}>
@@ -2931,25 +3093,14 @@ export default function App() {
                   </div>
                 )}
                 {week ? (
-                  <details
-                    className="lineup-details"
-                    open={showLeftPitch || undefined}
-                  >
-                    <summary>Squad stats & captain comparison</summary>
-                    <TeamOverview
-                      data={data}
-                      week={week}
-                      selected={selectedPlayer}
-                      targets={availableTargets}
-                      watch={watch}
-                      onWatch={onWatch}
-                      onDetail={openPlayer}
-                      onSelect={setSelected}
-                      onTransfer={(id) => void transferIn(id)}
-                      onPlayers={() => navigateTab("projections")}
-                      onCaptain={setCaptain}
-                    />
-                  </details>
+                  showLeftPitch ? (
+                    <div className="lineup-details">{teamOverview}</div>
+                  ) : (
+                    <details className="lineup-details">
+                      <summary>Squad stats &amp; captain comparison</summary>
+                      {teamOverview}
+                    </details>
+                  )
                 ) : null}
               </>
             ) : tab === "projections" ? (
@@ -2957,7 +3108,17 @@ export default function App() {
                 data={data}
                 gw={gw}
                 onDetail={(id, gameweek) =>
-                  openPlayer(id, gameweek ?? gw, false, active, true)
+                  openPlayer(
+                    id,
+                    gameweek ?? gw,
+                    false,
+                    active,
+                    Boolean(
+                      (document.activeElement as HTMLElement | null)?.closest?.(
+                        ".projection-value",
+                      ),
+                    ),
+                  )
                 }
                 onEditorTarget={setProjectionEditorTarget}
                 editing={
@@ -3093,7 +3254,12 @@ export default function App() {
           </div>
 
           <footer className="studio-feed-footer">
-            <button onClick={() => setModal("settings")}>
+            <button
+              onClick={() => {
+                setSettingsTab("sources");
+                setModal("settings");
+              }}
+            >
               <i
                 className={
                   Object.values(data.sources).some(
@@ -3302,14 +3468,25 @@ export default function App() {
           onClose={() => setModal(null)}
         >
           <div className="modal-body">
-            <p className="help-text">
-              Columns: <code>player_id, gameweek, expected_points</code>,
-              provider <code>ID, 6_Pts, …</code>, or{" "}
-              <code>
-                player_id, [gameweek,] conditional_minutes[, availability]
-              </code>{" "}
-              (0–1; schedules override blends).
-            </p>
+            <ul
+              className="help-text"
+              style={{ paddingLeft: 16, margin: 0, display: "grid", gap: 4 }}
+            >
+              <li>
+                Points: <code>player_id, gameweek, expected_points</code> or{" "}
+                <code>ID, 6_Pts, …</code>
+              </li>
+              <li>
+                Global minutes: <code>player_id, conditional_minutes</code>
+              </li>
+              <li>
+                Weekly minutes:{" "}
+                <code>
+                  player_id, gameweek, conditional_minutes, availability
+                </code>{" "}
+                (0–1; overrides blends)
+              </li>
+            </ul>
             <label className="range-label">
               Imported model weight<b>{csvWeight}%</b>
               <input
@@ -3524,6 +3701,29 @@ export default function App() {
                 </div>
                 <div className="setting-row">
                   <span>
+                    <b>Player stat scenarios</b>
+                    <small>
+                      {
+                        Object.values(statSchedule).filter(
+                          (weeks) => Object.keys(weeks).length > 0,
+                        ).length
+                      }{" "}
+                      players customised
+                    </small>
+                  </span>
+                  <button
+                    className="button small"
+                    disabled={!Object.keys(statSchedule).length}
+                    onClick={() => {
+                      setStatSchedule({});
+                      notify("Player stat scenarios cleared.");
+                    }}
+                  >
+                    Reset all
+                  </button>
+                </div>
+                <div className="setting-row">
+                  <span>
                     <b>Team strength assumptions</b>
                     <small>
                       {Object.keys(teamStrengths).length} clubs customised
@@ -3535,6 +3735,24 @@ export default function App() {
                     onClick={() => {
                       setTeamStrengths({});
                       notify("Team strengths restored.");
+                    }}
+                  >
+                    Reset all
+                  </button>
+                </div>
+                <div className="setting-row">
+                  <span>
+                    <b>Fixture schedule moves</b>
+                    <small>
+                      {Object.keys(fixtureMoves).length} fixtures moved
+                    </small>
+                  </span>
+                  <button
+                    className="button small"
+                    disabled={!Object.keys(fixtureMoves).length}
+                    onClick={() => {
+                      setFixtureMoves({});
+                      notify("Fixture schedule restored.");
                     }}
                   >
                     Reset all
@@ -3709,41 +3927,17 @@ export default function App() {
               </section>
               <section hidden={settingsTab !== "sources"}>
                 <h3>Connected sources</h3>
-                {Object.entries(data.sources)
-                  .filter(([key]) =>
-                    [
-                      "fpl_bootstrap",
-                      "fpl_fixtures",
-                      "fpljoe",
-                      "elevenify_sheet",
-                      "solio_public",
-                      `fplform_${data.season}_gw${data.next_gw}`,
-                      "archive_2025-26_gws",
-                    ].includes(key),
-                  )
-                  .map(([key, s]) => (
-                    <a
-                      className="source-setting"
-                      key={key}
-                      href={s.url}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      <span
-                        className={`status-dot ${s.status === "stale" || s.status === "unavailable" ? "stale" : ""}`}
-                        aria-hidden="true"
-                      />
-                      <span>
-                        <b>{key.replaceAll("_", " ")}</b>
-                        <small>
-                          {s.fetched_at
-                            ? new Date(s.fetched_at).toLocaleString()
-                            : "Unavailable"}
-                        </small>
-                      </span>
-                      <span className="subtle-tag">{s.status}</span>
-                      <ArrowUpRight size={14} />
-                    </a>
+                {topSources.map(renderSourceRow)}
+                {extraSources.length > 0 &&
+                  (extraSources.length <= 6 ? (
+                    extraSources.map(renderSourceRow)
+                  ) : (
+                    <details className="compact-details">
+                      <summary>
+                        Additional feeds · {extraSources.length}
+                      </summary>
+                      {extraSources.map(renderSourceRow)}
+                    </details>
                   ))}
                 <p className="help-text">
                   Vendor data is locally cached and attributed. Public access is
@@ -4108,7 +4302,9 @@ export default function App() {
                     detailPlayer.gw[String(playerGW)]?.components ?? {},
                   ).map(([key, value]) => (
                     <div key={key}>
-                      <span>{key.replaceAll("_", " ")}</span>
+                      <span>
+                        {componentLabels[key] ?? key.replaceAll("_", " ")}
+                      </span>
                       <div>
                         <i
                           className={value < 0 ? "negative" : ""}
@@ -4135,7 +4331,7 @@ export default function App() {
               </section>
               <section>
                 <StatScenarioEditor
-                  key={`stats-${detailId}-${playerGW}`}
+                  key={`stats-${detailId}`}
                   player={detailPlayer}
                   weeks={data.gameweeks}
                   gw={playerGW}
@@ -4155,7 +4351,7 @@ export default function App() {
                 <details className="player-minutes-options" open>
                   <summary>Edit minutes</summary>
                   <MinutesScenarioEditor
-                    key={`minutes-${detailId}-${playerGW}`}
+                    key={`minutes-${detailId}`}
                     player={detailPlayer}
                     weeks={data.gameweeks}
                     gw={playerGW}
@@ -4201,25 +4397,29 @@ export default function App() {
                     <b>{fmt(detailPlayer.dc_probability * 100, 0)}%</b>
                   </span>
                 </div>
-                <div className="fixture-source-detail">
-                  {detailPlayer.gw[String(playerGW)]?.fixtures.map((f) => (
-                    <p key={f.id}>
-                      <Badge
-                        code={
-                          data.teams.find((t) => t.id === f.opponent_id)?.code
-                        }
-                        size={18}
-                      />
-                      <span>
-                        <b>
-                          {f.opponent} ({f.home ? "H" : "A"}) ·{" "}
-                          {fmt(f.cs * 100, 0)}% CS
-                        </b>
-                        <small>{f.source}</small>
-                      </span>
-                    </p>
-                  ))}
-                </div>
+                {Boolean(
+                  detailPlayer.gw[String(playerGW)]?.fixtures.length,
+                ) && (
+                  <div className="fixture-source-detail">
+                    {detailPlayer.gw[String(playerGW)]?.fixtures.map((f) => (
+                      <p key={f.id}>
+                        <Badge
+                          code={
+                            data.teams.find((t) => t.id === f.opponent_id)?.code
+                          }
+                          size={18}
+                        />
+                        <span>
+                          <b>
+                            {f.opponent} ({f.home ? "H" : "A"}) ·{" "}
+                            {fmt(f.cs * 100, 0)}% CS
+                          </b>
+                          <small>{f.source}</small>
+                        </span>
+                      </p>
+                    ))}
+                  </div>
+                )}
               </section>
             </div>
             <section className="detail-forecast">
@@ -4237,98 +4437,103 @@ export default function App() {
             </section>
             {detailTab === "history" &&
               (detailLoading ? (
-                <Busy text="Loading match history and scenario simulation…" />
-              ) : (
-                detail && (
-                  <>
-                    <div className="detail-grid history-grid">
-                      <section>
-                        <h3>Simulated points</h3>
-                        <div className="distribution-chart">
-                          {detail.simulation.histogram.map((v) => {
-                            const showLabel =
-                              detail.simulation.histogram.length <= 14 ||
-                              v.points % 2 === 0;
-                            return (
-                              <div
-                                key={v.points}
-                                title={`${v.points} points · ${fmt(v.probability * 100, 1)}%`}
-                              >
-                                <i
-                                  style={{
-                                    height: `${Math.max(2, (v.probability / Math.max(...detail.simulation.histogram.map((x) => x.probability))) * 95)}px`,
-                                  }}
-                                />
-                                <span aria-hidden={!showLabel || undefined}>
-                                  {showLabel ? v.points : "\u00a0"}
-                                </span>
-                              </div>
-                            );
-                          })}
-                        </div>
-                        <div className="distribution-stats">
-                          <span>
-                            ≤2 points{" "}
-                            <b>
-                              {fmt(
-                                detail.simulation.blank_probability * 100,
-                                0,
-                              )}
-                              %
-                            </b>
-                          </span>
-                          <span>
-                            10+ points{" "}
-                            <b>
-                              {fmt(detail.simulation.haul_probability * 100, 0)}
-                              %
-                            </b>
-                          </span>
-                          <span>
-                            10th–90th percentile{" "}
-                            <b>
-                              {fmt(detail.simulation.p10, 0)}–
-                              {fmt(detail.simulation.p90, 0)}
-                            </b>
-                          </span>
-                        </div>
-                        <p className="source-caption">
-                          {detail.simulation.label} ·{" "}
-                          {detail.simulation.trials.toLocaleString()} trials.
-                          Base model, excluding custom overrides/blends.
-                        </p>
-                      </section>
-                      <section>
-                        <h3>Recent match record</h3>
-                        <div className="history-list">
-                          {!detail.history.length ? (
-                            <p className="inline-empty">
-                              No recent match records.
-                            </p>
-                          ) : null}
-                          {detail.history
-                            .slice(-6)
-                            .reverse()
-                            .map((r, i) => (
-                              <div key={`${r.date}-${i}`}>
-                                <span>
-                                  GW{r.gw}
-                                  <small>{r.season}</small>
-                                </span>
-                                <span>{r.opponent || "—"}</span>
-                                <span>{r.minutes} min</span>
-                                <b>{r.total_points} pts</b>
-                              </div>
-                            ))}
-                        </div>
-                        <p className="source-caption">
-                          Official FPL and vaastav archive · per-fixture actual
-                          points
-                        </p>
-                      </section>
+                <Busy text="Loading history & simulation…" />
+              ) : detail ? (
+                <div className="detail-grid history-grid">
+                  <section>
+                    <h3>Simulated points</h3>
+                    <div className="distribution-chart">
+                      {detail.simulation.histogram.map((v) => {
+                        const showLabel =
+                          detail.simulation.histogram.length <= 14 ||
+                          v.points % 2 === 0;
+                        return (
+                          <div
+                            key={v.points}
+                            title={`${v.points} points · ${fmt(v.probability * 100, 1)}%`}
+                          >
+                            <i
+                              style={{
+                                height: `${Math.max(2, (v.probability / Math.max(...detail.simulation.histogram.map((x) => x.probability))) * 95)}px`,
+                              }}
+                            />
+                            <span aria-hidden={!showLabel || undefined}>
+                              {showLabel ? v.points : "\u00a0"}
+                            </span>
+                          </div>
+                        );
+                      })}
                     </div>
-                  </>
-                )
+                    <div className="distribution-stats">
+                      <span>
+                        ≤2 points{" "}
+                        <b>
+                          {fmt(detail.simulation.blank_probability * 100, 0)}%
+                        </b>
+                      </span>
+                      <span>
+                        10+ points{" "}
+                        <b>
+                          {fmt(detail.simulation.haul_probability * 100, 0)}%
+                        </b>
+                      </span>
+                      <span>
+                        10th–90th percentile{" "}
+                        <b>
+                          {fmt(detail.simulation.p10, 0)}–
+                          {fmt(detail.simulation.p90, 0)}
+                        </b>
+                      </span>
+                    </div>
+                    <p className="source-caption">
+                      {detail.simulation.label} ·{" "}
+                      {detail.simulation.trials.toLocaleString()} trials. Base
+                      model, excluding custom overrides/blends.
+                    </p>
+                  </section>
+                  <section>
+                    <h3>Recent match record</h3>
+                    <div className="history-list">
+                      {!detail.history.length ? (
+                        <p className="inline-empty">No recent match records.</p>
+                      ) : null}
+                      {detail.history
+                        .slice(-6)
+                        .reverse()
+                        .map((r, i) => (
+                          <div key={`${r.date}-${i}`}>
+                            <span>
+                              GW{r.gw}
+                              <small>{r.season}</small>
+                            </span>
+                            <span>{r.opponent || "—"}</span>
+                            <span>{r.minutes} min</span>
+                            <b>{r.total_points} pts</b>
+                          </div>
+                        ))}
+                    </div>
+                    <p className="source-caption">
+                      Official FPL and vaastav archive · per-fixture actual
+                      points
+                    </p>
+                  </section>
+                </div>
+              ) : (
+                <Empty
+                  title="History unavailable"
+                  text={
+                    detailError ||
+                    "Could not load match history and simulation."
+                  }
+                >
+                  <button
+                    className="button small"
+                    onClick={() => setDetailRetry((n) => n + 1)}
+                  >
+                    <RefreshCw size={14} />
+                    Retry
+                  </button>
+                </Empty>
               ))}
           </div>
         </PlayerSurface>

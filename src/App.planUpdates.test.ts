@@ -22,7 +22,7 @@ import {
 import { planReceipt } from "../tools/tests/planReceipt.mjs";
 import financialFixture from "../backend/tests/fixtures/transfer_affordability.json";
 import { transferAllowance, replacePlayer } from "./plannerInteractions";
-import { uid, chipNames, optimalLineup, planFromSquad } from "./lib";
+import { uid, chipNames, optimalLineup, planFromSquad, xp } from "./lib";
 import { teamPoints } from "./scoring";
 import { quickSolveHorizon, planWithOptimisedSuffix } from "./quickOptimise";
 import type { Bootstrap, Player, Plan, Week, Prospective, SensitivityJob } from "./types";
@@ -2979,10 +2979,32 @@ describe("app shell state, modals, keyboard, URL and surface coherence", () => {
       .initializer!,
     source,
   );
+  const moduleFn = (name: string) => {
+    const node = source.statements.find(
+      (s): s is ts.FunctionDeclaration =>
+        ts.isFunctionDeclaration(s) && s.name?.text === name,
+    );
+    if (!node) throw new Error(`Missing module function: ${name}`);
+    return printer.printNode(ts.EmitHint.Unspecified, node, source);
+  };
+  const moduleConst = (name: string) => {
+    const decl = source.statements
+      .flatMap((s) =>
+        ts.isVariableStatement(s) ? [...s.declarationList.declarations] : [],
+      )
+      .find((d) => d.name.getText(source) === name);
+    if (!decl?.initializer) throw new Error(`Missing module const: ${name}`);
+    return printer.printNode(ts.EmitHint.Expression, decl.initializer, source);
+  };
+  const availableTargetsMemo = (
+    declarations.find((d) => d.name.getText(source) === "availableTargets")!
+      .initializer as ts.CallExpression
+  ).arguments[0].getText(source);
   const compileShell = ts.transpileModule(
     `const {
-      active, week, gw, data, lookup, selected, detailId, detailBack, detailReadOnly,
+      active, week, gw, data, lookup, selected, selectedPlayer, detailId, detailBack, detailReadOnly,
       solveResult, modal, teamBank, teamFT, tab, activeId, loading, plans,
+      playerQuery, listMode, watch, transferAllowance, xp,
       customPoints, blendWeight, customName,
       setOverrides, setMinutesSchedule, setStatSchedule, setTeamStrengths,
       setFixtureMoves, setUseMarket, setCustomPoints, setBlendWeight,
@@ -2991,9 +3013,11 @@ describe("app shell state, modals, keyboard, URL and surface coherence", () => {
       urlSyncedRef, popstateReplaceRef, optimalLineup, updatePlan, travelPlan,
       setTeamBank, setTeamFT, setModal, setDetailAnchor, setDetailReadOnly,
       setDetailInline, setDetailGW, setDetailTab, setDetailBack, setDetailId,
-      setActiveId, setGw, setSelected, setTab, setDetail, setDetailLoading, api, playerGW,
+      setActiveId, setGw, setSelected, setTab, setDetail, setDetailError, setDetailLoading, api, playerGW,
       forecastArgs, notify, document, window, locationTab
     } = scope;
+    const componentLabels = ${moduleConst("componentLabels")};
+    ${moduleFn("formatSourceLabel")}
     ${fn("applyForecastConfiguration")}
     ${fn("openResourceModal")}
     ${fn("saveTeamSettings")}
@@ -3001,6 +3025,9 @@ describe("app shell state, modals, keyboard, URL and surface coherence", () => {
     ${fn("changeHorizon")}
     ${fn("resetWeek")}
     return {
+      componentLabels,
+      formatSourceLabel,
+      availableTargets: ${availableTargetsMemo},
       selectedPlayer: () => (${selectedPlayerExpr}),
       hasCustomCSV: () => (${hasCustomCSVExpr}),
       applyForecastConfiguration,
@@ -3258,6 +3285,7 @@ describe("app shell state, modals, keyboard, URL and surface coherence", () => {
       setDetailReadOnly,
       setSelected,
       setDetail,
+      setDetailError: vi.fn(),
       setDetailLoading,
       api,
       playerGW: 7,
@@ -3610,5 +3638,127 @@ describe("app shell state, modals, keyboard, URL and surface coherence", () => {
     sync().urlSyncEffect();
     expect(pushState).toHaveBeenCalledTimes(2);
     expect(href).toBe("https://open-fpl.test/?tab=projections&gw=7&plan=A");
+  });
+
+  it("filters availableTargets for affordability and 3-per-club cap, formats source/component labels, and preserves scenario editor keys", async () => {
+    // 1. StatScenarioEditor & MinutesScenarioEditor keys depend only on detailId, not playerGW
+    expect(appSource).toContain("key={`stats-${detailId}`}");
+    expect(appSource).toContain("key={`minutes-${detailId}`}");
+    expect(appSource).not.toContain("key={`stats-${detailId}-${playerGW}`}");
+    expect(appSource).not.toContain("key={`minutes-${detailId}-${playerGW}`}");
+
+    // 2. Source & component labels
+    const labelsShell = createShell({});
+    expect(labelsShell.formatSourceLabel("fpl_bootstrap")).toBe("Official FPL");
+    expect(labelsShell.formatSourceLabel("fpl_fixtures")).toBe(
+      "Official fixtures",
+    );
+    expect(labelsShell.formatSourceLabel("fpljoe")).toBe("FPL Joe");
+    expect(labelsShell.formatSourceLabel("elevenify_sheet")).toBe("Elevenify");
+    expect(labelsShell.formatSourceLabel("fplform_2026-27_gw7")).toBe(
+      "FPL Form · GW7",
+    );
+    expect(labelsShell.componentLabels).toMatchObject({
+      appearance: "Appearance",
+      clean_sheets: "Clean sheets",
+      defcon: "DefCon",
+      defensive: "DefCon",
+      penalty_saves: "Pen saves",
+      provider_adjustment: "Provider adj.",
+      solio_extrapolation: "Solio extrap.",
+      user_points_adjustment: "Your scenario",
+    });
+
+    // 3. availableTargets enforces transferAllowance bankAfter >= 0 and < 3 from club
+    const squadPlayers = Array.from({ length: 15 }, (_, i) => ({
+      id: i + 1,
+      name: `Squad ${i + 1}`,
+      team_name: "Club",
+      team: i < 4 ? 1 : i + 2, // players 1,2,3,4 on team 1 (if outgoing is 5, 3 remain on team 1!)
+      position_id: i < 2 ? 1 : i < 7 ? 2 : i < 12 ? 3 : 4,
+      price: 5.0,
+      pplay: 1,
+      gw: { "7": { points: 3, pplay: 1 } },
+    }));
+    const candidates = [
+      // Affordable & legal club (team 20, price 5.5, bank is 0.5 -> bankAfter = 0)
+      {
+        id: 20,
+        name: "Legal Target",
+        team_name: "LegalFC",
+        team: 20,
+        position_id: 2,
+        price: 5.5,
+        pplay: 1,
+        gw: { "7": { points: 7, pplay: 1 } },
+      },
+      // Over budget (price 6.0 -> bankAfter = -0.5)
+      {
+        id: 21,
+        name: "Priced Out",
+        team_name: "RichFC",
+        team: 21,
+        position_id: 2,
+        price: 6.0,
+        pplay: 1,
+        gw: { "7": { points: 9, pplay: 1 } },
+      },
+      // Blocked by 3-per-club cap on team 1
+      {
+        id: 22,
+        name: "Club Capped",
+        team_name: "CapFC",
+        team: 1,
+        position_id: 2,
+        price: 5.0,
+        pplay: 1,
+        gw: { "7": { points: 10, pplay: 1 } },
+      },
+    ];
+    const pool = [...squadPlayers, ...candidates];
+    const lookup = new Map(pool.map((p) => [p.id, p]));
+    const plan = {
+      ...branch("A", [7]),
+      base_bank: 0.5,
+      purchase_prices: {},
+    };
+    const targetsShell = createShell({
+      data: { players: pool, gameweeks: [7] },
+      lookup,
+      gw: 7,
+      selectedPlayer: lookup.get(5), // DEF on team 6, price 5.0; players 1..4 keep >=3 on team 1
+      active: plan,
+      week: plan.weeks[0],
+      playerQuery: "",
+      listMode: "targets",
+      watch: [],
+      transferAllowance,
+      xp,
+    });
+    expect(targetsShell.availableTargets().map((p: Player) => p.id)).toEqual([
+      20,
+    ]);
+
+    // 4. detailFetchEffect records detailError on failure for History retry
+    let detailError = "";
+    const detailDeferred = deferred<unknown>();
+    createShell({
+      data: { players: pool, gameweeks: [7] },
+      lookup,
+      detailId: 20,
+      playerGW: 7,
+      forecastArgs: defaultForecastConfiguration,
+      api: () => detailDeferred.promise,
+      notify: vi.fn(),
+      setDetail: vi.fn(),
+      setDetailError: (v: string) => {
+        detailError = v;
+      },
+      setDetailLoading: vi.fn(),
+    }).detailFetchEffect();
+    detailDeferred.reject(new Error("History endpoint offline"));
+    await vi.waitFor(() =>
+      expect(detailError).toBe("History endpoint offline"),
+    );
   });
 });

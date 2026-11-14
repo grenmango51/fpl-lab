@@ -888,6 +888,7 @@ describe("OptimiseView, AnalysisView, and MarketView fixes", () => {
       }),
     );
     expect(html).toContain("Reject");
+    expect(html).toContain('aria-pressed="true" class="active">Default</button>');
     // Falls back to baselinePlan.name when sourceName is omitted!
     expect(html).toContain("Draft · Branch A");
     expect(html).toContain("<span>GW11: max 1 transfer</span>");
@@ -1058,6 +1059,9 @@ describe("OptimiseView, AnalysisView, and MarketView fixes", () => {
     expect(html).toContain('aria-pressed="true"');
     expect(html).toContain('fill="currentColor"');
     expect(html).toContain('aria-label="Clear market search"');
+    expect(html).toContain('<th class="numeric">PRICE</th>');
+    expect(html).toContain('<th class="numeric">GW CHANGE</th>');
+    expect(html).toContain('<td class="numeric">£5.0m</td>');
     const footerMatch = html.match(
       /<div class="table-footer">([\s\S]*?)<\/div>\s*<details/,
     );

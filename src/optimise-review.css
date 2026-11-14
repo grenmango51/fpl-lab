@@ -126,13 +126,32 @@
 .solio-detail-panel .methodology > small {
   color: #98adc8;
 }
+.solio-detail-panel .solver-preview .pitch-meta > span,
+.solio-detail-panel .solver-preview .bench-player .pitch-meta > span {
+  font-size: 9px;
+}
+.solio-detail-panel .result-week-foot {
+  font-size: 11px;
+}
+.solio-detail-panel .position-metrics small {
+  font-size: 10px;
+}
 
 .solio-detail-panel .plan-comparison-table th.numeric,
 .solio-detail-panel .plan-comparison-table td.numeric,
 .plan-comparison-table th.numeric,
-.plan-comparison-table td.numeric {
+.plan-comparison-table td.numeric,
+.solio-detail-panel .price-table th.numeric,
+.solio-detail-panel .price-table td.numeric,
+.price-table th.numeric,
+.price-table td.numeric {
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+.solio-detail-panel .price-table th.numeric > button,
+.price-table th.numeric > button {
+  justify-content: flex-end;
+  width: 100%;
 }
 .comparison-scatter g[role="button"]:focus {
   outline: none;

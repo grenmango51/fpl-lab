@@ -490,6 +490,7 @@ export function OptimiseView({
                 {[...Object.keys(presets), "Custom"].map((name) => (
                   <button
                     key={name}
+                    aria-pressed={preset === name}
                     className={preset === name ? "active" : ""}
                     onClick={() => {
                       if (name === "Custom") {
@@ -1666,13 +1667,13 @@ export function MarketView({ data, gw, onDetail, watch, onWatch }: BaseProps) {
                 <span className="sr-only">Watch</span>
               </th>
               <th>PLAYER</th>
-              <th>PRICE</th>
-              <th>GW CHANGE</th>
-              <th>TRANSFERS IN</th>
-              <th>TRANSFERS OUT</th>
-              <th>NET</th>
-              <th>OFFICIAL SIGNAL</th>
-              <th>GW{gw} xP</th>
+              <th className="numeric">PRICE</th>
+              <th className="numeric">GW CHANGE</th>
+              <th className="numeric">TRANSFERS IN</th>
+              <th className="numeric">TRANSFERS OUT</th>
+              <th className="numeric">NET</th>
+              <th className="numeric">OFFICIAL SIGNAL</th>
+              <th className="numeric">GW{gw} xP</th>
             </tr>
           </thead>
           <tbody>
@@ -1698,15 +1699,15 @@ export function MarketView({ data, gw, onDetail, watch, onWatch }: BaseProps) {
                     <td>
                       <PlayerName player={p} onClick={() => onDetail(p.id)} />
                     </td>
-                    <td>{money(p.price)}</td>
+                    <td className="numeric">{money(p.price)}</td>
                     <td
-                      className={
+                      className={`numeric ${
                         p.price_change > 0
                           ? "green"
                           : p.price_change < 0
                             ? "red"
                             : "muted"
-                      }
+                      }`}
                     >
                       {p.price_change > 0 ? "+" : ""}
                       {fmt(p.price_change)}

@@ -14,10 +14,9 @@
   display: none !important;
 }
 .workspace.solio-workspace {
-  grid-template-columns: minmax(
-      280px,
-      calc(var(--panel-split, 50%) - 3px)
-    ) 6px minmax(360px, 1fr);
+  grid-template-columns:
+    minmax(280px, min(calc(var(--panel-split, 50%) - 3px), calc(100% - 366px)))
+    6px minmax(0, 1fr);
 }
 .workspace-divider {
   cursor: col-resize;
@@ -26,6 +25,15 @@
   position: relative;
   z-index: 6;
   outline-offset: -2px;
+}
+.workspace-divider::before {
+  content: "";
+  position: absolute;
+  inset: 0 -4px;
+}
+.workspace-divider:focus-visible {
+  outline: 2px solid var(--orange);
+  background: #ff6a3d80;
 }
 .workspace-divider:hover,
 .workspace-divider.dragging {
@@ -464,7 +472,7 @@
   white-space: nowrap;
 }
 .player-window .player-detail-top .eyebrow {
-  font-size: 10px;
+  font-size: 9px;
 }
 .player-dialog-actions {
   gap: 6px;
@@ -692,7 +700,7 @@
   border: 1px solid #ff6a3d44;
 }
 .transfer-list .unavailable-transfer td {
-  color: #72849d;
+  color: #8da2bf;
 }
 .unavailable-transfer .player-name-cell {
   opacity: 0.65;
@@ -913,7 +921,8 @@
   display: none;
 }
 .toast {
-  z-index: 150;
+  z-index: 220;
+  bottom: 42px;
   max-width: min(560px, calc(100vw - 30px));
   font-size: 12px;
 }
@@ -947,10 +956,12 @@
 }
 @media (min-width: 1600px) {
   .workspace.solio-workspace {
-    grid-template-columns: minmax(
+    grid-template-columns:
+      minmax(
         280px,
-        calc(var(--panel-split, 50%) - 3px)
-      ) 6px minmax(360px, 1fr);
+        min(calc(var(--panel-split, 50%) - 3px), calc(100% - 366px))
+      )
+      6px minmax(0, 1fr);
   }
   .workspace.tree-hidden {
     grid-template-columns: minmax(0, 1fr);
@@ -958,10 +969,12 @@
 }
 @media (max-width: 1050px) and (min-width: 701px) {
   .workspace.solio-workspace {
-    grid-template-columns: minmax(
+    grid-template-columns:
+      minmax(
         220px,
-        calc(var(--panel-split, 42%) - 3px)
-      ) 6px minmax(360px, 1fr);
+        min(calc(var(--panel-split, 42%) - 3px), calc(100% - 346px))
+      )
+      6px minmax(0, 1fr);
   }
   .workspace.tree-hidden {
     grid-template-columns: minmax(0, 1fr);
@@ -1075,7 +1088,7 @@
     font-size: 19px;
   }
   .player-window .player-detail-top .eyebrow {
-    font-size: 8px;
+    font-size: 9px;
     letter-spacing: 0;
   }
   .player-dialog-actions .button {
@@ -1123,7 +1136,7 @@
     white-space: nowrap;
   }
   .transfer-list .player-name-cell small {
-    font-size: 9px;
+    font-size: 10px;
   }
   .transfer-list .club-badge {
     width: 19px;
@@ -1244,7 +1257,7 @@
   font-size: 19px;
 }
 .floating-player-window .player-detail-top .eyebrow {
-  font-size: 8px;
+  font-size: 9px;
   letter-spacing: 0.3px;
 }
 .floating-player-window .player-dialog-actions {
@@ -1312,14 +1325,24 @@
   cursor: pointer;
   padding: 6px 0;
 }
-.editor-team-news p { margin: 6px 0; }
-.player-window .stat-scenario-editor { padding: 10px; margin-bottom: 8px; }
+.editor-team-news p {
+  margin: 6px 0;
+}
+.player-window .stat-scenario-editor {
+  padding: 10px;
+  margin-bottom: 8px;
+}
 .stat-scenario-editor .field-grid,
 .minutes-schedule-editor .field-grid {
   align-items: center;
 }
-.editor-week { color: #e2ebf7; font-size: 12px; }
-.detail-tab-overview .player-minutes-options { display: none; }
+.editor-week {
+  color: #e2ebf7;
+  font-size: 12px;
+}
+.detail-tab-overview .player-minutes-options {
+  display: none;
+}
 .player-window .editor-actions {
   position: sticky;
   bottom: 0;
@@ -1767,6 +1790,11 @@
   }
   .fixture-detail-metrics b {
     font-size: 19px;
+  }
+}
+@media (max-width: 440px) {
+  .fixture-detail-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 @media (min-width: 701px) {

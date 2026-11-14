@@ -368,10 +368,14 @@ describe("LineupImage SVG & dialog fixes", () => {
 
     // GK green shirt fill
     expect(svg).toContain('fill="#a6b675"');
-    // Dark kit clubs (BOU, AVL) use white #ffffff text, light kit clubs (FUL, NEW) use dark #132238 text
-    expect(svg).toMatch(/fill="#ffffff"[^>]*>BOU<\/text>/);
+    // Dark kit clubs (BOU, AVL) use white #ffffff text + dark paint-order stroke halo; light kit clubs (FUL, NEW) use dark #132238 text + light stroke halo
+    expect(svg).toMatch(
+      /fill="#ffffff" stroke="rgba\(11,21,37,\.78\)" stroke-width="2\.4" stroke-linejoin="round" paint-order="stroke"[^>]*>BOU<\/text>/,
+    );
     expect(svg).toMatch(/fill="#ffffff"[^>]*>AVL<\/text>/);
-    expect(svg).toMatch(/fill="#132238"[^>]*>FUL<\/text>/);
+    expect(svg).toMatch(
+      /fill="#132238" stroke="rgba\(255,255,255,\.72\)" stroke-width="2\.4" stroke-linejoin="round" paint-order="stroke"[^>]*>FUL<\/text>/,
+    );
     expect(svg).toMatch(/fill="#132238"[^>]*>NEW<\/text>/);
     // Unmapped club fallback uses high-contrast #cad5e3 primary with dark #132238 text
     const unmappedSvg = buildLineupSvg(

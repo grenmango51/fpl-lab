@@ -545,6 +545,7 @@ export function ProjectionsView({
                   const delta = selectedPlayer
                     ? total(player) - total(selectedPlayer)
                     : 0;
+                  const roundedDelta = Number(fmt(delta)) || 0;
                   return (
                     <tr
                       key={player.id}
@@ -621,11 +622,11 @@ export function ProjectionsView({
                       {selectedPlayer ? (
                         <td
                           className={
-                            delta >= 0 ? "green numeric" : "red numeric"
+                            roundedDelta >= 0 ? "green numeric" : "red numeric"
                           }
                         >
-                          {Number(fmt(delta)) > 0 ? "+" : ""}
-                          {fmt(delta)}
+                          {roundedDelta > 0 ? "+" : ""}
+                          {fmt(roundedDelta)}
                         </td>
                       ) : null}
                       <td>

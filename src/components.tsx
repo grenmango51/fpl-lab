@@ -9,6 +9,8 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import {
+  Children,
+  cloneElement,
   isValidElement,
   useEffect,
   useLayoutEffect,
@@ -492,6 +494,25 @@ function hasFormControls(node: ReactNode): boolean {
   return hasFormControls(node.props.children);
 }
 
+function stripMenuItemRoles(node: ReactNode): ReactNode {
+  return Children.map(node, (child) => {
+    if (!isValidElement<{ role?: string; children?: ReactNode }>(child)) {
+      return child;
+    }
+    const nextChildren =
+      child.props.children !== undefined
+        ? stripMenuItemRoles(child.props.children)
+        : child.props.children;
+    if (child.props.role === "menuitem") {
+      return cloneElement(child, { role: undefined }, nextChildren);
+    }
+    if (nextChildren !== child.props.children) {
+      return cloneElement(child, undefined, nextChildren);
+    }
+    return child;
+  });
+}
+
 export function ActionMenu({
   label,
   children,
@@ -587,7 +608,7 @@ export function ActionMenu({
               setOpen(false);
           }}
         >
-          {children}
+          {resolvedRole === "menu" ? children : stripMenuItemRoles(children)}
         </div>
       ) : null}
     </div>
@@ -788,9 +809,7 @@ export function LineChart({
                   r="2.7"
                   fill={colors[index % colors.length]}
                 >
-                  <title>
-                    {s.name} · {labels[i]}: {fmt(value, 2)}
-                  </title>
+                  <title>{`${s.name} · ${labels[i]}: ${fmt(value, 2)}`}</title>
                 </circle>
               ),
             )}

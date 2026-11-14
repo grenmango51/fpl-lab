@@ -45,7 +45,7 @@ export function PlayerSurface({
       }
     });
     return () => cancelAnimationFrame(frame);
-  }, [target, title]);
+  }, [target, title, subtitle]);
 
   if (!target)
     return (

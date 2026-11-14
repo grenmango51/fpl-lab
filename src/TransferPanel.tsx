@@ -63,6 +63,12 @@ export function TransferPanel({
   const lookup = new Map(data.players.map((player) => [player.id, player]));
   const target = targetId === null ? null : lookup.get(targetId) ?? null;
   const preview = target ? allowance.forTarget(target) : null;
+  const confirmGwDelta = target
+    ? Number(fmt(xp(target, week.gw) - xp(outgoing, week.gw))) || 0
+    : 0;
+  const confirmRangeDelta = target
+    ? Number(fmt(total(target) - total(outgoing))) || 0
+    : 0;
   const isOverBudget = (player: Player) =>
     allowance.forTarget(player).bankAfter < 0;
   const isClubCapped = (player: Player) =>
@@ -193,18 +199,14 @@ export function TransferPanel({
             </div>
             <div>
               <small>GW{week.gw} Δ xPts</small>
-              <b
-                className={
-                  xp(target, week.gw) >= xp(outgoing, week.gw) ? "green" : "red"
-                }
-              >
-                {fmt(xp(target, week.gw) - xp(outgoing, week.gw))}
+              <b className={confirmGwDelta >= 0 ? "green" : "red"}>
+                {fmt(confirmGwDelta)}
               </b>
             </div>
             <div>
               <small>{comparisonRange} Δ xPts</small>
-              <b className={total(target) >= total(outgoing) ? "green" : "red"}>
-                {fmt(total(target) - total(outgoing))}
+              <b className={confirmRangeDelta >= 0 ? "green" : "red"}>
+                {fmt(confirmRangeDelta)}
               </b>
             </div>
           </div>
@@ -408,6 +410,8 @@ export function TransferPanel({
                       ? "3 players from club"
                       : "";
                   const isWatched = watch.includes(player.id);
+                  const rowDelta =
+                    Number(fmt(total(player) - total(outgoing))) || 0;
                   return (
                     <tr
                       key={player.id}
@@ -434,13 +438,9 @@ export function TransferPanel({
                         {money(player.price)}
                       </td>
                       <td>{fmt(xp(player, week.gw))}</td>
-                      <td
-                        className={
-                          total(player) >= total(outgoing) ? "green" : "red"
-                        }
-                      >
-                        {total(player) >= total(outgoing) ? "+" : ""}
-                        {fmt(total(player) - total(outgoing))}
+                      <td className={rowDelta >= 0 ? "green" : "red"}>
+                        {rowDelta > 0 ? "+" : ""}
+                        {fmt(rowDelta)}
                       </td>
                       <td>
                         <button

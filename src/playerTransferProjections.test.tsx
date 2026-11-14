@@ -1,7 +1,12 @@
 import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ActionMenu, computeModalPosition, PlayerName } from "./components";
+import {
+  ActionMenu,
+  computeModalPosition,
+  LineChart,
+  PlayerName,
+} from "./components";
 import { MinutesScenarioEditor } from "./MinutesScenarioEditor";
 import { PlayerSurface } from "./PlayerSurface";
 import { ProjectionsView } from "./ProjectionExplorer";
@@ -13,6 +18,7 @@ const state = vi.hoisted(() => ({
   values: [] as unknown[],
   cursor: 0,
   effects: [] as (() => void | (() => void))[],
+  effectDeps: [] as (readonly unknown[] | undefined)[],
   viewStore: {} as Record<string, unknown>,
 }));
 
@@ -22,8 +28,12 @@ vi.mock("react", async (original) => {
     ...actual,
     useMemo: (calculate: () => unknown) => calculate(),
     useRef: (initial: unknown) => ({ current: initial }),
-    useEffect: (effect: () => void | (() => void)) => {
+    useEffect: (
+      effect: () => void | (() => void),
+      deps?: readonly unknown[],
+    ) => {
       state.effects.push(effect);
+      state.effectDeps.push(deps);
     },
     useState: (initial: unknown) => {
       const slot = state.cursor++;
@@ -146,6 +156,7 @@ beforeEach(() => {
   state.values = [];
   state.cursor = 0;
   state.effects = [];
+  state.effectDeps = [];
   state.viewStore = {};
 });
 
@@ -165,13 +176,26 @@ describe("ProjectionExplorer UI & state sync", () => {
         },
       },
     });
+    const nearEqual = makePlayer({
+      id: 3,
+      name: "Mbeumo",
+      team: 2,
+      team_short: "CHE",
+      price: 8.0,
+      gw: {
+        "11": {
+          ...selected.gw["11"],
+          points: 6.18, // -0.02 delta rounds to "0.0" green, not "-0.0" red
+        },
+      },
+    });
     const data = {
       gameweeks: [11],
       teams: [
         { id: 1, name: "Arsenal", short_name: "ARS", code: 3 },
         { id: 2, name: "Chelsea", short_name: "CHE", code: 8 },
       ],
-      players: [selected, upgrade],
+      players: [selected, upgrade, nearEqual],
     } as unknown as Bootstrap;
 
     state.viewStore["projections.sort"] = "gw99";
@@ -262,7 +286,15 @@ describe("ProjectionExplorer UI & state sync", () => {
         : String(c.props.children),
     );
     expect(cellTexts).toContain("+2.5");
-    expect(cellTexts).toContain("0.0");
+    expect(cellTexts.filter((t) => t === "0.0")).toHaveLength(2);
+    expect(
+      nodes(treeAfterClear).some(
+        (n) =>
+          n.type === "td" &&
+          typeof n.props.className === "string" &&
+          n.props.className.includes("red numeric"),
+      ),
+    ).toBe(false);
 
     // Clicking a sort header resets page to 0 (slot 1 is page state)
     state.values[1] = 2;
@@ -476,7 +508,20 @@ describe("StatScenarioEditor & MinutesScenarioEditor sync and precision", () => 
 describe("TransferPanel, PlayerSurface, Modal, ActionMenu & PlayerName", () => {
   it("renders TransferPanel clear button, watched star state, over-budget tint, and 3/3 pill without .transfer-limit", () => {
     const outgoing = makePlayer({ id: 1, position: "MID", position_id: 3, team: 4, price: 6.0 });
-    const affordablePick = makePlayer({ id: 2, name: "Rogers", position: "MID", position_id: 3, team: 5, price: 5.5 });
+    const affordablePick = makePlayer({
+      id: 2,
+      name: "Rogers",
+      position: "MID",
+      position_id: 3,
+      team: 5,
+      price: 5.5,
+      gw: {
+        "11": {
+          ...outgoing.gw["11"],
+          points: 6.18, // delta -0.02 rounds to 0.0, never "-0.0"
+        },
+      },
+    });
     const overBudgetPick = makePlayer({ id: 3, name: "Salah", position: "MID", position_id: 3, team: 6, price: 13.5 });
     const clubCapPick = makePlayer({ id: 4, name: "Odegaard", position: "MID", position_id: 3, team: 1, price: 5.5 });
     const clubMate1 = makePlayer({ id: 10, team: 1 });
@@ -558,6 +603,9 @@ describe("TransferPanel, PlayerSurface, Modal, ActionMenu & PlayerName", () => {
     expect(html).toContain(">3/3</span>");
     expect(html).toContain(">1 GW</option>");
     expect(html).not.toContain(">1 GWs</option>");
+    expect(html).not.toContain("-0.0");
+    expect(html).not.toContain("+0.0");
+    expect(html).toContain('<td class="green">0.0</td>');
 
     const watchedBtn = nodes(tree).find(
       (n) => n.props["aria-label"] === "Watch Rogers",
@@ -565,16 +613,22 @@ describe("TransferPanel, PlayerSurface, Modal, ActionMenu & PlayerName", () => {
     expect(watchedBtn.props["aria-pressed"]).toBe(true);
   });
 
-  it("handles Escape on inline PlayerSurface", () => {
+  it("handles Escape and tracks subtitle in focus/scroll effect deps on inline PlayerSurface", () => {
     const onClose = vi.fn();
+    const target = {} as HTMLElement;
     const tree = PlayerSurface({
       title: "Saka",
-      subtitle: "Arsenal · MID",
+      subtitle: "Arsenal · MID · GW11",
       onClose,
       anchor: null,
-      target: {} as HTMLElement,
+      target,
       children: null,
     });
+    expect(state.effectDeps[1]).toEqual([
+      target,
+      "Saka",
+      "Arsenal · MID · GW11",
+    ]);
     const section = nodes(tree).find((n) => n.type === "section")!;
     const preventDefault = vi.fn();
     const stopPropagation = vi.fn();
@@ -638,7 +692,7 @@ describe("TransferPanel, PlayerSurface, Modal, ActionMenu & PlayerName", () => {
     );
     expect(nameHtml).toContain("<svg");
 
-    // Button-only ActionMenu gets role="menu"
+    // Button-only ActionMenu gets role="menu" and keeps role="menuitem"
     state.values = [true];
     state.cursor = 0;
     const menuHtml = renderToStaticMarkup(
@@ -648,25 +702,43 @@ describe("TransferPanel, PlayerSurface, Modal, ActionMenu & PlayerName", () => {
       }),
     );
     expect(menuHtml).toContain('role="menu"');
+    expect(menuHtml).toContain('role="menuitem"');
     expect(menuHtml).toContain('aria-haspopup="menu"');
 
-    // Mixed form-control ActionMenu omits invalid role="menu"
+    // Mixed form-control ActionMenu omits invalid role="menu" AND strips role="menuitem"
     state.values = [true];
     state.cursor = 0;
     const configHtml = renderToStaticMarkup(
       ActionMenu({
         label: "Configure",
-        children: (
-          <label>
+        children: [
+          <label key="branch">
             Branch
             <select>
               <option value="1">GW1</option>
             </select>
-          </label>
-        ),
+          </label>,
+          <button key="base" role="menuitem">
+            Base team & resources
+          </button>,
+        ],
       }),
     );
     expect(configHtml).not.toContain('role="menu"');
+    expect(configHtml).not.toContain('role="menuitem"');
     expect(configHtml).not.toContain('aria-haspopup="menu"');
+    expect(configHtml).toContain("Base team &amp; resources");
+
+    // LineChart SVG <title> renders a single string without React 19 warnings
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const chartHtml = renderToStaticMarkup(
+      LineChart({
+        series: [{ name: "Expected points", values: [6.25, 5.5] }],
+        labels: ["GW11", "GW12"],
+      }),
+    );
+    expect(chartHtml).toContain("<title>Expected points · GW11: 6.25</title>");
+    expect(errSpy).not.toHaveBeenCalled();
+    errSpy.mockRestore();
   });
 });

@@ -1,7 +1,7 @@
-.solio-detail-panel .solver-reviewing > .solver-settings {
+.solio-detail-panel .solver-with-preview.solver-reviewing > .solver-settings {
   display: none;
 }
-.solio-detail-panel .solver-reviewing > .solver-preview {
+.solio-detail-panel .solver-with-preview.solver-reviewing > .solver-preview {
   order: 0;
 }
 .solver-reviewing .result-summary {
@@ -35,6 +35,24 @@
 .solio-detail-panel .solver-run-footer > .button.full,
 .solver-run-footer > .button.full {
   margin-top: 0;
+}
+
+.solio-detail-panel .search-box .search-clear,
+.search-box .search-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  flex-shrink: 0;
+  border-radius: 4px;
+  color: #8fa6c5;
+}
+.solio-detail-panel .search-box .search-clear:hover,
+.search-box .search-clear:hover {
+  color: #edf1f7;
+  background: #1a2637;
 }
 
 .solver-settings .constraint-search {
@@ -73,15 +91,31 @@
   border-color: #673942;
   background: #28191e;
 }
-.solver-settings .rule-receipts span {
+.solver-settings .rule-receipts span,
+.solver-settings .rule-receipts button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   font-size: 10px;
+  border-radius: 4px;
   padding: 5px 7px;
+  background: #1b2b41;
+  color: #b5c5dc;
+  border: 1px solid #2b3f5c;
+}
+.solver-settings .rule-receipts button:hover {
+  border-color: var(--orange);
+  color: #ffd0b8;
 }
 
 .solio-detail-panel .source-state.orange,
 .source-state.orange {
   color: var(--orange);
   border-color: #6d4332;
+}
+.solio-detail-panel .benchmark-card > small,
+.solio-detail-panel .methodology > small {
+  color: #98adc8;
 }
 
 .solio-detail-panel .plan-comparison-table th.numeric,
@@ -117,6 +151,10 @@
 }
 .sensitivity-panel .stress-run > .button.full {
   margin-top: 0;
+}
+.sensitivity-panel .stress-run small {
+  font-size: 11px;
+  color: #91a4be;
 }
 
 @container (min-width: 850px) {
@@ -155,6 +193,12 @@
     margin: 0;
     min-width: 84px;
     font-size: 19px;
+  }
+}
+
+@container (max-width: 560px) {
+  .solio-detail-panel .solver-settings .field-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 

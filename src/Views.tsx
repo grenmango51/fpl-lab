@@ -8,6 +8,7 @@ import {
   Star,
   ChevronLeft,
   ChevronRight,
+  ArrowRight,
   ArrowUpRight,
   Sparkles,
   LockKeyhole,
@@ -215,6 +216,8 @@ export function OptimiseView({
   );
   const [reviewing, setReviewing] = useState(Boolean(result));
   const reviewHeading = useRef<HTMLDivElement>(null);
+  const constraintInputRef = useRef<HTMLInputElement>(null);
+  const ftValueInputRef = useRef<HTMLInputElement>(null);
   const prevResult = useRef(result);
 
   useEffect(() => {
@@ -489,7 +492,12 @@ export function OptimiseView({
                     key={name}
                     className={preset === name ? "active" : ""}
                     onClick={() => {
-                      if (name === "Custom") setSettingsSection("advanced");
+                      if (name === "Custom") {
+                        setSettingsSection("advanced");
+                        requestAnimationFrame(() =>
+                          ftValueInputRef.current?.focus(),
+                        );
+                      }
                       if (presets[name])
                         onSettings({ ...settings, ...presets[name] });
                     }}
@@ -597,11 +605,25 @@ export function OptimiseView({
             <div className="search-box constraint-search">
               <Search size={14} />
               <input
+                ref={constraintInputRef}
                 aria-label="Find a player constraint"
                 placeholder="Find players · Haaland, Saka"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
               />
+              {query && (
+                <button
+                  type="button"
+                  className="search-clear"
+                  aria-label="Clear player search"
+                  onClick={() => {
+                    setQuery("");
+                    constraintInputRef.current?.focus();
+                  }}
+                >
+                  <X size={13} />
+                </button>
+              )}
             </div>
             {query && (
               <div className="constraint-results">
@@ -724,31 +746,68 @@ export function OptimiseView({
               <div className="rule-receipts">
                 {Object.entries(settings.transfer_limits ?? {}).map(
                   ([week, limit]) => (
-                    <span key={`t${week}`}>
-                      GW{week}:{" "}
-                      {limit === 0
-                        ? "roll"
-                        : `max ${limit} transfer${limit === 1 ? "" : "s"}`}
-                    </span>
+                    <button
+                      type="button"
+                      key={`t${week}`}
+                      aria-label={`Remove GW${week} transfer limit`}
+                      onClick={() => {
+                        const next = { ...settings.transfer_limits };
+                        delete next[week];
+                        onSettings({ ...settings, transfer_limits: next });
+                      }}
+                    >
+                      <span>
+                        GW{week}:{" "}
+                        {limit === 0
+                          ? "roll"
+                          : `max ${limit} transfer${limit === 1 ? "" : "s"}`}
+                      </span>
+                      <X size={11} />
+                    </button>
                   ),
                 )}
                 {Object.entries(settings.captain_locks ?? {}).map(
                   ([week, id]) => (
-                    <span key={`c${week}`}>
-                      GW{week}: captain {lookup.get(id)?.name ?? `#${id}`}
-                    </span>
+                    <button
+                      type="button"
+                      key={`c${week}`}
+                      aria-label={`Remove GW${week} captain lock`}
+                      onClick={() => {
+                        const next = { ...settings.captain_locks };
+                        delete next[week];
+                        onSettings({ ...settings, captain_locks: next });
+                      }}
+                    >
+                      <span>
+                        GW{week}: captain {lookup.get(id)?.name ?? `#${id}`}
+                      </span>
+                      <X size={11} />
+                    </button>
                   ),
                 )}
                 {weeklyPlayerReceipts.map((receipt) => (
-                  <span key={receipt.key}>
-                    {receipt.scopeLabel}:{" "}
-                    {receipt.kind === "locked" ? "include" : "exclude"}{" "}
-                    {lookup.get(receipt.id)?.name ?? `#${receipt.id}`}
-                  </span>
+                  <button
+                    type="button"
+                    key={receipt.key}
+                    aria-label={`Remove ${receipt.scopeLabel} ${receipt.kind === "locked" ? "include" : "exclude"} rule for ${lookup.get(receipt.id)?.name ?? `#${receipt.id}`}`}
+                    onClick={() => removeConstraintReceipt(receipt)}
+                  >
+                    <span>
+                      {receipt.scopeLabel}:{" "}
+                      {receipt.kind === "locked" ? "include" : "exclude"}{" "}
+                      {lookup.get(receipt.id)?.name ?? `#${receipt.id}`}
+                    </span>
+                    <X size={11} />
+                  </button>
                 ))}
               </div>
               <button
                 className="button small"
+                disabled={
+                  !Object.keys(settings.transfer_limits ?? {}).length &&
+                  !Object.keys(settings.captain_locks ?? {}).length &&
+                  !weeklyPlayerReceipts.length
+                }
                 onClick={() =>
                   onSettings({
                     ...settings,
@@ -770,6 +829,7 @@ export function OptimiseView({
                 <label>
                   FT value
                   <input
+                    ref={ftValueInputRef}
                     type="number"
                     step="0.25"
                     min="0"
@@ -991,7 +1051,7 @@ export function OptimiseView({
                           {lookup.get(selectedWeek.transfers_out[index])
                             ?.name ?? "New squad"}
                         </button>
-                        <ArrowUpRight size={14} />
+                        <ArrowRight size={14} />
                         <button
                           className="green"
                           onClick={() => onDetail(id, selectedWeek.gw)}
@@ -1061,6 +1121,33 @@ export function OptimiseView({
       </div>
     </>
   );
+}
+
+const SOURCE_LABELS: Record<string, string> = {
+  fpl_bootstrap: "Official FPL",
+  fpl_fixtures: "Official fixtures",
+  fpljoe: "FPL Joe",
+  elevenify_sheet: "Elevenify",
+  elevenify: "Elevenify",
+  elevenify_player_baselines: "Elevenify baselines",
+  elevenify_fast_fantasy: "Elevenify importance",
+  elevenify_next_gw_attack: "Elevenify next-GW attack",
+  elevenify_three_gw_goals: "Elevenify 3-GW goals",
+  elevenify_three_gw_assists: "Elevenify 3-GW assists",
+  solio_public: "Solio (public)",
+  solio_authenticated: "Solio (planner)",
+};
+
+export function formatSourceLabel(key: string) {
+  if (SOURCE_LABELS[key]) return SOURCE_LABELS[key];
+  const fplForm = /^fplform_(\d{4}-\d{2})_gw(\d+)$/.exec(key);
+  if (fplForm) return `FPL Form (${fplForm[1].replace("-", "/")} GW${fplForm[2]})`;
+  const archive = /^archive_(\d{4}-\d{2})_(.+)$/.exec(key);
+  if (archive) {
+    return `Historical archive (${archive[1].replace("-", "/")} ${archive[2].replaceAll("_", " ")})`;
+  }
+  const plain = key.replaceAll("_", " ");
+  return plain.charAt(0).toUpperCase() + plain.slice(1);
 }
 
 const MODEL_LABELS: Record<string, string> = {
@@ -1438,7 +1525,7 @@ export function AnalysisView({
                       />
                       <div>
                         <a href={source.url} target="_blank" rel="noreferrer">
-                          {key.replaceAll("_", " ")}
+                          {formatSourceLabel(key)}
                         </a>
                         <small>
                           {source.fetched_at
@@ -1479,6 +1566,7 @@ export function MarketView({ data, gw, onDetail, watch, onWatch }: BaseProps) {
   const [query, setQuery] = useViewState("market.prices.query", ""),
     [sort, setSort] = useViewState("market.prices.sort", "net");
   const [page, setPage] = useViewState("market.prices.page", 0);
+  const marketInputRef = useRef<HTMLInputElement>(null);
   const players = data.players
     .filter((p) => matchesPlayerQuery(p, query))
     .sort((a, b) =>
@@ -1533,6 +1621,7 @@ export function MarketView({ data, gw, onDetail, watch, onWatch }: BaseProps) {
         <div className="search-box">
           <Search size={16} />
           <input
+            ref={marketInputRef}
             placeholder="Players or clubs · Haaland, Saka"
             aria-label="Search market players"
             value={query}
@@ -1541,6 +1630,20 @@ export function MarketView({ data, gw, onDetail, watch, onWatch }: BaseProps) {
               setPage(0);
             }}
           />
+          {query && (
+            <button
+              type="button"
+              className="search-clear"
+              aria-label="Clear market search"
+              onClick={() => {
+                setQuery("");
+                setPage(0);
+                marketInputRef.current?.focus();
+              }}
+            >
+              <X size={14} />
+            </button>
+          )}
         </div>
         <select
           aria-label="Sort market"

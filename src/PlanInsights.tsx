@@ -1,5 +1,10 @@
 import { useMemo } from "react";
-import { ArrowRight, LockKeyhole, ShieldCheck } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowRight,
+  LockKeyhole,
+  ShieldCheck,
+} from "lucide-react";
 import { Badge } from "./components";
 import { useViewState } from "./useViewState";
 import { fmt, money } from "./lib";
@@ -58,6 +63,13 @@ function Name({
       <Badge player={player} size={21} />
       <span>
         {player.name}
+        {player.status !== "a" && (
+          <AlertTriangle
+            size={11}
+            className="orange pi-status-flag"
+            aria-label={player.news || "Availability flag"}
+          />
+        )}
         <small>
           {player.team_short} · {player.position}
         </small>

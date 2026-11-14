@@ -357,8 +357,11 @@ export function SensitivityView({
                   <small>
                     {job.baseline.weeks[0].transfers_in
                       .map((id) => lookup.get(id)?.name ?? id)
-                      .join(", ") || "Roll GW1 transfer"}{" "}
-                    · Captain {lookup.get(job.baseline.weeks[0].captain)?.name}
+                      .join(", ") ||
+                      `Roll GW${job.baseline.weeks[0].gw} transfer`}{" "}
+                    · Captain{" "}
+                    {lookup.get(job.baseline.weeks[0].captain)?.name ??
+                      `#${job.baseline.weeks[0].captain}`}
                   </small>
                 </div>
                 <button
@@ -458,7 +461,9 @@ export function SensitivityView({
                             {variant.weeks[0].transfers_out
                               .map((id) => lookup.get(id)?.name ?? id)
                               .join(", ") || "None"}{" "}
-                            · C: {lookup.get(variant.weeks[0].captain)?.name}
+                            · C:{" "}
+                            {lookup.get(variant.weeks[0].captain)?.name ??
+                              `#${variant.weeks[0].captain}`}
                           </small>
                           <small>
                             {fmt(variant.base_value)} net xP · gap{" "}

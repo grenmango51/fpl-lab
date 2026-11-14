@@ -9,6 +9,7 @@ import {
   type ChipStrategyJob,
 } from "./ChipStrategyView";
 import {
+  comparisonBankMax,
   comparisonYBounds,
   formatPlanGWs,
   PlanComparisonView,
@@ -29,6 +30,7 @@ import type {
 import {
   AnalysisView,
   buildPlayerConstraintReceipts,
+  formatSourceLabel,
   MarketView,
   OptimiseView,
   type SolverSettings,
@@ -359,7 +361,15 @@ describe("SensitivityView and sensitivity polling fixes", () => {
         sha256: "0123456789abcdef0123",
         layers: [],
       },
-      baseline: null,
+      baseline: {
+        weeks: [{ ...week11, captain: 999 }],
+        objective: 90,
+        status: "Optimal",
+        gap: 0.005,
+        candidate_count: 50,
+        pool_count: 500,
+        assumptions: [],
+      },
       baseline_value: 90,
       summary: {
         denominator: 3,
@@ -370,7 +380,7 @@ describe("SensitivityView and sensitivity polling fixes", () => {
           {
             count: 2,
             scenario: 1,
-            weeks: [week11],
+            weeks: [{ ...week11, captain: 998 }],
             base_value: 48,
             gap: null,
           },
@@ -420,6 +430,10 @@ describe("SensitivityView and sensitivity polling fixes", () => {
     const html = renderToStaticMarkup(tree);
     expect(html).toContain("gap unknown");
     expect(html).not.toContain("gap 0.0%");
+    expect(html).toContain("Roll GW11 transfer");
+    expect(html).not.toContain("Roll GW1 transfer");
+    expect(html).toContain("Captain #999");
+    expect(html).toContain("C: #998");
     expect(html).toContain("<b>+1.4</b>");
     expect(html).toContain("Source time unavailable");
     expect(html).not.toContain("Invalid Date");
@@ -829,6 +843,7 @@ describe("OptimiseView, AnalysisView, and MarketView fixes", () => {
       }),
     );
     expect(matchHtml).toContain("T6 · DEF");
+    expect(matchHtml).toContain('aria-label="Clear player search"');
   });
 
   it("renders Reject when onDiscard is passed, falls back draftLabel to New £100m squad / baselinePlan.name, strips scoped duplicates when removing All GWs, and singularizes max 1 transfer", () => {
@@ -875,7 +890,8 @@ describe("OptimiseView, AnalysisView, and MarketView fixes", () => {
     expect(html).toContain("Reject");
     // Falls back to baselinePlan.name when sourceName is omitted!
     expect(html).toContain("Draft · Branch A");
-    expect(html).toContain("GW11: max 1 transfer</span>");
+    expect(html).toContain("<span>GW11: max 1 transfer</span>");
+    expect(html).toContain('aria-label="Remove GW11 transfer limit"');
     expect(html).not.toContain("Squad rules checked");
     expect(html).not.toContain("No chip");
     expect(html).toContain("<small>BB</small>");
@@ -884,7 +900,7 @@ describe("OptimiseView, AnalysisView, and MarketView fixes", () => {
     expect(html).toContain("Player 1 · T1");
     expect(html).toContain("GW12: include Player 16");
 
-    // Fresh squad fallback when sourceName is omitted:
+    // Fresh squad fallback when sourceName is omitted, and Clear weekly rules disabled when none exist:
     const freshHtml = renderToStaticMarkup(
       createElement(OptimiseView, {
         data,
@@ -901,6 +917,9 @@ describe("OptimiseView, AnalysisView, and MarketView fixes", () => {
       }),
     );
     expect(freshHtml).toContain("Draft · New £100m squad");
+    expect(freshHtml).toMatch(
+      /<button class="button small" disabled="">Clear weekly rules<\/button>/,
+    );
 
     // Removing global All GWs receipt also strips hidden per-GW entry for player 5:
     hooks.enabled = true;
@@ -1014,10 +1033,19 @@ describe("OptimiseView, AnalysisView, and MarketView fixes", () => {
       }),
     );
     expect(sourcesHtml).toContain('class="source-state orange">stale</span>');
+    expect(sourcesHtml).toContain(">Official FPL</a>");
+    expect(sourcesHtml).toContain(">Elevenify</a>");
+    expect(formatSourceLabel("fpl_fixtures")).toBe("Official fixtures");
+    expect(formatSourceLabel("fpljoe")).toBe("FPL Joe");
+    expect(formatSourceLabel("elevenify_sheet")).toBe("Elevenify");
+    expect(formatSourceLabel("fplform_2026-27_gw11")).toBe(
+      "FPL Form (2026/27 GW11)",
+    );
   });
 
-  it("renders MarketView watch star with fill and aria-pressed and places Price signal outside table-footer", () => {
+  it("renders MarketView watch star with fill and aria-pressed, search clear button, and places Price signal outside table-footer", () => {
     const { data } = makeSetup();
+    viewStateOverrides["market.prices.query"] = "Player 1";
     const html = renderToStaticMarkup(
       createElement(MarketView, {
         data,
@@ -1029,6 +1057,7 @@ describe("OptimiseView, AnalysisView, and MarketView fixes", () => {
     );
     expect(html).toContain('aria-pressed="true"');
     expect(html).toContain('fill="currentColor"');
+    expect(html).toContain('aria-label="Clear market search"');
     const footerMatch = html.match(
       /<div class="table-footer">([\s\S]*?)<\/div>\s*<details/,
     );
@@ -1050,6 +1079,8 @@ describe("PlanInsights and PlanComparisonView fixes", () => {
     expect(deltaClass(-0.12)).toBe("pi-negative");
 
     const { data, plan } = makeSetup();
+    data.players[4].status = "d";
+    data.players[4].news = "Knock - 75% chance of playing";
     const html = renderToStaticMarkup(
       createElement(PlanInsights, {
         data,
@@ -1068,17 +1099,29 @@ describe("PlanInsights and PlanComparisonView fixes", () => {
     );
     expect(html).toContain('class="pi-lock active" aria-pressed="true"');
     expect(html).toContain("pi-selected-gw");
+    expect(html).toContain("pi-status-flag");
   });
 
-  it("fits Y bounds to multi-week plan totals, formats single/range GWs, hides Deselect all for 1 plan, and renders active scatter point last", () => {
+  it("fits Y bounds to multi-week plan totals, pads X domain with clean step ticks, renders empty-plans message, and renders active scatter point last", () => {
     const bounds = comparisonYBounds([312.4, 316.8]);
     expect(bounds.min).toBeGreaterThan(290);
     expect(bounds.min).toBeLessThan(312.4);
     expect(bounds.max).toBeGreaterThan(316.8);
     expect((bounds.max - bounds.min) % 4).toBe(0);
+    expect(comparisonBankMax([0, 0.8])).toBe(2);
+    expect(comparisonBankMax([2.1])).toBe(4);
 
     expect(formatPlanGWs([{ gw: 11 }])).toBe("GW11");
     expect(formatPlanGWs([{ gw: 11 }, { gw: 15 }])).toBe("GW11–15");
+
+    const emptyHtml = renderToStaticMarkup(
+      createElement(PlanComparisonView, {
+        plans: [],
+        onPlan: vi.fn(),
+      }),
+    );
+    expect(emptyHtml).toContain("Create or import a plan to compare branches.");
+    expect(emptyHtml).not.toContain("<table");
 
     const { plan, week11, week12 } = makeSetup();
     const singleHtml = renderToStaticMarkup(
@@ -1098,7 +1141,10 @@ describe("PlanInsights and PlanComparisonView fixes", () => {
       ...plan,
       id: "plan-b",
       name: "Branch B",
-      weeks: [week11, { ...week12, net_points: 52, bank: 0.8 }],
+      weeks: [
+        { ...week11, bank: 0 },
+        { ...week12, net_points: 52, bank: 0 },
+      ],
     };
     const planC: Plan = {
       ...plan,
@@ -1114,6 +1160,8 @@ describe("PlanInsights and PlanComparisonView fixes", () => {
       }),
     );
     expect(scatterHtml).toContain('viewBox="0 0 460 240"');
+    // £0.0m bank sits at xLeft(48) + xPad(14) = 62 so circle/ring never overlaps Y-axis labels!
+    expect(scatterHtml).toContain('cx="62"');
     expect(scatterHtml).toContain('r="14" fill="transparent"');
     expect(scatterHtml).toContain('fill="#69cbb3"');
     expect(scatterHtml.indexOf('aria-label="Select Branch C"')).toBeLessThan(

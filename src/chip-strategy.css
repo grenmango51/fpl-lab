@@ -29,6 +29,12 @@ details.solver-disclosure > summary:hover {
   background: #0f1d32;
   border-radius: 6px;
 }
+.solio-detail-panel details.solver-disclosure > summary:focus-visible,
+details.solver-disclosure > summary:focus-visible {
+  outline: 2px solid var(--orange);
+  outline-offset: -2px;
+  border-radius: 6px;
+}
 details.solver-disclosure[open] > summary {
   border-bottom: 1px solid #1e2d42;
   border-radius: 6px 6px 0 0;
@@ -85,7 +91,7 @@ details.solver-disclosure > .solver-disclosure-body {
 .chip-search-limits label {
   font-size: 11px;
 }
-.chip-search-limits {
+.chip-strategy details.chip-search-limits {
   margin: 10px 0;
 }
 .chip-search-limits .field-grid {
@@ -182,13 +188,17 @@ details.solver-disclosure > .solver-disclosure-body {
   font-size: 11px;
   min-width: 430px;
 }
-.chip-strategy-table td,
-.chip-strategy-table th {
+.solio-detail-panel .chip-strategy .chip-strategy-table td,
+.solio-detail-panel .chip-strategy .chip-strategy-table th,
+.chip-strategy .chip-strategy-table td,
+.chip-strategy .chip-strategy-table th {
   padding: 9px 8px;
   white-space: nowrap;
 }
-.chip-strategy-table th.numeric,
-.chip-strategy-table td.numeric {
+.solio-detail-panel .chip-strategy .chip-strategy-table th.numeric,
+.solio-detail-panel .chip-strategy .chip-strategy-table td.numeric,
+.chip-strategy .chip-strategy-table th.numeric,
+.chip-strategy .chip-strategy-table td.numeric {
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
@@ -224,6 +234,14 @@ details.solver-disclosure > .solver-disclosure-body {
   font-size: 11px;
   color: #9aacc3;
   line-height: 1.6;
+}
+.chip-planner .compact-details p + p,
+.chip-strategy .chip-strategy-method p + p,
+.sensitivity-panel .stress-method p + p {
+  margin-top: 6px;
+}
+.sensitivity-panel .stress-method[open] > summary {
+  margin-bottom: 8px;
 }
 @container (max-width: 480px) {
   .chip-strategy .chip-search-limits .field-grid {

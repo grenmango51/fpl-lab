@@ -41,6 +41,12 @@ export function comparisonYBounds(values: readonly number[]) {
   return { min, max: min + step * 4 };
 }
 
+export function comparisonBankMax(banks: readonly number[]) {
+  const finite = banks.filter(Number.isFinite);
+  const rawMax = finite.length ? Math.max(...finite, 0) : 0;
+  return Math.max(2, Math.ceil(rawMax / 2) * 2);
+}
+
 export function PlanComparisonView({
   plans,
   activeId,
@@ -77,13 +83,26 @@ export function PlanComparisonView({
   const { min: minimum, max: maximum } = comparisonYBounds(
     points.map((row) => row.points),
   );
-  const bankMax = Math.max(...points.map((row) => row.bank), 1);
+  const bankMax = comparisonBankMax(points.map((row) => row.bank));
   const xLeft = 48;
   const xRight = 436;
+  const xPad = 14;
+  const xDomainStart = xLeft + xPad;
+  const xDomainWidth = xRight - xPad - xDomainStart;
   const plotWidth = xRight - xLeft;
   const yTop = 30;
   const yBottom = 194;
   const plotHeight = yBottom - yTop;
+
+  if (!plans.length) {
+    return (
+      <section className="plan-comparison-view">
+        <p className="comparison-period">
+          Create or import a plan to compare branches.
+        </p>
+      </section>
+    );
+  }
 
   return (
     <section className="plan-comparison-view">
@@ -230,18 +249,20 @@ export function PlanComparisonView({
             {[0, 0.25, 0.5, 0.75, 1].map((n) => (
               <text
                 key={n}
-                x={xLeft + n * plotWidth}
+                x={xDomainStart + n * xDomainWidth}
                 y="214"
                 textAnchor="middle"
                 fill="#95abc9"
                 fontSize="12"
               >
-                {fmt(n * bankMax)}
+                {fmt(n * bankMax, 1)}
               </text>
             ))}
             {orderedPoints.map((row) => {
               const cx =
-                xLeft + (Math.max(0, row.bank) / bankMax) * plotWidth;
+                xDomainStart +
+                (Math.min(bankMax, Math.max(0, row.bank)) / bankMax) *
+                  xDomainWidth;
               const cy =
                 yBottom -
                 ((row.points - minimum) / Math.max(1e-6, maximum - minimum)) *

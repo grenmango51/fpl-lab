@@ -44,20 +44,24 @@ export function LineupImageDialog({
           <p role="alert">{error}</p>
         ) : url ? (
           <>
-            <a
-              className="button primary"
-              href={url}
-              download={`open-fpl-gw${week.gw}.png`}
-            >
-              Save PNG
-            </a>
             <img
               src={url}
               alt={`GW${week.gw} lineup with captain, bench and forecasts`}
             />
+            <div className="lineup-image-actions">
+              <a
+                className="button primary"
+                href={url}
+                download={`open-fpl-gw${week.gw}.png`}
+              >
+                Save PNG
+              </a>
+            </div>
           </>
         ) : (
-          <p role="status">Creating image…</p>
+          <div className="lineup-image-loading" role="status">
+            Creating image…
+          </div>
         )}
       </div>
     </Modal>

@@ -76,6 +76,8 @@ export function PlanTree({
   } | null>(null);
   const lookup = new Map(data.players.map((player) => [player.id, player]));
   const firstGW = active?.weeks[0]?.gw ?? data.next_gw;
+  const branchWeeks =
+    active?.weeks.filter((week) => week.gw !== firstGW) ?? [];
   const remaining = data.gameweeks.filter((week) => week >= firstGW).length;
   const visibleGameweeks = treeGameweeks(plans, active);
   const shown = visibleGameweeks.length;
@@ -113,11 +115,16 @@ export function PlanTree({
         Start a branch at
         <select
           aria-label="Branch start gameweek"
-          disabled={!active || busy}
-          value={firstGW}
-          onChange={(event) => onStart(+event.target.value)}
+          disabled={!active || busy || active.weeks.length <= 1}
+          value=""
+          onChange={(event) => {
+            if (event.target.value) onStart(+event.target.value);
+          }}
         >
-          {active?.weeks.map((week) => (
+          <option value="" disabled>
+            {branchWeeks.length ? "Choose GW" : "—"}
+          </option>
+          {branchWeeks.map((week) => (
             <option key={week.gw} value={week.gw}>
               GW{week.gw}
             </option>
@@ -225,7 +232,6 @@ export function PlanTree({
         <button
           className="button tree-pitch-toggle"
           disabled={!active}
-          aria-pressed={pitchExpanded}
           onClick={() => {
             if (
               !pitchExpanded &&
@@ -263,7 +269,7 @@ export function PlanTree({
             >
               {horizonOptions.map((n) => (
                 <option key={n} value={n}>
-                  {n} GWs
+                  {`${n} GW${n === 1 ? "" : "s"}`}
                 </option>
               ))}
             </select>
@@ -280,6 +286,7 @@ export function PlanTree({
           value={Math.round(zoom * 100)}
           onChange={(event) => setZoom(+event.target.value / 100)}
         />
+        <span className="tree-zoom-value">{Math.round(zoom * 100)}%</span>
         <button aria-label="Fit planning tree" onClick={fit}>
           Fit
         </button>
@@ -326,18 +333,23 @@ export function PlanTree({
                   >
                     <span>
                       GW{week.gw}
-                      {week.chip !== "none" ? (
-                        <small>
-                          {
+                      <span>
+                        {week.chip !== "none" ? (
+                          <small>
                             {
-                              wildcard: "WC",
-                              freehit: "FH",
-                              benchboost: "BB",
-                              triplecaptain: "TC",
-                            }[week.chip]
-                          }
-                        </small>
-                      ) : null}
+                              {
+                                wildcard: "WC",
+                                freehit: "FH",
+                                benchboost: "BB",
+                                triplecaptain: "TC",
+                              }[week.chip]
+                            }
+                          </small>
+                        ) : null}
+                        {week.hits > 0 ? (
+                          <small className="tree-hit-badge">−{week.hits}</small>
+                        ) : null}
+                      </span>
                     </span>
                     <strong>
                       {fmt(week.net_points ?? week.points)}
@@ -362,12 +374,12 @@ export function PlanTree({
                 >
                   {horizonOptions.map((n) => (
                     <option key={n} value={n}>
-                      {n} GWs
+                      {`${n} GW${n === 1 ? "" : "s"}`}
                     </option>
                   ))}
                 </select>
               </label>
-              <button onClick={onOptimise} disabled={busy}>
+              <button onClick={onOptimise} disabled={busy} aria-busy={optimising}>
                 <Sparkles size={13} />
                 {optimising ? "Optimising…" : `Optimise GW${gw}`}
               </button>
@@ -412,6 +424,7 @@ export function PlanTree({
         className="tree-canvas-scroll"
         ref={canvasRef}
         onPointerDown={(event) => {
+          if (event.pointerType === "mouse" && event.button !== 0) return;
           if ((event.target as HTMLElement).closest("button,input,select"))
             return;
           const node = canvasRef.current!;
@@ -494,6 +507,11 @@ export function PlanTree({
             {plans.map((plan, index) => {
               const y = 128 + index * 220;
               const weeks = visibleWeeks(plan);
+              const scenarioHeading =
+                index === 0 ? "Base scenario" : `Scenario ${index + 1}`;
+              const showPlanSublabel =
+                plan.name.trim().toLowerCase() !==
+                scenarioHeading.toLowerCase();
               return (
                 <div key={plan.id}>
                   <button
@@ -503,10 +521,8 @@ export function PlanTree({
                     title={plan.name}
                   >
                     <GitBranch size={17} />
-                    <span>
-                      {index === 0 ? "Base scenario" : `Scenario ${index + 1}`}
-                    </span>
-                    <small>{plan.name}</small>
+                    <span>{scenarioHeading}</span>
+                    {showPlanSublabel ? <small>{plan.name}</small> : null}
                   </button>
                   {weeks.map((week) => {
                     const chosen = active?.id === plan.id && gw === week.gw;
@@ -539,13 +555,20 @@ export function PlanTree({
                             onWeek(week.gw);
                           }}
                         >
-                          <span>GW{week.gw}</span>
+                          <span>
+                            GW{week.gw}
+                            {week.hits > 0 ? (
+                              <small className="tree-hit-badge">
+                                −{week.hits}
+                              </small>
+                            ) : null}
+                          </span>
                           <strong>
                             {fmt(week.net_points ?? week.points)}
                             <small>xPts</small>
                           </strong>
                           <div>
-                            <span>{money(week.bank)} ITB</span>
+                            <span>{money(week.bank)}</span>
                             <span>{week.free_transfers} FT</span>
                           </div>
                           <em hidden={!summaries}>

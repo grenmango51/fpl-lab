@@ -386,7 +386,7 @@ describe("owned data views and tab strip", () => {
     expect(html).toContain('class="orange help-text" role="alert"');
   });
 
-  it("SeasonData paginates >50 rows, places fallback above workspace, flips right-edge scatter labels, and hides map player select for teams", () => {
+  it("SeasonData paginates >50 rows, resets page on Per 90, places fallback above workspace, flips right-edge scatter labels, and hides map player select for teams", async () => {
     const players = Array.from({ length: 60 }, (_, idx) =>
       makePlayer(idx + 1, {
         minutes: idx === 0 ? 900 : 100 + idx,
@@ -406,38 +406,102 @@ describe("owned data views and tab strip", () => {
       players,
     } as unknown as Bootstrap;
 
-    // Default players Table with fallback error:
-    hooks.values[1] = "Stats feed unavailable (503)";
-    hooks.values[2] = false;
-    const tableHtml = renderToStaticMarkup(
-      createElement(SeasonData, { data, onDetail: vi.fn() }),
-    );
-    expect(tableHtml.indexOf("season-data-fallback")).toBeGreaterThan(-1);
-    expect(tableHtml.indexOf("season-data-fallback")).toBeLessThan(
-      tableHtml.indexOf("season-data-workspace"),
-    );
-    expect(tableHtml).toContain("1–50 of 60 players");
-    expect(tableHtml).toContain("Page 1 of 2");
+    const prevFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(() =>
+      Promise.reject(new Error("Stats feed unavailable (503)")),
+    ) as unknown as typeof fetch;
 
-    // Graph mode with right-most top-most player selected (id=1):
-    hooks.cursor = 0;
-    hooks.values[5] = "Graph";
-    hooks.values[15] = { players: [1], teams: [] };
-    const graphHtml = renderToStaticMarkup(
-      createElement(SeasonData, { data, onDetail: vi.fn() }),
-    );
-    expect(graphHtml).not.toContain("\\n");
-    expect(graphHtml).toContain("Player Full 1 · ARS\n");
-    expect(graphHtml).toContain('text-anchor="end"');
-    expect(graphHtml).toContain('y="48"');
+    const renderTree = () => {
+      hooks.cursor = 0;
+      return walk(createElement(SeasonData, { data, onDetail: vi.fn() }));
+    };
+    const renderHtml = () => {
+      hooks.cursor = 0;
+      return renderToStaticMarkup(
+        createElement(SeasonData, { data, onDetail: vi.fn() }),
+      );
+    };
 
-    // Maps mode for teams hides player select:
-    hooks.cursor = 0;
-    hooks.values[4] = "teams";
-    hooks.values[5] = "Maps";
-    const mapsHtml = renderToStaticMarkup(
-      createElement(SeasonData, { data, onDetail: vi.fn() }),
-    );
-    expect(mapsHtml).not.toContain("Player for maps");
+    try {
+      // Mount & let fetch rejection settle via SeasonData's own useEffect:
+      hooks.effects = [];
+      renderTree();
+      for (const effect of hooks.effects) effect();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      // Default players Table with fallback error:
+      const tableHtml = renderHtml();
+      expect(tableHtml.indexOf("season-data-fallback")).toBeGreaterThan(-1);
+      expect(tableHtml.indexOf("season-data-fallback")).toBeLessThan(
+        tableHtml.indexOf("season-data-workspace"),
+      );
+      expect(tableHtml).toContain("1–50 of 60 players");
+      expect(tableHtml).toContain("Page 1 of 2");
+
+      // Advance to page 2 via Next button, then toggle Per 90 to reset to page 1:
+      const nextBtn = renderTree().find(
+        (n) => n.type === "button" && n.props.children === "Next",
+      );
+      expect(nextBtn).toBeDefined();
+      nextBtn!.props.onClick();
+      expect(renderHtml()).toContain("Page 2 of 2");
+
+      const per90Label = renderTree().find(
+        (n) => n.type === "label" && n.props.className === "season-data-toggle",
+      );
+      const per90Checkbox = walk(per90Label?.props.children).find(
+        (n) => n.type === "input" && n.props.type === "checkbox",
+      );
+      expect(per90Checkbox).toBeDefined();
+      per90Checkbox!.props.onChange({ target: { checked: true } });
+      expect(renderHtml()).toContain("Page 1 of 2");
+      per90Checkbox!.props.onChange({ target: { checked: false } });
+
+      // Select Player 1 via Compare button, then switch to Graph tab via TabStrip:
+      const comparePlayer1 = renderTree().find(
+        (n) =>
+          n.type === "button" && n.props["aria-label"] === "Compare Player 1",
+      );
+      expect(comparePlayer1).toBeDefined();
+      comparePlayer1!.props.onClick();
+
+      const graphTab = renderTree().find(
+        (n) =>
+          n.type === "button" &&
+          n.props.role === "tab" &&
+          n.props.children === "Graph",
+      );
+      expect(graphTab).toBeDefined();
+      graphTab!.props.onClick();
+
+      const graphHtml = renderHtml();
+      expect(graphHtml).not.toContain("\\n");
+      expect(graphHtml).toContain("Player Full 1 · ARS\n");
+      expect(graphHtml).toContain('text-anchor="end"');
+      expect(graphHtml).toContain('y="48"');
+
+      // Switch to Teams entity and Maps tool via TabStrip buttons:
+      const teamsTab = renderTree().find(
+        (n) =>
+          n.type === "button" &&
+          n.props.role === "tab" &&
+          n.props.children === "Teams",
+      );
+      expect(teamsTab).toBeDefined();
+      teamsTab!.props.onClick();
+
+      const mapsTab = renderTree().find(
+        (n) =>
+          n.type === "button" &&
+          n.props.role === "tab" &&
+          n.props.children === "Maps",
+      );
+      expect(mapsTab).toBeDefined();
+      mapsTab!.props.onClick();
+
+      expect(renderHtml()).not.toContain("Player for maps");
+    } finally {
+      globalThis.fetch = prevFetch;
+    }
   });
 });

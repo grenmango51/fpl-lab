@@ -648,7 +648,10 @@ export function SeasonData({
           <input
             type="checkbox"
             checked={per90}
-            onChange={(event) => setPer90(event.target.checked)}
+            onChange={(event) => {
+              setPer90(event.target.checked);
+              setPage(0);
+            }}
           />
           Per 90
         </label>

@@ -735,7 +735,7 @@ export function ProjectionsView({
       <div
         className="projection-player-slot"
         hidden={section !== "players"}
-        ref={onEditorTarget}
+        ref={section === "players" ? onEditorTarget : undefined}
       />
       <details className="compact-details projection-notes">
         <summary>Sources & metric notes</summary>

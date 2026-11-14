@@ -40,7 +40,11 @@ export function PlayerSurface({
   useEffect(() => {
     if (!target) return;
     const active = document.activeElement as HTMLElement | null;
-    if (active && !inline.current?.contains(active)) {
+    if (
+      active &&
+      active !== document.body &&
+      !inline.current?.contains(active)
+    ) {
       opener.current = active;
     }
     const frame = requestAnimationFrame(() => {

@@ -797,13 +797,14 @@ describe("TransferPanel, PlayerSurface, Modal, ActionMenu & PlayerName", () => {
       players: [player],
     } as unknown as Bootstrap;
 
+    const onEditorTarget = vi.fn();
     const teamsTree = ProjectionsView({
       data,
       gw: 11,
       editing: { id: 1, gw: 11 },
       busy: true,
       onDetail: vi.fn(),
-      onEditorTarget: vi.fn(),
+      onEditorTarget,
       watch: [],
       onWatch: vi.fn(),
       onCSV: vi.fn(),
@@ -826,6 +827,34 @@ describe("TransferPanel, PlayerSurface, Modal, ActionMenu & PlayerName", () => {
       (n) => n.props.className === "projection-player-slot",
     )!;
     expect(slot.props.hidden).toBe(true);
+    expect(slot.props.ref).toBeUndefined();
+
+    state.viewStore["projections.section"] = "players";
+    state.cursor = 0;
+    const playersTree = ProjectionsView({
+      data,
+      gw: 11,
+      editing: { id: 1, gw: 11 },
+      busy: false,
+      onDetail: vi.fn(),
+      onEditorTarget,
+      watch: [],
+      onWatch: vi.fn(),
+      onCSV: vi.fn(),
+      onExport: vi.fn(),
+      squad: [],
+      onTransfer: vi.fn(),
+      onCancelTransfer: vi.fn(),
+      teamStrengths: {},
+      onTeamStrengths: vi.fn(),
+      fixtureMoves: {},
+      onFixtureMoves: vi.fn(),
+    });
+    const playersSlot = nodes(playersTree).find(
+      (n) => n.props.className === "projection-player-slot",
+    )!;
+    expect(playersSlot.props.hidden).toBe(false);
+    expect(playersSlot.props.ref).toBe(onEditorTarget);
 
     // 1-GW TransferPanel confirmation renders 2 impact boxes (Bank after + GW11 Δ xPts), not a duplicate 3rd
     state.values = [];

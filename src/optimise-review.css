@@ -91,8 +91,8 @@
   border-color: #673942;
   background: #28191e;
 }
-.solver-settings .rule-receipts span,
-.solver-settings .rule-receipts button {
+.solver-settings .rule-receipts > span,
+.solver-settings .rule-receipts > button {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -103,7 +103,16 @@
   color: #b5c5dc;
   border: 1px solid #2b3f5c;
 }
-.solver-settings .rule-receipts button:hover {
+.solio-detail-panel .solver-settings .rule-receipts button > span,
+.solver-settings .rule-receipts button > span {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: inherit;
+  font-size: inherit;
+}
+.solver-settings .rule-receipts > button:hover {
   border-color: var(--orange);
   color: #ffd0b8;
 }

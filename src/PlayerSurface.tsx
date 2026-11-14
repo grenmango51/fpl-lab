@@ -20,18 +20,43 @@ export function PlayerSurface({
   children: ReactNode;
 }) {
   const inline = useRef<HTMLElement>(null);
+  const opener = useRef<HTMLElement | null>(null);
   useEffect(() => {
     if (!target) return;
     const node = inline.current;
-    const opener = document.activeElement as HTMLElement | null;
-    const frame = requestAnimationFrame(() => {
-      node?.focus({ preventScroll: true });
-    });
     return () => {
-      cancelAnimationFrame(frame);
-      if (opener?.isConnected) opener.focus({ preventScroll: true });
+      const active = document.activeElement;
+      if (
+        opener.current?.isConnected &&
+        (!active ||
+          active === document.body ||
+          (inline.current ?? node)?.contains(active))
+      ) {
+        opener.current.focus({ preventScroll: true });
+      }
+      opener.current = null;
     };
   }, [target]);
+  useEffect(() => {
+    if (!target) return;
+    const active = document.activeElement as HTMLElement | null;
+    if (
+      active &&
+      active !== document.body &&
+      !inline.current?.contains(active)
+    ) {
+      opener.current = active;
+    }
+    const frame = requestAnimationFrame(() => {
+      const node = inline.current;
+      if (!node) return;
+      node.scrollIntoView?.({ block: "nearest" });
+      if (!node.contains(document.activeElement)) {
+        node.focus({ preventScroll: true });
+      }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [target, title, subtitle]);
 
   if (!target)
     return (
@@ -53,6 +78,13 @@ export function PlayerSurface({
       className="projection-player-editor player-window"
       aria-label={`${title} player editor`}
       tabIndex={-1}
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && !event.defaultPrevented) {
+          event.preventDefault();
+          event.stopPropagation();
+          onClose();
+        }
+      }}
     >
       <header className="modal-header">
         <div>
@@ -60,6 +92,7 @@ export function PlayerSurface({
           <p>{subtitle}</p>
         </div>
         <button
+          type="button"
           className="icon-button"
           onClick={onClose}
           aria-label="Close player editor"

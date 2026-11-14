@@ -364,7 +364,7 @@ export type SensitivityVariant = {
   scenario: number;
   weeks: Week[];
   base_value: number;
-  gap: number;
+  gap: number | null;
 };
 export type SensitivityJob = {
   id: string;
@@ -396,7 +396,7 @@ export type SensitivityJob = {
   };
   forecast: {
     model_version: string;
-    loaded_at: string;
+    loaded_at: string | null;
     sha256: string;
     layers: { name: string; weight: number }[];
   };

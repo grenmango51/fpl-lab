@@ -5,26 +5,20 @@ import { matchesPlayerQuery } from "./playerSearch";
 import {
   Search,
   SlidersHorizontal,
-  Download,
-  Upload,
   Star,
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
-  ArrowDownUp,
+  ArrowRight,
   ArrowUpRight,
   Sparkles,
   LockKeyhole,
   X,
-  ShieldCheck,
   Info,
-  Activity,
   TrendingUp,
   Clock3,
 } from "lucide-react";
 import type {
   Bootstrap,
-  Player,
   Plan,
   SolveResult,
   Evaluation,
@@ -32,11 +26,10 @@ import type {
   Chip,
   Prospective,
 } from "./types";
-import { api, fmt, money, xp, chipNames } from "./lib";
+import { fmt, money, xp, chipNames } from "./lib";
 import { Badge, Busy, LineChart, Pitch, PlayerName, Stat } from "./components";
 import { ProspectiveView } from "./ProspectiveView";
 import { LeadTimeView } from "./LeadTimeView";
-import { alignPlanGameweeks } from "./planComparison";
 import { PlanInsights } from "./PlanInsights.tsx";
 import { PlanComparisonView } from "./PlanComparisonView";
 import "./optimise-review.css";
@@ -67,6 +60,111 @@ export type SolverSettings = {
   excluded_by_gw?: Record<string, number[]>;
   captain_locks?: Record<string, number>;
 };
+
+const chipShort: Record<Exclude<Chip, "none">, string> = {
+  wildcard: "WC",
+  freehit: "FH",
+  benchboost: "BB",
+  triplecaptain: "TC",
+};
+
+export type PlayerConstraintReceipt = {
+  key: string;
+  kind: "locked" | "excluded";
+  id: number;
+  scopeLabel: string;
+  weeks: string[] | null;
+};
+
+export function buildPlayerConstraintReceipts(
+  settings: SolverSettings,
+  gameweeks: readonly number[],
+): PlayerConstraintReceipt[] {
+  const receipts: PlayerConstraintReceipt[] = [];
+  const lastSeasonGW = gameweeks.length ? Math.max(...gameweeks) : 38;
+  for (const kind of ["locked", "excluded"] as const) {
+    const globalSet = new Set(settings[kind]);
+    for (const id of settings[kind]) {
+      receipts.push({
+        key: `${kind}-all-${id}`,
+        kind,
+        id,
+        scopeLabel: "All GWs",
+        weeks: null,
+      });
+    }
+    const scoped =
+      settings[kind === "locked" ? "locked_by_gw" : "excluded_by_gw"] ?? {};
+    const byPlayer = new Map<number, number[]>();
+    for (const [gwKey, ids] of Object.entries(scoped)) {
+      const gwNum = Number(gwKey);
+      if (!Number.isInteger(gwNum)) continue;
+      for (const id of ids) {
+        if (globalSet.has(id)) continue;
+        const list = byPlayer.get(id) ?? [];
+        list.push(gwNum);
+        byPlayer.set(id, list);
+      }
+    }
+    for (const [id, rawWeeks] of byPlayer.entries()) {
+      const sorted = [...new Set(rawWeeks)].sort((a, b) => a - b);
+      let start = sorted[0];
+      let prev = sorted[0];
+      let group = [String(sorted[0])];
+      const flush = () => {
+        const scopeLabel =
+          group.length > 1 && prev === lastSeasonGW
+            ? `GW${start} onwards`
+            : start === prev
+              ? `GW${start}`
+              : `GW${start}–${prev}`;
+        receipts.push({
+          key: `${kind}-${start}-${prev}-${id}`,
+          kind,
+          id,
+          scopeLabel,
+          weeks: group,
+        });
+      };
+      for (let i = 1; i < sorted.length; i++) {
+        if (sorted[i] === prev + 1) {
+          prev = sorted[i];
+          group.push(String(prev));
+        } else {
+          flush();
+          start = sorted[i];
+          prev = sorted[i];
+          group = [String(prev)];
+        }
+      }
+      flush();
+    }
+  }
+  return receipts;
+}
+
+function cleanWeeklyMap(map: Record<string, number[]> | undefined) {
+  const output: Record<string, number[]> = {};
+  for (const [gw, ids] of Object.entries(map ?? {})) {
+    if (ids.length) output[gw] = ids;
+  }
+  return output;
+}
+
+function stripPlayerFromWeeklyMap(
+  map: Record<string, number[]> | undefined,
+  id: number,
+) {
+  return cleanWeeklyMap(
+    Object.fromEntries(
+      Object.entries(map ?? {}).map(([w, list]) => [
+        w,
+        list.filter((value) => value !== id),
+      ]),
+    ),
+  );
+}
+
 export function OptimiseView({
   data,
   plan,
@@ -77,10 +175,11 @@ export function OptimiseView({
   result,
   busy,
   onApply,
+  onDiscard,
+  sourceName,
   onDetail,
   resultFresh,
   baselinePlan,
-  compact = false,
   onPreviewGW,
 }: {
   data: Bootstrap;
@@ -92,6 +191,8 @@ export function OptimiseView({
   result: SolveResult | null;
   busy: boolean;
   onApply: () => void;
+  onDiscard?: () => void;
+  sourceName?: string;
   onDetail: (id: number, gw?: number) => void;
   resultFresh?: boolean;
   baselinePlan?: Plan | null;
@@ -106,51 +207,168 @@ export function OptimiseView({
   const [constraintScope, setConstraintScope] = useState("all");
   const [ruleGW, setRuleGW] = useState(gw);
   const [constraint, setConstraint] = useState<"locked" | "excluded">("locked");
-  const [selectedGw, setSelectedGw] = useState(gw);
+  const [selectedGw, setSelectedGw] = useState(() =>
+    result
+      ? result.weeks.some((week) => week.gw === gw)
+        ? gw
+        : (result.weeks[0]?.gw ?? gw)
+      : gw,
+  );
   const [reviewing, setReviewing] = useState(Boolean(result));
   const reviewHeading = useRef<HTMLDivElement>(null);
+  const constraintInputRef = useRef<HTMLInputElement>(null);
+  const ftValueInputRef = useRef<HTMLInputElement>(null);
+  const prevResult = useRef(result);
+
   useEffect(() => {
-    setSelectedGw(result?.weeks[0]?.gw ?? gw);
+    if (result !== prevResult.current) {
+      prevResult.current = result;
+      setReviewing(Boolean(result));
+      if (result) {
+        setSelectedGw(result.weeks[0]?.gw ?? gw);
+        reviewHeading.current?.scrollIntoView({ block: "start" });
+      } else {
+        setSelectedGw(gw);
+      }
+      return;
+    }
+    if (!result || result.weeks.some((week) => week.gw === gw)) {
+      setSelectedGw(gw);
+    }
   }, [result, gw]);
-  useEffect(() => {
-    setReviewing(Boolean(result));
-    if (result) reviewHeading.current?.scrollIntoView({ block: "start" });
-  }, [result]);
+
   const change = (key: keyof SolverSettings, value: number) =>
     onSettings({ ...settings, [key]: value });
-  const lookup = new Map(data.players.map((p) => [p.id, p]));
+  const lookup = useMemo(
+    () => new Map(data.players.map((p) => [p.id, p])),
+    [data.players],
+  );
+  const remainingGameweeks = data.gameweeks.filter((week) => week >= gw).length;
+  const effectiveHorizon = Math.max(
+    1,
+    Math.min(settings.horizon, remainingGameweeks),
+  );
+  const solvedWeeks = useMemo(
+    () => data.gameweeks.filter((week) => week >= gw).slice(0, effectiveHorizon),
+    [data.gameweeks, gw, effectiveHorizon],
+  );
+  const lastSeasonGW = data.gameweeks.at(-1) ?? 38;
+
+  useEffect(() => {
+    if (!solvedWeeks.includes(ruleGW)) setRuleGW(solvedWeeks[0] ?? gw);
+    const scopeBaseGW = Number(constraintScope.replace(/\+$/, ""));
+    if (constraintScope !== "all" && !solvedWeeks.includes(scopeBaseGW)) {
+      setConstraintScope("all");
+    }
+  }, [gw, solvedWeeks, ruleGW, constraintScope]);
+
   const scopedKey = constraint === "locked" ? "locked_by_gw" : "excluded_by_gw";
-  const constraintIds =
-    constraintScope === "all"
-      ? settings[constraint]
-      : (settings[scopedKey]?.[constraintScope] ?? []);
+  const otherScopedKey =
+    scopedKey === "locked_by_gw" ? "excluded_by_gw" : "locked_by_gw";
+  const otherGlobalKey = constraint === "locked" ? "excluded" : "locked";
+
+  const scopeTargetWeeks = useMemo(() => {
+    if (constraintScope === "all") return null;
+    if (constraintScope.endsWith("+")) {
+      const startWeek = Number(constraintScope.slice(0, -1));
+      return data.gameweeks.filter((week) => week >= startWeek).map(String);
+    }
+    return [constraintScope];
+  }, [constraintScope, data.gameweeks]);
+
+  const constraintIds = useMemo(() => {
+    if (!scopeTargetWeeks) return settings[constraint];
+    if (!scopeTargetWeeks.length) return [];
+    const firstList = settings[scopedKey]?.[scopeTargetWeeks[0]] ?? [];
+    return firstList.filter((id) =>
+      scopeTargetWeeks.every((w) =>
+        (settings[scopedKey]?.[w] ?? []).includes(id),
+      ),
+    );
+  }, [scopeTargetWeeks, settings, constraint, scopedKey]);
+
   const setConstraintPlayer = (id: number) => {
-    const ids = constraintIds.includes(id)
-      ? constraintIds.filter((value) => value !== id)
-      : [...constraintIds, id];
-    if (constraintScope === "all")
+    const activeInScope = constraintIds.includes(id);
+    if (!scopeTargetWeeks) {
+      const ids = activeInScope
+        ? settings[constraint].filter((value) => value !== id)
+        : [...settings[constraint], id];
       onSettings({
         ...settings,
         [constraint]: ids,
-        [constraint === "locked" ? "excluded" : "locked"]: settings[
-          constraint === "locked" ? "excluded" : "locked"
-        ].filter((value) => value !== id),
+        [scopedKey]: stripPlayerFromWeeklyMap(settings[scopedKey], id),
+        [otherGlobalKey]: activeInScope
+          ? settings[otherGlobalKey]
+          : settings[otherGlobalKey].filter((value) => value !== id),
+        [otherScopedKey]: activeInScope
+          ? cleanWeeklyMap(settings[otherScopedKey])
+          : stripPlayerFromWeeklyMap(settings[otherScopedKey], id),
       });
-    else {
-      const other =
-        scopedKey === "locked_by_gw" ? "excluded_by_gw" : "locked_by_gw";
+      return;
+    }
+    const nextScoped = { ...(settings[scopedKey] ?? {}) };
+    const nextOtherScoped = { ...(settings[otherScopedKey] ?? {}) };
+    for (const w of scopeTargetWeeks) {
+      const current = nextScoped[w] ?? [];
+      nextScoped[w] = activeInScope
+        ? current.filter((value) => value !== id)
+        : current.includes(id)
+          ? current
+          : [...current, id];
+      if (!activeInScope && nextOtherScoped[w]) {
+        nextOtherScoped[w] = nextOtherScoped[w].filter((value) => value !== id);
+      }
+    }
+    onSettings({
+      ...settings,
+      [otherGlobalKey]: activeInScope
+        ? settings[otherGlobalKey]
+        : settings[otherGlobalKey].filter((value) => value !== id),
+      [scopedKey]: cleanWeeklyMap(nextScoped),
+      [otherScopedKey]: cleanWeeklyMap(nextOtherScoped),
+    });
+  };
+
+  const removeConstraintReceipt = (receipt: PlayerConstraintReceipt) => {
+    const key = receipt.kind === "locked" ? "locked_by_gw" : "excluded_by_gw";
+    if (receipt.weeks === null) {
       onSettings({
         ...settings,
-        [scopedKey]: { ...settings[scopedKey], [constraintScope]: ids },
-        [other]: {
-          ...settings[other],
-          [constraintScope]: (settings[other]?.[constraintScope] ?? []).filter(
-            (value) => value !== id,
-          ),
-        },
+        [receipt.kind]: settings[receipt.kind].filter(
+          (value) => value !== receipt.id,
+        ),
+        [key]: stripPlayerFromWeeklyMap(settings[key], receipt.id),
       });
+      return;
     }
+    const next = { ...(settings[key] ?? {}) };
+    for (const w of receipt.weeks) {
+      if (next[w]) {
+        next[w] = next[w].filter((value) => value !== receipt.id);
+      }
+    }
+    onSettings({
+      ...settings,
+      [key]: cleanWeeklyMap(next),
+    });
   };
+
+  const playerReceipts = useMemo(
+    () => buildPlayerConstraintReceipts(settings, data.gameweeks),
+    [settings, data.gameweeks],
+  );
+  const weeklyPlayerReceipts = useMemo(
+    () => playerReceipts.filter((receipt) => receipt.weeks !== null),
+    [playerReceipts],
+  );
+  const constraintMatches = useMemo(
+    () =>
+      query
+        ? data.players.filter((p) => matchesPlayerQuery(p, query)).slice(0, 6)
+        : [],
+    [data.players, query],
+  );
+
   const presets: Record<string, Partial<SolverSettings>> = {
     Default: {
       max_transfers: 2,
@@ -201,23 +419,7 @@ export function OptimiseView({
         ([key, value]) => settings[key as keyof SolverSettings] === value,
       ),
     )?.[0] ?? "Custom";
-  const remainingGameweeks = data.gameweeks.filter((week) => week >= gw).length;
-  const effectiveHorizon = Math.max(
-    1,
-    Math.min(settings.horizon, remainingGameweeks),
-  );
-  useEffect(() => {
-    const solvedWeeks = data.gameweeks
-      .filter((week) => week >= gw)
-      .slice(0, effectiveHorizon);
-    if (!solvedWeeks.includes(ruleGW)) setRuleGW(solvedWeeks[0] ?? gw);
-    if (
-      constraintScope !== "all" &&
-      !solvedWeeks.includes(Number(constraintScope))
-    ) {
-      setConstraintScope("all");
-    }
-  }, [gw, effectiveHorizon, data.gameweeks, ruleGW, constraintScope]);
+
   const previewWeeks = result?.weeks.length
     ? result.weeks
     : (plan?.weeks.filter((week) => week.gw >= gw).slice(0, effectiveHorizon) ??
@@ -242,7 +444,11 @@ export function OptimiseView({
   const pointsChange =
     baselinePoints === null
       ? null
-      : Math.round((resultPoints! - baselinePoints) * 10) / 10;
+      : Math.round((resultPoints! - baselinePoints) * 10) / 10 || 0;
+  const lockedCaptainId = settings.captain_locks?.[String(ruleGW)];
+  const draftLabel =
+    sourceName ?? (resultFresh ? "New £100m squad" : baselinePlan?.name);
+
   return (
     <>
       <div className="view-heading compact-view-heading" ref={reviewHeading}>
@@ -260,10 +466,6 @@ export function OptimiseView({
             ]}
           />
         )}
-        <span className="engine-label">
-          <ShieldCheck size={16} />
-          Squad rules checked
-        </span>
       </div>
       <div
         className={`solver-layout solver-with-preview ${reviewing && result ? "solver-reviewing" : ""}`}
@@ -288,9 +490,15 @@ export function OptimiseView({
                 {[...Object.keys(presets), "Custom"].map((name) => (
                   <button
                     key={name}
+                    aria-pressed={preset === name}
                     className={preset === name ? "active" : ""}
                     onClick={() => {
-                      if (name === "Custom") setSettingsSection("advanced");
+                      if (name === "Custom") {
+                        setSettingsSection("advanced");
+                        requestAnimationFrame(() =>
+                          ftValueInputRef.current?.focus(),
+                        );
+                      }
                       if (presets[name])
                         onSettings({ ...settings, ...presets[name] });
                     }}
@@ -337,7 +545,7 @@ export function OptimiseView({
                     .sort((a, b) => a - b)
                     .map((v) => (
                       <option value={v} key={v}>
-                        {v} gameweeks
+                        {v} gameweek{v === 1 ? "" : "s"}
                       </option>
                     ))}
                 </select>
@@ -351,7 +559,7 @@ export function OptimiseView({
                   <option value={15}>Auto · hits allowed</option>
                   {Array.from({ length: 15 }, (_, i) => i).map((v) => (
                     <option value={v} key={v}>
-                      {v} transfers
+                      {v} transfer{v === 1 ? "" : "s"}
                     </option>
                   ))}
                 </select>
@@ -372,53 +580,56 @@ export function OptimiseView({
                 onChange={(event) => setConstraintScope(event.target.value)}
               >
                 <option value="all">Every solved GW</option>
-                {data.gameweeks
-                  .filter((week) => week >= gw)
-                  .slice(0, effectiveHorizon)
+                {solvedWeeks.map((week) => (
+                  <option key={week} value={String(week)}>
+                    GW{week}
+                  </option>
+                ))}
+                {solvedWeeks
+                  .filter((week) => week < lastSeasonGW)
                   .map((week) => (
-                    <option key={week} value={week}>
-                      GW{week}
+                    <option key={`${week}+`} value={`${week}+`}>
+                      GW{week} onwards
                     </option>
                   ))}
               </select>
             </label>
-            <div className="segmented">
-              <button
-                className={constraint === "locked" ? "active" : ""}
-                onClick={() => setConstraint("locked")}
-              >
-                Include
-              </button>
-              <button
-                className={constraint === "excluded" ? "active" : ""}
-                onClick={() => setConstraint("excluded")}
-              >
-                Exclude
-              </button>
-            </div>
-            <div className="constraint-tags">
-              {constraintIds.map((id) => (
-                <button key={id} onClick={() => setConstraintPlayer(id)}>
-                  {lookup.get(id)?.name}
-                  <X size={12} />
-                </button>
-              ))}
-            </div>
-            <div className="search-box">
+            <TabStrip
+              label="Player constraint mode"
+              value={constraint}
+              onChange={setConstraint}
+              items={[
+                { id: "locked", label: "Include" },
+                { id: "excluded", label: "Exclude" },
+              ]}
+            />
+            <div className="search-box constraint-search">
               <Search size={14} />
               <input
+                ref={constraintInputRef}
                 aria-label="Find a player constraint"
                 placeholder="Find players · Haaland, Saka"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
               />
+              {query && (
+                <button
+                  type="button"
+                  className="search-clear"
+                  aria-label="Clear player search"
+                  onClick={() => {
+                    setQuery("");
+                    constraintInputRef.current?.focus();
+                  }}
+                >
+                  <X size={13} />
+                </button>
+              )}
             </div>
             {query && (
               <div className="constraint-results">
-                {data.players
-                  .filter((p) => matchesPlayerQuery(p, query))
-                  .slice(0, 6)
-                  .map((p) => (
+                {constraintMatches.length ? (
+                  constraintMatches.map((p) => (
                     <button
                       key={p.id}
                       onClick={() => {
@@ -427,10 +638,41 @@ export function OptimiseView({
                       }}
                     >
                       <Badge player={p} />
-                      {p.name}
+                      <span className="constraint-player-meta">
+                        <b>{p.name}</b>
+                        <small>
+                          {p.team_short} · {p.position}
+                        </small>
+                      </span>
                       <span>{money(p.price)}</span>
                     </button>
-                  ))}
+                  ))
+                ) : (
+                  <p className="help-text">No matching players.</p>
+                )}
+              </div>
+            )}
+            {playerReceipts.length > 0 && (
+              <div
+                className="constraint-tags"
+                aria-label="Active player constraints"
+              >
+                {playerReceipts.map((receipt) => (
+                  <button
+                    key={receipt.key}
+                    className={
+                      receipt.kind === "excluded" ? "constraint-excluded" : ""
+                    }
+                    onClick={() => removeConstraintReceipt(receipt)}
+                  >
+                    <span>
+                      {receipt.kind === "locked" ? "In" : "Out"}:{" "}
+                      {lookup.get(receipt.id)?.name ?? `#${receipt.id}`} ·{" "}
+                      {receipt.scopeLabel}
+                    </span>
+                    <X size={12} />
+                  </button>
+                ))}
               </div>
             )}
           </div>
@@ -445,18 +687,15 @@ export function OptimiseView({
                     value={ruleGW}
                     onChange={(event) => setRuleGW(+event.target.value)}
                   >
-                    {data.gameweeks
-                      .filter((week) => week >= gw)
-                      .slice(0, effectiveHorizon)
-                      .map((week) => (
-                        <option key={week} value={week}>
-                          GW{week}
-                        </option>
-                      ))}
+                    {solvedWeeks.map((week) => (
+                      <option key={week} value={week}>
+                        GW{week}
+                      </option>
+                    ))}
                   </select>
                 </label>
                 <label>
-                  Transfers used
+                  Max transfers
                   <select
                     aria-label="Gameweek transfer limit"
                     value={settings.transfer_limits?.[String(ruleGW)] ?? "auto"}
@@ -480,7 +719,7 @@ export function OptimiseView({
                   Captain
                   <select
                     aria-label="Locked captain gameweek"
-                    value={settings.captain_locks?.[String(ruleGW)] ?? "auto"}
+                    value={lockedCaptainId ?? "auto"}
                     onChange={(event) => {
                       const next = { ...settings.captain_locks };
                       if (event.target.value === "auto")
@@ -492,7 +731,11 @@ export function OptimiseView({
                     <option value="auto">Auto</option>
                     {[...data.players]
                       .sort((a, b) => xp(b, ruleGW) - xp(a, ruleGW))
-                      .filter((player) => xp(player, ruleGW) > 0)
+                      .filter(
+                        (player) =>
+                          xp(player, ruleGW) > 0 ||
+                          player.id === lockedCaptainId,
+                      )
                       .map((player) => (
                         <option value={player.id} key={player.id}>
                           {player.name} · {player.team_short}
@@ -504,22 +747,68 @@ export function OptimiseView({
               <div className="rule-receipts">
                 {Object.entries(settings.transfer_limits ?? {}).map(
                   ([week, limit]) => (
-                    <span key={`t${week}`}>
-                      GW{week}:{" "}
-                      {limit === 0 ? "roll" : `${limit} max transfers`}
-                    </span>
+                    <button
+                      type="button"
+                      key={`t${week}`}
+                      aria-label={`Remove GW${week} transfer limit`}
+                      onClick={() => {
+                        const next = { ...settings.transfer_limits };
+                        delete next[week];
+                        onSettings({ ...settings, transfer_limits: next });
+                      }}
+                    >
+                      <span>
+                        GW{week}:{" "}
+                        {limit === 0
+                          ? "roll"
+                          : `max ${limit} transfer${limit === 1 ? "" : "s"}`}
+                      </span>
+                      <X size={11} />
+                    </button>
                   ),
                 )}
                 {Object.entries(settings.captain_locks ?? {}).map(
                   ([week, id]) => (
-                    <span key={`c${week}`}>
-                      GW{week}: captain {lookup.get(id)?.name}
-                    </span>
+                    <button
+                      type="button"
+                      key={`c${week}`}
+                      aria-label={`Remove GW${week} captain lock`}
+                      onClick={() => {
+                        const next = { ...settings.captain_locks };
+                        delete next[week];
+                        onSettings({ ...settings, captain_locks: next });
+                      }}
+                    >
+                      <span>
+                        GW{week}: captain {lookup.get(id)?.name ?? `#${id}`}
+                      </span>
+                      <X size={11} />
+                    </button>
                   ),
                 )}
+                {weeklyPlayerReceipts.map((receipt) => (
+                  <button
+                    type="button"
+                    key={receipt.key}
+                    aria-label={`Remove ${receipt.scopeLabel} ${receipt.kind === "locked" ? "include" : "exclude"} rule for ${lookup.get(receipt.id)?.name ?? `#${receipt.id}`}`}
+                    onClick={() => removeConstraintReceipt(receipt)}
+                  >
+                    <span>
+                      {receipt.scopeLabel}:{" "}
+                      {receipt.kind === "locked" ? "include" : "exclude"}{" "}
+                      {lookup.get(receipt.id)?.name ?? `#${receipt.id}`}
+                    </span>
+                    <X size={11} />
+                  </button>
+                ))}
               </div>
               <button
                 className="button small"
+                disabled={
+                  !Object.keys(settings.transfer_limits ?? {}).length &&
+                  !Object.keys(settings.captain_locks ?? {}).length &&
+                  !weeklyPlayerReceipts.length
+                }
                 onClick={() =>
                   onSettings({
                     ...settings,
@@ -541,6 +830,7 @@ export function OptimiseView({
                 <label>
                   FT value
                   <input
+                    ref={ftValueInputRef}
                     type="number"
                     step="0.25"
                     min="0"
@@ -579,7 +869,7 @@ export function OptimiseView({
                   >
                     {[2, 5, 15, 30, 45].map((v) => (
                       <option value={v} key={v}>
-                        {v} seconds
+                        {v}s
                       </option>
                     ))}
                   </select>
@@ -605,17 +895,9 @@ export function OptimiseView({
                 />
               </label>
               <p>
-                FT value rewards saved transfers. Future weight discounts each
-                later gameweek. Bench weight is a linear approximation for bench
-                usage.
-              </p>
-              <p>
-                Ownership preference is a heuristic, not a measure of forecast
-                risk.
-              </p>
-              <p>
-                Chips follow your schedule. The solver screens candidates and
-                reports its gap; this does not measure forecast accuracy.
+                Discounts future GWs, weights bench and saved FTs linearly, and
+                treats ownership as a heuristic—not calibrated risk. Solver gap
+                reflects pool optimality, not forecast accuracy.
               </p>
             </details>
             <button
@@ -628,7 +910,8 @@ export function OptimiseView({
           </div>
           <div className="solver-run-footer">
             <span>
-              From GW{gw} · {effectiveHorizon} GWs
+              From GW{gw} · {effectiveHorizon} GW
+              {effectiveHorizon === 1 ? "" : "s"}
             </span>
             <button
               className="button primary full"
@@ -656,12 +939,16 @@ export function OptimiseView({
                     <span> xP</span>
                   </h3>
                   <p className="compact-status">
-                    {result ? "Draft" : "Current plan"} · {previewWeeks.length}{" "}
-                    GWs
+                    {result
+                      ? draftLabel
+                        ? `Draft · ${draftLabel}`
+                        : "Draft"
+                      : "Current plan"}{" "}
+                    · {previewWeeks.length} GW
+                    {previewWeeks.length === 1 ? "" : "s"}
                     {result && (
                       <>
-                        {" "}
-                        ·{" "}
+                        {" · "}
                         {result.weeks.reduce(
                           (sum, week) => sum + week.transfers_in.length,
                           0,
@@ -670,23 +957,43 @@ export function OptimiseView({
                       </>
                     )}
                     {pointsChange !== null && (
-                      <span className={pointsChange >= 0 ? "green" : "red"}>
+                      <span
+                        className={
+                          pointsChange > 0
+                            ? "green"
+                            : pointsChange < 0
+                              ? "red"
+                              : ""
+                        }
+                      >
                         {" · "}
-                        {pointsChange >= 0 ? "+" : ""}
+                        {pointsChange > 0 ? "+" : ""}
                         {fmt(pointsChange)} xP vs baseline
                       </span>
                     )}
                   </p>
                 </div>
                 {result && (
-                  <button
-                    className="button primary"
-                    disabled={busy}
-                    onClick={onApply}
-                  >
-                    Apply
-                    <ArrowUpRight size={16} />
-                  </button>
+                  <div className="button-row result-actions">
+                    {onDiscard && (
+                      <button
+                        className="button"
+                        disabled={busy}
+                        onClick={onDiscard}
+                      >
+                        <X size={15} />
+                        Reject
+                      </button>
+                    )}
+                    <button
+                      className="button primary"
+                      disabled={busy}
+                      onClick={onApply}
+                    >
+                      Apply
+                      <ArrowUpRight size={16} />
+                    </button>
+                  </div>
                 )}
               </div>
               <TabStrip
@@ -704,7 +1011,7 @@ export function OptimiseView({
                       <b>GW{week.gw}</b>
                       <span>{fmt(week.net_points)}</span>
                       {week.chip !== "none" && (
-                        <small>{chipNames[week.chip]}</small>
+                        <small>{chipShort[week.chip]}</small>
                       )}
                     </>
                   ),
@@ -713,7 +1020,9 @@ export function OptimiseView({
               <div className="panel result-week solver-selected-week">
                 <div className="result-week-top">
                   <b>GW{selectedWeek.gw}</b>
-                  <span>{chipNames[selectedWeek.chip]}</span>
+                  {selectedWeek.chip !== "none" && (
+                    <span>{chipNames[selectedWeek.chip]}</span>
+                  )}
                   <strong>
                     {fmt(selectedWeek.net_points)}
                     <small> xP</small>
@@ -743,7 +1052,7 @@ export function OptimiseView({
                           {lookup.get(selectedWeek.transfers_out[index])
                             ?.name ?? "New squad"}
                         </button>
-                        <ArrowUpRight size={14} />
+                        <ArrowRight size={14} />
                         <button
                           className="green"
                           onClick={() => onDetail(id, selectedWeek.gw)}
@@ -785,9 +1094,9 @@ export function OptimiseView({
                     {baselinePoints !== null && (
                       <p>
                         {baselinePlan?.name ?? "Baseline"}:{" "}
-                        {fmt(baselinePoints)} xP over the same{" "}
-                        {result.weeks.length} gameweeks. Totals include transfer
-                        hits.
+                        {fmt(baselinePoints)} xP over {result.weeks.length}{" "}
+                        gameweek{result.weeks.length === 1 ? "" : "s"} (net of
+                        hits).
                       </p>
                     )}
                   </details>
@@ -815,6 +1124,33 @@ export function OptimiseView({
   );
 }
 
+const SOURCE_LABELS: Record<string, string> = {
+  fpl_bootstrap: "Official FPL",
+  fpl_fixtures: "Official fixtures",
+  fpljoe: "FPL Joe",
+  elevenify_sheet: "Elevenify",
+  elevenify: "Elevenify",
+  elevenify_player_baselines: "Elevenify baselines",
+  elevenify_fast_fantasy: "Elevenify importance",
+  elevenify_next_gw_attack: "Elevenify next-GW attack",
+  elevenify_three_gw_goals: "Elevenify 3-GW goals",
+  elevenify_three_gw_assists: "Elevenify 3-GW assists",
+  solio_public: "Solio (public)",
+  solio_authenticated: "Solio (planner)",
+};
+
+export function formatSourceLabel(key: string) {
+  if (SOURCE_LABELS[key]) return SOURCE_LABELS[key];
+  const fplForm = /^fplform_(\d{4}-\d{2})_gw(\d+)$/.exec(key);
+  if (fplForm) return `FPL Form (${fplForm[1].replace("-", "/")} GW${fplForm[2]})`;
+  const archive = /^archive_(\d{4}-\d{2})_(.+)$/.exec(key);
+  if (archive) {
+    return `Historical archive (${archive[1].replace("-", "/")} ${archive[2].replaceAll("_", " ")})`;
+  }
+  const plain = key.replaceAll("_", " ");
+  return plain.charAt(0).toUpperCase() + plain.slice(1);
+}
+
 const MODEL_LABELS: Record<string, string> = {
   component: "Component model",
   previous: "Previous v0.2",
@@ -836,7 +1172,10 @@ function appearanceRows(
   return [
     ["All", appearance.next_gw.pplay],
     ...FLAG_LABELS.filter(([key]) => appearance.by_flag[key]).map(
-      ([key, label]): [string, ScoreSet] => [label, appearance.by_flag[key].pplay],
+      ([key, label]): [string, ScoreSet] => [
+        label,
+        appearance.by_flag[key].pplay,
+      ],
     ),
   ];
 }
@@ -845,6 +1184,7 @@ function signedInterval(d: { difference: number; ci95: number[] }) {
   const sign = (n: number) => `${n >= 0 ? "+" : ""}${fmt(n, 1)}`;
   return `${sign(d.difference)} (95% CI ${sign(d.ci95[0])} to ${sign(d.ci95[1])})`;
 }
+
 export function AnalysisView({
   data,
   plans,
@@ -855,6 +1195,8 @@ export function AnalysisView({
   busy,
   onScore,
   selectedGW,
+  lockedIds,
+  settings,
   onDetail,
   onLock,
   onPlan,
@@ -868,6 +1210,8 @@ export function AnalysisView({
   busy: boolean;
   onScore: () => void;
   selectedGW: number;
+  lockedIds?: number[];
+  settings?: SolverSettings;
   onDetail: (id: number) => void;
   onLock: (id: number) => void;
   onPlan: (id: string) => void;
@@ -881,10 +1225,11 @@ export function AnalysisView({
   );
   const metrics =
     scope === "starters" ? evalData?.models : evalData?.all_players;
-  const comparison = alignPlanGameweeks([
-    ...plans.filter((plan) => plan.id === active?.id),
-    ...plans.filter((plan) => plan.id !== active?.id),
-  ]);
+  const evalGeneratedAt =
+    evalData?.generated_at && !Number.isNaN(Date.parse(evalData.generated_at))
+      ? new Date(evalData.generated_at).toLocaleString()
+      : null;
+
   return (
     <>
       <div className="view-heading compact-view-heading">
@@ -895,17 +1240,6 @@ export function AnalysisView({
           <button className="button" onClick={onSnapshot} disabled={busy}>
             <Clock3 size={15} />
             Capture forecasts
-          </button>
-          <button
-            className="button secondary"
-            disabled={busy}
-            onClick={() => {
-              onScore();
-              setSection("benchmarks");
-            }}
-          >
-            <Activity size={15} />
-            Score completed
           </button>
         </div>
       </div>
@@ -932,6 +1266,7 @@ export function AnalysisView({
           data={data}
           plan={active}
           selectedGW={selectedGW}
+          lockedIds={lockedIds ?? settings?.locked}
           onDetail={onDetail}
           onLock={onLock}
         />
@@ -953,20 +1288,15 @@ export function AnalysisView({
               <h3>Historical benchmark</h3>
               <span className="compact-status">2025/26 holdout</span>
             </div>
-            <div className="segmented">
-              <button
-                className={scope === "starters" ? "active" : ""}
-                onClick={() => setScope("starters")}
-              >
-                Recent starters
-              </button>
-              <button
-                className={scope === "all" ? "active" : ""}
-                onClick={() => setScope("all")}
-              >
-                All players
-              </button>
-            </div>
+            <TabStrip
+              label="Historical benchmark cohort"
+              value={scope}
+              onChange={setScope}
+              items={[
+                { id: "starters", label: "Recent starters" },
+                { id: "all", label: "All players" },
+              ]}
+            />
           </div>
           {evalData?.available && metrics ? (
             <>
@@ -1009,7 +1339,8 @@ export function AnalysisView({
                       {
                         name: "Previous v0.2",
                         values: evalData.gameweeks!.map(
-                          (v) => v.rmse?.previous ?? v.previous ?? v.ml ?? null,
+                          (v) =>
+                            v.rmse?.previous ?? v.previous ?? v.ml ?? null,
                         ),
                       },
                       {
@@ -1056,24 +1387,30 @@ export function AnalysisView({
                         <h3>Decisions</h3>
                         <span>Actual points · higher is better</span>
                       </div>
-                      <table className="data-table">
-                        <thead>
-                          <tr>
-                            <th>MODEL</th>
-                            <th>SQUAD PTS/GW</th>
-                            <th>CAPTAIN PTS</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {Object.entries(MODEL_LABELS).map(([key, name]) => (
-                            <tr key={key}>
-                              <td>{name}</td>
-                              <td>{fmt(evalData.budget_squads?.[key] ?? NaN, 1)}</td>
-                              <td>{fmt(evalData.captains?.[key] ?? NaN, 0)}</td>
+                      <div className="table-container">
+                        <table className="data-table">
+                          <thead>
+                            <tr>
+                              <th>MODEL</th>
+                              <th>SQUAD PTS/GW</th>
+                              <th>CAPTAIN PTS</th>
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                          </thead>
+                          <tbody>
+                            {Object.entries(MODEL_LABELS).map(([key, name]) => (
+                              <tr key={key}>
+                                <td>{name}</td>
+                                <td>
+                                  {fmt(evalData.budget_squads?.[key] ?? NaN, 1)}
+                                </td>
+                                <td>
+                                  {fmt(evalData.captains?.[key] ?? NaN, 0)}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
                       <p className="source-caption">
                         Best £100m squad each GW, no transfers
                         {evalData.decision_differences?.previous
@@ -1088,28 +1425,41 @@ export function AnalysisView({
                         <h3>Appearance probability</h3>
                         <span>Log loss · lower is better</span>
                       </div>
-                      <table className="data-table">
-                        <thead>
-                          <tr>
-                            <th>FLAG AT DEADLINE</th>
-                            <th>V0.3</th>
-                            <th>V0.2</th>
-                            <th>ROWS</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {appearanceRows(evalData.appearance).map(([label, s]) => (
-                            <tr key={label}>
-                              <td>{label}</td>
-                              <td>{fmt(s["Component model"]?.log_loss ?? NaN, 3)}</td>
-                              <td>{fmt(s["Previous v0.2"]?.log_loss ?? NaN, 3)}</td>
-                              <td>
-                                {s["Component model"]?.count.toLocaleString() ?? "—"}
-                              </td>
+                      <div className="table-container">
+                        <table className="data-table">
+                          <thead>
+                            <tr>
+                              <th>FLAG AT DEADLINE</th>
+                              <th>V0.3</th>
+                              <th>V0.2</th>
+                              <th>ROWS</th>
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                          </thead>
+                          <tbody>
+                            {appearanceRows(evalData.appearance).map(
+                              ([label, s]) => (
+                                <tr key={label}>
+                                  <td>{label}</td>
+                                  <td>
+                                    {fmt(
+                                      s["Component model"]?.log_loss ?? NaN,
+                                      3,
+                                    )}
+                                  </td>
+                                  <td>
+                                    {fmt(s["Previous v0.2"]?.log_loss ?? NaN, 3)}
+                                  </td>
+                                  <td>
+                                    {s[
+                                      "Component model"
+                                    ]?.count.toLocaleString() ?? "—"}
+                                  </td>
+                                </tr>
+                              ),
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
                       <p className="source-caption">
                         Next-GW appearance · same archived flags for both models
                       </p>
@@ -1137,9 +1487,10 @@ export function AnalysisView({
                   ))}
                 </div>
                 <small>
-                  Evaluation generated{" "}
-                  {new Date(evalData.generated_at!).toLocaleString()} · Live
-                  model: {data.model_version}.
+                  {evalGeneratedAt
+                    ? `Evaluation generated ${evalGeneratedAt} · `
+                    : ""}
+                  Live model: {data.model_version}.
                 </small>
               </details>
             </>
@@ -1164,25 +1515,34 @@ export function AnalysisView({
             <div className="source-list">
               {Object.entries(data.sources)
                 .filter(([key]) => !key.startsWith("fpl_live_"))
-                .map(([key, source]) => (
-                  <div key={key}>
-                    <span
-                      className={`status-dot ${source.status === "stale" || source.status === "unavailable" ? "stale" : ""}`}
-                    />
-                    <div>
-                      <a href={source.url} target="_blank" rel="noreferrer">
-                        {key.replaceAll("_", " ")}
-                      </a>
-                      <small>
-                        {source.fetched_at
-                          ? new Date(source.fetched_at).toLocaleString()
-                          : "Unavailable"}{" "}
-                        · {source.sha256?.slice(0, 12) ?? "No hash"}
-                      </small>
+                .map(([key, source]) => {
+                  const degraded =
+                    source.status === "stale" ||
+                    source.status === "unavailable";
+                  return (
+                    <div key={key}>
+                      <span
+                        className={`status-dot ${degraded ? "stale" : ""}`}
+                      />
+                      <div>
+                        <a href={source.url} target="_blank" rel="noreferrer">
+                          {formatSourceLabel(key)}
+                        </a>
+                        <small>
+                          {source.fetched_at
+                            ? new Date(source.fetched_at).toLocaleString()
+                            : "Unavailable"}{" "}
+                          · {source.sha256?.slice(0, 12) ?? "No hash"}
+                        </small>
+                      </div>
+                      <span
+                        className={`source-state ${degraded ? "orange" : ""}`.trim()}
+                      >
+                        {source.status}
+                      </span>
                     </div>
-                    <span className="source-state">{source.status}</span>
-                  </div>
-                ))}
+                  );
+                })}
             </div>
           </section>
           <details className="panel methodology compact-details">
@@ -1207,6 +1567,7 @@ export function MarketView({ data, gw, onDetail, watch, onWatch }: BaseProps) {
   const [query, setQuery] = useViewState("market.prices.query", ""),
     [sort, setSort] = useViewState("market.prices.sort", "net");
   const [page, setPage] = useViewState("market.prices.page", 0);
+  const marketInputRef = useRef<HTMLInputElement>(null);
   const players = data.players
     .filter((p) => matchesPlayerQuery(p, query))
     .sort((a, b) =>
@@ -1261,6 +1622,7 @@ export function MarketView({ data, gw, onDetail, watch, onWatch }: BaseProps) {
         <div className="search-box">
           <Search size={16} />
           <input
+            ref={marketInputRef}
             placeholder="Players or clubs · Haaland, Saka"
             aria-label="Search market players"
             value={query}
@@ -1269,6 +1631,20 @@ export function MarketView({ data, gw, onDetail, watch, onWatch }: BaseProps) {
               setPage(0);
             }}
           />
+          {query && (
+            <button
+              type="button"
+              className="search-clear"
+              aria-label="Clear market search"
+              onClick={() => {
+                setQuery("");
+                setPage(0);
+                marketInputRef.current?.focus();
+              }}
+            >
+              <X size={14} />
+            </button>
+          )}
         </div>
         <select
           aria-label="Sort market"
@@ -1287,65 +1663,76 @@ export function MarketView({ data, gw, onDetail, watch, onWatch }: BaseProps) {
         <table className="data-table price-table">
           <thead>
             <tr>
-              <th></th>
+              <th>
+                <span className="sr-only">Watch</span>
+              </th>
               <th>PLAYER</th>
-              <th>PRICE</th>
-              <th>GW CHANGE</th>
-              <th>TRANSFERS IN</th>
-              <th>TRANSFERS OUT</th>
-              <th>NET</th>
-              <th>OFFICIAL SIGNAL</th>
-              <th>GW{gw} xP</th>
+              <th className="numeric">PRICE</th>
+              <th className="numeric">GW CHANGE</th>
+              <th className="numeric">TRANSFERS IN</th>
+              <th className="numeric">TRANSFERS OUT</th>
+              <th className="numeric">NET</th>
+              <th className="numeric">OFFICIAL SIGNAL</th>
+              <th className="numeric">GW{gw} xP</th>
             </tr>
           </thead>
           <tbody>
             {players
               .slice(selectedPage * 35, (selectedPage + 1) * 35)
-              .map((p) => (
-                <tr key={p.id}>
-                  <td>
-                    <button
-                      className={`icon-button ${watch.includes(p.id) ? "starred" : ""}`}
-                      onClick={() => onWatch(p.id)}
-                      aria-label={`Watch ${p.name}`}
+              .map((p) => {
+                const watched = watch.includes(p.id);
+                return (
+                  <tr key={p.id}>
+                    <td>
+                      <button
+                        className={`icon-button ${watched ? "starred" : ""}`}
+                        onClick={() => onWatch(p.id)}
+                        aria-label={`Watch ${p.name}`}
+                        aria-pressed={watched}
+                      >
+                        <Star
+                          size={14}
+                          fill={watched ? "currentColor" : "none"}
+                        />
+                      </button>
+                    </td>
+                    <td>
+                      <PlayerName player={p} onClick={() => onDetail(p.id)} />
+                    </td>
+                    <td className="numeric">{money(p.price)}</td>
+                    <td
+                      className={`numeric ${
+                        p.price_change > 0
+                          ? "green"
+                          : p.price_change < 0
+                            ? "red"
+                            : "muted"
+                      }`}
                     >
-                      <Star size={14} />
-                    </button>
-                  </td>
-                  <td>
-                    <PlayerName player={p} onClick={() => onDetail(p.id)} />
-                  </td>
-                  <td>{money(p.price)}</td>
-                  <td
-                    className={
-                      p.price_change > 0
-                        ? "green"
-                        : p.price_change < 0
-                          ? "red"
-                          : "muted"
-                    }
-                  >
-                    {p.price_change > 0 ? "+" : ""}
-                    {fmt(p.price_change)}
-                  </td>
-                  <td className="numeric">{p.transfers_in.toLocaleString()}</td>
-                  <td className="muted numeric">
-                    {p.transfers_out.toLocaleString()}
-                  </td>
-                  <td
-                    className={`numeric ${p.transfers_in >= p.transfers_out ? "green" : "red"}`}
-                  >
-                    {p.transfers_in >= p.transfers_out ? "+" : ""}
-                    {(p.transfers_in - p.transfers_out).toLocaleString()}
-                  </td>
-                  <td className="numeric">
-                    {p.price_change_percent === null
-                      ? "—"
-                      : `${p.price_change_percent}%`}
-                  </td>
-                  <td className="orange numeric">{fmt(xp(p, gw))}</td>
-                </tr>
-              ))}
+                      {p.price_change > 0 ? "+" : ""}
+                      {fmt(p.price_change)}
+                    </td>
+                    <td className="numeric">
+                      {p.transfers_in.toLocaleString()}
+                    </td>
+                    <td className="muted numeric">
+                      {p.transfers_out.toLocaleString()}
+                    </td>
+                    <td
+                      className={`numeric ${p.transfers_in >= p.transfers_out ? "green" : "red"}`}
+                    >
+                      {p.transfers_in >= p.transfers_out ? "+" : ""}
+                      {(p.transfers_in - p.transfers_out).toLocaleString()}
+                    </td>
+                    <td className="numeric">
+                      {p.price_change_percent === null
+                        ? "—"
+                        : `${p.price_change_percent}%`}
+                    </td>
+                    <td className="orange numeric">{fmt(xp(p, gw))}</td>
+                  </tr>
+                );
+              })}
           </tbody>
         </table>
       </div>
@@ -1376,14 +1763,14 @@ export function MarketView({ data, gw, onDetail, watch, onWatch }: BaseProps) {
             <ChevronRight size={16} />
           </button>
         </div>
-        <details className="compact-details">
-          <summary>Price signal</summary>
-          <p>
-            The official FPL signal is not a calibrated probability of a price
-            change.
-          </p>
-        </details>
       </div>
+      <details className="compact-details">
+        <summary>Price signal</summary>
+        <p>
+          The official FPL signal is not a calibrated probability of a price
+          change.
+        </p>
+      </details>
     </>
   );
 }

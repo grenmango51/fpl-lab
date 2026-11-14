@@ -1,5 +1,10 @@
 import { useMemo } from "react";
-import { ArrowRight, LockKeyhole, ShieldCheck } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowRight,
+  LockKeyhole,
+  ShieldCheck,
+} from "lucide-react";
 import { Badge } from "./components";
 import { useViewState } from "./useViewState";
 import { fmt, money } from "./lib";
@@ -25,13 +30,24 @@ const componentLabels: Record<string, string> = {
   user_points_adjustment: "Your points adjustment",
   unassigned_forecast: "Unassigned forecast residual",
 };
+
+export const round1 = (points: number) => Math.round(points * 10) / 10 || 0;
+
+export const deltaClass = (points: number | null) => {
+  if (points === null || !Number.isFinite(points)) return "";
+  const rounded = round1(points);
+  return rounded > 0 ? "pi-positive" : rounded < 0 ? "pi-negative" : "";
+};
+
+export const signed = (points: number | null) => {
+  if (points === null || !Number.isFinite(points)) return "—";
+  const rounded = round1(points);
+  return `${rounded > 0 ? "+" : ""}${fmt(rounded)}`;
+};
+
 const value = (points: number | null, digits = 1) =>
   points === null ? "—" : fmt(points, digits);
-const signed = (points: number | null) => {
-  if (points === null) return "—";
-  const rounded = Math.round(points * 10) / 10;
-  return `${rounded >= 0 ? "+" : ""}${fmt(rounded)}`;
-};
+
 const percent = (probability: number | null) =>
   probability === null ? "—" : `${fmt(probability * 100, 0)}%`;
 
@@ -47,6 +63,13 @@ function Name({
       <Badge player={player} size={21} />
       <span>
         {player.name}
+        {player.status !== "a" && (
+          <AlertTriangle
+            size={11}
+            className="orange pi-status-flag"
+            aria-label={player.news || "Availability flag"}
+          />
+        )}
         <small>
           {player.team_short} · {player.position}
         </small>
@@ -66,18 +89,19 @@ function Bar({
   max: number;
   subtle?: boolean;
 }) {
+  const rounded = round1(points);
   return (
     <div className={`pi-bar-row ${subtle ? "pi-bar-subtle" : ""}`}>
       <span>{label}</span>
       <div className="pi-bar-track" aria-hidden="true">
         <i
-          className={points < 0 ? "negative" : ""}
+          className={rounded < 0 ? "negative" : ""}
           style={{
             width: `${Math.min(100, (Math.abs(points) / Math.max(1, max)) * 100)}%`,
           }}
         />
       </div>
-      <b>{fmt(points)}</b>
+      <b>{fmt(rounded)}</b>
     </div>
   );
 }
@@ -86,12 +110,14 @@ export function PlanInsights({
   data,
   plan,
   selectedGW,
+  lockedIds,
   onDetail,
   onLock,
 }: {
   data: Bootstrap;
   plan: Plan;
   selectedGW: number;
+  lockedIds?: number[];
   onDetail: (id: number) => void;
   onLock?: (id: number) => void;
 }) {
@@ -170,6 +196,10 @@ export function PlanInsights({
     1,
     ...insight.teams.map((team) => Math.abs(team.points ?? 0)),
   );
+  const loadedAt =
+    data.loaded_at && !Number.isNaN(Date.parse(data.loaded_at))
+      ? new Date(data.loaded_at).toLocaleString()
+      : "Source time unavailable";
 
   return (
     <div className="plan-insights">
@@ -179,7 +209,7 @@ export function PlanInsights({
           <span title={actualWeeks}>
             {scope === "gameweek"
               ? `GW${selectedGW}`
-              : `${count} planned gameweeks`}{" "}
+              : `${count} planned gameweek${count === 1 ? "" : "s"}`}{" "}
             · Current forecasts
           </span>
         </div>
@@ -207,13 +237,7 @@ export function PlanInsights({
             </div>
             <div>
               <small>Vs holding</small>
-              <strong
-                className={
-                  insight.transferGain !== null && insight.transferGain <= -0.05
-                    ? "pi-negative"
-                    : "pi-positive"
-                }
-              >
+              <strong className={deltaClass(insight.transferGain)}>
                 {signed(insight.transferGain)}
               </strong>
             </div>
@@ -245,33 +269,42 @@ export function PlanInsights({
               </summary>
               {insight.alternatives.length ? (
                 <div className="pi-alternatives">
-                  {insight.alternatives.map((item) => (
-                    <div
-                      className="pi-alternative"
-                      key={`${item.replacement.id}-${item.player.id}`}
-                    >
-                      <Name player={item.replacement} onDetail={onDetail} />
-                      <ArrowRight size={13} />
-                      <Name player={item.player} onDetail={onDetail} />
-                      <div className="pi-upgrade">
-                        <b className="pi-positive">+{fmt(item.gain)}</b>
-                        <small>
-                          {money(item.player.price)} · {item.gameweeks.length}{" "}
-                          GW{item.gameweeks.length === 1 ? "" : "s"}
-                        </small>
+                  {insight.alternatives.map((item) => {
+                    const locked = Boolean(lockedIds?.includes(item.player.id));
+                    return (
+                      <div
+                        className="pi-alternative"
+                        key={`${item.replacement.id}-${item.player.id}`}
+                      >
+                        <Name player={item.replacement} onDetail={onDetail} />
+                        <ArrowRight size={13} />
+                        <Name player={item.player} onDetail={onDetail} />
+                        <div className="pi-upgrade">
+                          <b className="pi-positive">+{fmt(item.gain)}</b>
+                          <small>
+                            {money(item.player.price)} ·{" "}
+                            {item.gameweeks.length} GW
+                            {item.gameweeks.length === 1 ? "" : "s"}
+                          </small>
+                        </div>
+                        {onLock ? (
+                          <button
+                            className={`pi-lock ${locked ? "active" : ""}`.trim()}
+                            aria-pressed={locked}
+                            onClick={() => onLock(item.player.id)}
+                            title={
+                              locked
+                                ? `Unlock ${item.player.name} in the optimiser`
+                                : `Lock ${item.player.name} in the optimiser`
+                            }
+                            aria-label={`Lock ${item.player.name} in the optimiser`}
+                          >
+                            <LockKeyhole size={13} />
+                          </button>
+                        ) : null}
                       </div>
-                      {onLock ? (
-                        <button
-                          className="pi-lock"
-                          onClick={() => onLock(item.player.id)}
-                          title={`Lock ${item.player.name} in the optimiser`}
-                          aria-label={`Lock ${item.player.name} in the optimiser`}
-                        >
-                          <LockKeyhole size={13} />
-                        </button>
-                      ) : null}
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : (
                 <p className="pi-empty">
@@ -283,10 +316,9 @@ export function PlanInsights({
               <details className="pi-method">
                 <summary>Comparison rules</summary>
                 <p>
-                  Same position, same or lower current price, outside this
-                  plan's squads, club limit screened. More than +0.5 xPts over
-                  that player's starting weeks. Individual suggestions; bank,
-                  sale prices, hits and future transfers need a solver check.
+                  Same position and club-legal, at or below current price,
+                  outside planned squads, gaining &gt;0.5 xPts over started GWs.
+                  Run solver to check bank, sale prices and hits.
                 </p>
               </details>
             </details>
@@ -300,6 +332,11 @@ export function PlanInsights({
               </summary>
               <div className="pi-comparison">
                 <div>
+                  <small>Hold initial squad</small>
+                  <b>{value(insight.holdingPoints)}</b>
+                </div>
+                <ArrowRight size={15} />
+                <div>
                   <small>This plan, net</small>
                   <b>
                     {value(
@@ -312,18 +349,7 @@ export function PlanInsights({
                     )}
                   </b>
                 </div>
-                <ArrowRight size={15} />
-                <div>
-                  <small>Hold starting squad</small>
-                  <b>{value(insight.holdingPoints)}</b>
-                </div>
-                <strong
-                  className={
-                    insight.transferGain !== null && insight.transferGain < 0
-                      ? "pi-negative"
-                      : "pi-positive"
-                  }
-                >
+                <strong className={deltaClass(insight.transferGain)}>
                   {signed(insight.transferGain)}
                 </strong>
               </div>
@@ -337,17 +363,14 @@ export function PlanInsights({
                       ? null
                       : row.netPoints - row.holdingPoints;
                   return (
-                    <div key={row.week.gw}>
+                    <div
+                      key={row.week.gw}
+                      className={
+                        row.week.gw === selectedGW ? "pi-selected-gw" : ""
+                      }
+                    >
                       <small>GW{row.week.gw}</small>
-                      <b
-                        className={
-                          gain !== null && gain < 0
-                            ? "pi-negative"
-                            : "pi-positive"
-                        }
-                      >
-                        {signed(gain)}
-                      </b>
+                      <b className={deltaClass(gain)}>{signed(gain)}</b>
                     </div>
                   );
                 })}
@@ -355,11 +378,9 @@ export function PlanInsights({
               <details className="pi-method">
                 <summary>What is compared?</summary>
                 <p>
-                  Hold the original 15 with no transfers or hits. Reselect the
-                  XI, captain and bench using the Best-XI shortcut, with the
-                  same chips. Both sides use current forecasts and identical
-                  available weeks. This includes lineup and captain choices, so
-                  it is not an isolated transfer effect.
+                  Baseline holds the initial 15 (no transfers/hits, Best-XI
+                  lineup and captain, same chips) across matched forecast weeks.
+                  Includes lineup and captain differences.
                 </p>
               </details>
             </details>
@@ -434,16 +455,13 @@ export function PlanInsights({
                     ))}
                 </div>
                 <p>
-                  Fixture components include both games of doubles. Captain
-                  copies, Triple Captain and Bench Boost are counted.
-                  Provider/manual point adjustments remain separate; autosubs
-                  and vice fallback have no invented event breakdown. Hits are
-                  separate.{" "}
+                  Includes doubles, captaincy, TC and BB. Provider/manual
+                  adjustments, autosubs, vice fallback and hits stay separate.{" "}
                   {completeRows.length !== count
-                    ? "Only complete weeks are included here. "
+                    ? "Complete weeks only. "
                     : ""}
                   {staleScores
-                    ? "Saved plan totals differ; these values use refreshed forecasts."
+                    ? "Uses refreshed forecasts rather than stored totals."
                     : ""}
                 </p>
               </details>
@@ -470,7 +488,12 @@ export function PlanInsights({
               </div>
               <div className="pi-risk-rows">
                 {rows.map((row) => (
-                  <div key={row.week.gw}>
+                  <div
+                    key={row.week.gw}
+                    className={
+                      row.week.gw === selectedGW ? "pi-selected-gw" : ""
+                    }
+                  >
                     <span>GW{row.week.gw}</span>
                     <div className="pi-risk-track" aria-hidden="true">
                       <i
@@ -482,8 +505,8 @@ export function PlanInsights({
                     <b>{percent(row.anyStarterAbsent)}</b>
                     <small>
                       {row.week.chip === "benchboost"
-                        ? "BB counts reserves"
-                        : `${signed(row.autosubs)} cover xPts`}
+                        ? "BB active"
+                        : `${signed(row.autosubs)} cover`}
                     </small>
                   </div>
                 ))}
@@ -499,12 +522,9 @@ export function PlanInsights({
                   ))}
                 </div>
                 <p>
-                  Chance of any absent starter is 1 − the product of starter
-                  appearance probabilities. Double-gameweek appearances account
-                  for either fixture. Bench cover points respect keeper cover,
-                  order and formation; an available bench does not guarantee
-                  cover. Independence is an approximation, not calibrated
-                  uncertainty.
+                  1 − product of starter play probabilities (including doubles).
+                  Cover xPts respect GK/formation order; assumes independence,
+                  not calibrated risk.
                 </p>
               </details>
             </details>
@@ -520,7 +540,7 @@ export function PlanInsights({
               >
                 {weeks.map((week) => (
                   <div
-                    className={`${week.bank < 0.5 ? "pi-tight-bank" : ""} ${week.hits ? "pi-hit-week" : ""}`}
+                    className={`${week.bank < 0.5 ? "pi-tight-bank" : ""} ${week.hits ? "pi-hit-week" : ""} ${week.gw === selectedGW ? "pi-selected-gw" : ""}`.trim()}
                     key={week.gw}
                   >
                     <b>GW{week.gw}</b>
@@ -530,13 +550,13 @@ export function PlanInsights({
                     </span>
                     <small>
                       {week.hits
-                        ? `−${week.hits} hit points`
+                        ? `−${week.hits} hit pts`
                         : week.chip === "wildcard"
                           ? "Wildcard"
                           : week.chip === "freehit"
                             ? "Free Hit"
                             : week.transfers_in.length
-                              ? `${week.transfers_in.length} moves`
+                              ? `${week.transfers_in.length} move${week.transfers_in.length === 1 ? "" : "s"}`
                               : "Roll"}
                     </small>
                   </div>
@@ -550,7 +570,8 @@ export function PlanInsights({
                 <span>Official ownership</span>
               </summary>
               <div className="pi-exposure-head">
-                <span>Scoring exposure</span>
+                <span>Player</span>
+                <span>Copies</span>
                 <span>Owned</span>
                 <span>xPts</span>
               </div>
@@ -573,10 +594,9 @@ export function PlanInsights({
               <details className="pi-method">
                 <summary>Exposure source</summary>
                 <p>
-                  × is your average scoring copies per planned GW, before
-                  fallback. Owned is current official FPL selection, without
-                  projected captaincy or a manager sample. These are not Solio
-                  projected effective ownership or rank-risk estimates.
+                  Copies = mean scoring multiplier per GW before fallback. Owned
+                  = current official FPL selection (not projected EO or rank
+                  risk).
                 </p>
               </details>
             </details>
@@ -616,8 +636,7 @@ export function PlanInsights({
           <details className="pi-inputs">
             <summary>Forecast coverage & sources</summary>
             <p>
-              {data.model_version} · Loaded{" "}
-              {new Date(data.loaded_at).toLocaleString()}
+              {data.model_version} · Loaded {loadedAt}
             </p>
             <p>{actualWeeks}</p>
             {rows
@@ -638,8 +657,8 @@ export function PlanInsights({
                     `${layer.name}${typeof layer.weight === "number" && Number.isFinite(layer.weight) ? ` ${fmt(layer.weight * 100, 0)}%` : ""}`,
                 )
                 .join(" · ") || "Component model"}
-              . Fixture/player details show direct, extrapolated and
-              human-scenario inputs.
+              . Fixture/player details show direct, extrapolated and scenario
+              inputs.
             </p>
           </details>
         </>

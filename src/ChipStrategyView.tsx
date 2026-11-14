@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Download, Sparkles, X } from "lucide-react";
+import { ChevronDown, Download, Sparkles, X } from "lucide-react";
 import { api, ApiError, chipNames, download, fmt } from "./lib";
 import { solverSettingsForHorizon } from "./planningPersistence";
 import type { Bootstrap, Plan, SolveResult, Week } from "./types";
@@ -70,15 +70,58 @@ export type ChipStrategyJob = {
   limitations: string[];
 };
 
+function stableValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableValue);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([k, v]) => [k, stableValue(v)]),
+    );
+  }
+  return value;
+}
+
+export function chipStrategyInputSignature(
+  forecast: Record<string, unknown>,
+  data: Pick<Bootstrap, "next_gw" | "loaded_at" | "players"> &
+    Partial<Pick<Bootstrap, "official_fixture_catalog">>,
+) {
+  return JSON.stringify({
+    forecast: stableValue(forecast),
+    next_gw: data.next_gw,
+    loaded_at: data.loaded_at,
+    fixtures: data.official_fixture_catalog
+      ? [...data.official_fixture_catalog]
+          .sort((a, b) => a.id - b.id)
+          .map((f) => [f.id, f.event, f.kickoff_time])
+      : null,
+    players: [...data.players]
+      .sort((a, b) => a.id - b.id)
+      .map((player) => [
+        player.id,
+        player.price,
+        player.team,
+        player.position_id,
+      ]),
+  });
+}
+
 const storageKey = "open-fpl-chip-strategy-v1";
-type SavedSearch = { id: string; source: Plan };
+type SavedSearch = { id: string; source: Plan; inputSignature?: string };
 function savedSearch(): SavedSearch | null {
   try {
     const value = JSON.parse(localStorage.getItem(storageKey) ?? "null");
     return typeof value?.id === "string" &&
       Array.isArray(value?.source?.base_squad) &&
       Array.isArray(value?.source?.weeks)
-      ? value
+      ? {
+          id: value.id,
+          source: value.source,
+          ...(typeof value.inputSignature === "string"
+            ? { inputSignature: value.inputSignature }
+            : {}),
+        }
       : null;
   } catch {
     return null;
@@ -135,7 +178,11 @@ const gap = (candidate: ChipStrategyCandidate | null) =>
   candidate?.solve?.gap == null
     ? "unknown"
     : `${fmt(candidate.solve.gap * 100, 2)}%`;
-const sign = (value: number) => `${value >= 0 ? "+" : ""}${fmt(value)}`;
+
+export const sign = (value: number) => {
+  const rounded = Math.round(value * 10) / 10 || 0;
+  return `${rounded >= 0 ? "+" : ""}${fmt(rounded)}`;
+};
 
 export function ChipStrategyView({
   data,
@@ -157,12 +204,17 @@ export function ChipStrategyView({
   const [saved] = useState(savedSearch);
   const [jobId, setJobId] = useState<string | null>(saved?.id ?? null);
   const [source, setSource] = useState<Plan | null>(saved?.source ?? null);
+  const [savedSignature, setSavedSignature] = useState<string | null>(
+    saved?.inputSignature ?? null,
+  );
   const [job, setJob] = useState<ChipStrategyJob | null>(null);
   const [sending, setSending] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [storageWarning, setStorageWarning] = useState("");
   const [chip, setChip] = useState<SearchChip>("wildcard");
-  const [half, setHalf] = useState<1 | 2>(gw <= 19 ? 1 : 2);
+  const gwHalf: 1 | 2 = gw <= 19 ? 1 : 2;
+  const [half, setHalf] = useState<1 | 2>(gwHalf);
   const [windowStart, setWindowStart] = useState(gw);
   const [windowEnd, setWindowEnd] = useState(
     Math.min(38, gw + strategy.horizon - 1),
@@ -170,13 +222,24 @@ export function ChipStrategyView({
   const [candidateCount, setCandidateCount] = useState(4);
   const [seconds, setSeconds] = useState(6);
   const [budget, setBudget] = useState(120);
+
+  useEffect(() => {
+    setHalf(gwHalf);
+  }, [gwHalf]);
+
+  const currentSignature = useMemo(
+    () => chipStrategyInputSignature(forecast, data),
+    [forecast, data],
+  );
+  const inputsDiffer = Boolean(job && savedSignature !== currentSignature);
+
   const horizon = Math.max(1, Math.min(strategy.horizon, 39 - gw));
   const active = sending || chipStrategyRunning(job) || Boolean(jobId && !job);
   const allowanceUsed = Boolean(
     plan &&
-    [...(plan.used_chips ?? []), ...plan.weeks].some(
-      (row) => row.chip === chip && (row.gw <= 19 ? 1 : 2) === half,
-    ),
+      [...(plan.used_chips ?? []), ...plan.weeks].some(
+        (row) => row.chip === chip && (row.gw <= 19 ? 1 : 2) === half,
+      ),
   );
   const eligible = useMemo(
     () =>
@@ -208,9 +271,11 @@ export function ChipStrategyView({
       error: setError,
       missing: (message) => {
         setError(message);
+        setStorageWarning("");
         setJobId(null);
         setJob(null);
         setSource(null);
+        setSavedSignature(null);
         try {
           localStorage.removeItem(storageKey);
         } catch {
@@ -232,8 +297,10 @@ export function ChipStrategyView({
       return;
     const frozen = structuredClone(plan);
     const inputs = structuredClone(forecast);
+    const signature = chipStrategyInputSignature(inputs, data);
     setSending(true);
     setError("");
+    setStorageWarning("");
     try {
       const result = await api<ChipStrategyJob>("/chip-strategy", {
         ...inputs,
@@ -262,16 +329,21 @@ export function ChipStrategyView({
         },
       });
       setSource(frozen);
+      setSavedSignature(signature);
       setJob(result);
       setJobId(result.id);
       try {
         localStorage.setItem(
           storageKey,
-          JSON.stringify({ id: result.id, source: frozen }),
+          JSON.stringify({
+            id: result.id,
+            source: frozen,
+            inputSignature: signature,
+          }),
         );
       } catch {
-        setError(
-          "Search running. Browser storage is unavailable; keep this page open to save its branch.",
+        setStorageWarning(
+          "Search running. Storage unavailable; keep this page open to save.",
         );
       }
     } catch (failure) {
@@ -296,7 +368,15 @@ export function ChipStrategyView({
   }
 
   async function apply() {
-    if (!source || !job?.best?.weeks?.length || active || busy || saving)
+    if (
+      !source ||
+      !job?.best?.weeks?.length ||
+      !job.recommendation ||
+      inputsDiffer ||
+      active ||
+      busy ||
+      saving
+    )
       return;
     setSaving(true);
     setError("");
@@ -324,17 +404,40 @@ export function ChipStrategyView({
             ? "Search stopped"
             : (job?.phase ?? "Reconnecting…");
   const scope = job?.scope.gameweeks;
+  const failedCandidates =
+    job?.candidates.filter(
+      (candidate) => candidate.status === "failed" || Boolean(candidate.error),
+    ) ?? [];
+  const loadedAt =
+    job?.forecast.loaded_at && !Number.isNaN(Date.parse(job.forecast.loaded_at))
+      ? new Date(job.forecast.loaded_at).toLocaleString()
+      : "Source time unavailable";
+
   return (
-    <details className="chip-strategy">
+    <details className="chip-strategy solver-disclosure">
       <summary>
-        CHIP STRATEGY <span>Auto WC / FH</span>
-        {active && (
-          <small>
+        <b>CHIP STRATEGY</b>
+        <span>Auto WC / FH</span>
+        {active ? (
+          <small className="disclosure-badge">
             {job?.attempted ?? 0}/{job?.total ?? candidateCount + 1}
           </small>
-        )}
+        ) : job ? (
+          <small className="disclosure-badge disclosure-ready">
+            {job.recommendation
+              ? `${job.recommendation.chip === "wildcard" ? "WC" : "FH"} GW${job.recommendation.gw} (${sign(job.best?.improvement ?? job.recommendation.improvement)})`
+              : job.status === "failed"
+                ? "Stopped"
+                : `${job.completed}/${job.total} ready`}
+          </small>
+        ) : null}
+        <ChevronDown
+          size={15}
+          className="disclosure-chevron"
+          aria-hidden="true"
+        />
       </summary>
-      <div className="chip-strategy-body">
+      <div className="solver-disclosure-body chip-strategy-body">
         <p>Compare chip timing with a new transfer plan for each week.</p>
         <div className="chip-strategy-controls field-grid">
           <label>
@@ -445,9 +548,7 @@ export function ChipStrategyView({
               </select>
             </label>
           </div>
-          <small>
-            Stops between solves. A running solve and its seed finish first.
-          </small>
+          <small>Stops between solves; active solve finishes first.</small>
         </details>
         <div className="chip-strategy-run">
           <button
@@ -467,7 +568,8 @@ export function ChipStrategyView({
             {active ? "Searching chip weeks…" : "Search chip strategy"}
           </button>
           <small>
-            GW{gw}–{gw + horizon - 1} · frozen forecasts and rules
+            GW{gw}
+            {horizon > 1 ? `–${gw + horizon - 1}` : ""} · frozen inputs
           </small>
         </div>
         {allowanceUsed && (
@@ -477,6 +579,11 @@ export function ChipStrategyView({
         )}
         {!selectedWeekExists && (
           <p className="help-text">Select a gameweek in your plan first.</p>
+        )}
+        {storageWarning && (
+          <p role="status" className="orange help-text">
+            {storageWarning}
+          </p>
         )}
         {error && (
           <p role="alert" className="chip-strategy-error">
@@ -489,7 +596,8 @@ export function ChipStrategyView({
               <div role="status" aria-live="polite">
                 <b>{statusLabel}</b>
                 <small>
-                  {job.settings.name} · GW{scope?.[0]}–{scope?.at(-1)} ·{" "}
+                  {job.settings.name} · GW{scope?.[0]}
+                  {scope && scope.length > 1 ? `–${scope.at(-1)}` : ""} ·{" "}
                   {fmt(job.elapsed_seconds, 0)}s
                 </small>
               </div>
@@ -517,7 +625,7 @@ export function ChipStrategyView({
             <p className="chip-strategy-coverage">
               {job.completed}/{job.total} validated solves ·{" "}
               {job.scope.selected_gameweeks.length}/
-              {job.scope.eligible_gameweeks.length} eligible chip weeks selected
+              {job.scope.eligible_gameweeks.length} eligible chip weeks
             </p>
             {job.best && (
               <div className="chip-strategy-best">
@@ -541,9 +649,9 @@ export function ChipStrategyView({
                 <thead>
                   <tr>
                     <th>Placement</th>
-                    <th>Net xPts</th>
-                    <th>Δ discounted</th>
-                    <th>Gap</th>
+                    <th className="numeric">Net xPts</th>
+                    <th className="numeric">Δ discounted</th>
+                    <th className="numeric">Gap</th>
                     <th>Status</th>
                   </tr>
                 </thead>
@@ -560,13 +668,17 @@ export function ChipStrategyView({
                           ? "Baseline"
                           : `${candidate.chip === "wildcard" ? "WC" : "FH"} GW${candidate.gw}`}
                       </td>
-                      <td>{fmt(candidate.net_points ?? NaN)}</td>
-                      <td>
+                      <td className="numeric">
+                        {fmt(candidate.net_points ?? NaN)}
+                      </td>
+                      <td className="numeric">
                         {candidate.improvement == null
                           ? "—"
                           : sign(candidate.improvement)}
                       </td>
-                      <td>{candidate.solve ? gap(candidate) : "—"}</td>
+                      <td className="numeric">
+                        {candidate.solve ? gap(candidate) : "—"}
+                      </td>
                       <td title={candidate.error ?? undefined}>
                         {candidate.status.replaceAll("-", " ")}
                       </td>
@@ -575,6 +687,26 @@ export function ChipStrategyView({
                 </tbody>
               </table>
             </div>
+            {failedCandidates.length > 0 && (
+              <div className="chip-strategy-failures" role="status">
+                {failedCandidates.map((candidate) => (
+                  <p key={candidate.id}>
+                    <b>
+                      {candidate.chip === "none"
+                        ? "Baseline"
+                        : `${candidate.chip === "wildcard" ? "WC" : "FH"} GW${candidate.gw}`}
+                      :
+                    </b>{" "}
+                    {candidate.error ?? "Candidate solve failed."}
+                  </p>
+                ))}
+              </div>
+            )}
+            {inputsDiffer && (
+              <p className="orange help-text chip-strategy-stale">
+                Inputs changed since this search. Rerun to save a branch.
+              </p>
+            )}
             <div className="chip-strategy-actions">
               <button
                 className="button primary small"
@@ -583,7 +715,9 @@ export function ChipStrategyView({
                   busy ||
                   saving ||
                   !source ||
-                  !job.best?.weeks?.length
+                  !job.best?.weeks?.length ||
+                  !job.recommendation ||
+                  inputsDiffer
                 }
                 onClick={() => void apply()}
               >
@@ -603,34 +737,22 @@ export function ChipStrategyView({
               </button>
             </div>
             <small>
-              Save keeps the source branch and rechecks this plan with current
-              forecasts.
+              {!active && !job.recommendation
+                ? "No chip beat baseline; nothing to save."
+                : "Saves a new branch and rechecks rules against current inputs."}
             </small>
             <details className="compact-details chip-strategy-method">
               <summary>Method & frozen inputs</summary>
               <p>{job.method}</p>
               <p>
-                {job.forecast.model_version} ·{" "}
-                {job.forecast.loaded_at
-                  ? new Date(job.forecast.loaded_at).toLocaleString()
-                  : "Source time unavailable"}{" "}
-                · fingerprint {job.forecast.sha256.slice(0, 16)}
+                {job.forecast.model_version ?? "Model"} · {loadedAt} ·
+                fingerprint {job.forecast.sha256.slice(0, 16)}
               </p>
               <p>
                 {job.settings.max_candidates} candidate limit ·{" "}
                 {job.settings.budget_seconds}s budget · best pool{" "}
                 {job.best?.solve?.candidate_count ?? "unknown"} players.
               </p>
-              {job.candidates
-                .filter((candidate) => candidate.error)
-                .map((candidate) => (
-                  <p key={candidate.id}>
-                    {candidate.chip === "none"
-                      ? "Baseline"
-                      : `GW${candidate.gw}`}
-                    : {candidate.error}
-                  </p>
-                ))}
               {job.limitations.map((note) => (
                 <p key={note}>{note}</p>
               ))}

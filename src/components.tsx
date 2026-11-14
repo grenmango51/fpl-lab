@@ -9,6 +9,9 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import {
+  Children,
+  cloneElement,
+  isValidElement,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -49,6 +52,28 @@ export function Badge({
     />
   );
 }
+export function hexLuminance(hex: string): number {
+  const clean = hex.replace("#", "").trim();
+  const full =
+    clean.length === 3
+      ? clean
+          .split("")
+          .map((ch) => ch + ch)
+          .join("")
+      : clean;
+  const num = Number.parseInt(full, 16);
+  if (!Number.isFinite(num)) return 0;
+  const channels = [(num >> 16) & 255, (num >> 8) & 255, num & 255].map((v) => {
+    const s = v / 255;
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+}
+
+export function isLightHex(hex: string, threshold = 0.34): boolean {
+  return hexLuminance(hex) >= threshold;
+}
+
 export function Shirt({
   player,
   small = false,
@@ -58,6 +83,8 @@ export function Shirt({
 }) {
   const colors = clubColors[player.team_short] ?? ["#91a1b7", "#cad5e3"];
   const gk = player.position_id === 1;
+  const baseFill = gk ? "#a6b675" : colors[0];
+  const lightTextBg = isLightHex(baseFill);
   return (
     <svg
       viewBox="0 0 72 72"
@@ -66,7 +93,7 @@ export function Shirt({
     >
       <path
         d="M23 9l-13 6-8 17 14 6 5-9v33h30V29l5 9 14-6-8-17-13-6-7 6H30z"
-        fill={gk ? "#a6b675" : colors[0]}
+        fill={baseFill}
         stroke="rgba(255,255,255,.23)"
         strokeWidth="1.2"
       />
@@ -88,15 +115,13 @@ export function Shirt({
         x="36"
         y="44"
         textAnchor="middle"
-        fill={
-          gk
-            ? "#243120"
-            : colors[0] === "#f1f2ef" ||
-                colors[0] === "#f5f4eb" ||
-                colors[0] === "#eff1f5"
-              ? "#24334b"
-              : "#fff"
+        fill={lightTextBg ? "#132238" : "#ffffff"}
+        stroke={
+          lightTextBg ? "rgba(255,255,255,.72)" : "rgba(11,21,37,.78)"
         }
+        strokeWidth="2.2"
+        strokeLinejoin="round"
+        paintOrder="stroke"
         fontSize="10"
         fontWeight="700"
         fontFamily="inherit"
@@ -298,6 +323,41 @@ export function Pitch({
     </div>
   );
 }
+export function computeModalPosition(
+  anchor:
+    | { left: number; right: number; top: number; bottom: number }
+    | null
+    | undefined,
+  innerWidth: number,
+  innerHeight: number,
+): { left: number; top: number; width: number } | null {
+  if (!anchor || innerWidth <= 700) return null;
+  const maxWidth = Math.min(480, innerWidth - 24);
+  const minWidth = 340;
+  const height = Math.min(660, innerHeight - 24);
+  const leftSpace = anchor.left - 24;
+  const rightSpace = innerWidth - anchor.right - 24;
+  let width = maxWidth;
+  let left: number | null = null;
+  if (anchor.left - width - 12 >= 12) {
+    left = anchor.left - width - 12;
+  } else if (anchor.right + width + 12 <= innerWidth - 12) {
+    left = anchor.right + 12;
+  } else if (leftSpace >= rightSpace && leftSpace >= minWidth) {
+    width = Math.min(maxWidth, leftSpace);
+    left = anchor.left - width - 12;
+  } else if (rightSpace >= minWidth) {
+    width = Math.min(maxWidth, rightSpace);
+    left = anchor.right + 12;
+  }
+  if (left === null) return null;
+  return {
+    left: Math.max(12, left),
+    top: Math.max(12, Math.min(innerHeight - height - 12, anchor.top - 100)),
+    width,
+  };
+}
+
 export function Modal({
   title,
   subtitle,
@@ -319,31 +379,15 @@ export function Modal({
   const [position, setPosition] = useState<{
     left: number;
     top: number;
+    width: number;
   } | null>(null);
   const close = useRef(onClose);
   close.current = onClose;
   useLayoutEffect(() => {
-    const place = () => {
-      if (!anchor || window.innerWidth <= 700) {
-        setPosition(null);
-        return;
-      }
-      const width = Math.min(480, window.innerWidth - 24),
-        height = Math.min(660, window.innerHeight - 24);
-      const left =
-        anchor.left - width - 12 >= 12
-          ? anchor.left - width - 12
-          : anchor.right + width + 12 <= window.innerWidth
-            ? anchor.right + 12
-            : window.innerWidth - width - 12;
-      setPosition({
-        left: Math.max(12, left),
-        top: Math.max(
-          12,
-          Math.min(window.innerHeight - height - 12, anchor.top - 100),
-        ),
-      });
-    };
+    const place = () =>
+      setPosition(
+        computeModalPosition(anchor, window.innerWidth, window.innerHeight),
+      );
     place();
     window.addEventListener("resize", place);
     return () => window.removeEventListener("resize", place);
@@ -351,10 +395,11 @@ export function Modal({
   useEffect(() => {
     if (!position) return;
     const outside = (event: PointerEvent) => {
+      const target = event.target instanceof Element ? event.target : null;
       if (
         !dialog.current?.contains(event.target as Node) &&
-        !(event.target as HTMLElement).closest(
-          ".player-select,.projection-value",
+        !target?.closest(
+          ".player-select,.player-info,.projection-value,.board-transfers button,.overview-target-list .player-name-cell,.squad-table .icon-button,.pi-player-name,.result-transfers button",
         )
       )
         close.current();
@@ -378,6 +423,11 @@ export function Modal({
       if ([...document.querySelectorAll('[aria-modal="true"]')].at(-1) !== node)
         return;
       if (event.key === "Escape") {
+        if (
+          event.defaultPrevented ||
+          node.querySelector('.action-menu > button[aria-expanded="true"]')
+        )
+          return;
         event.preventDefault();
         event.stopPropagation();
         close.current();
@@ -409,7 +459,13 @@ export function Modal({
     document.addEventListener("keydown", keyboard, true);
     return () => {
       document.removeEventListener("keydown", keyboard, true);
-      if (previous?.isConnected) previous.focus({ preventScroll: true });
+      const active = document.activeElement;
+      if (
+        previous?.isConnected &&
+        (!active || active === document.body || node.contains(active))
+      ) {
+        previous.focus({ preventScroll: true });
+      }
     };
   }, []);
   return (
@@ -425,7 +481,12 @@ export function Modal({
         className={`modal ${wide ? "modal-wide" : ""} ${className} ${position ? "floating-player-window" : ""}`}
         style={
           position
-            ? { position: "fixed", left: position.left, top: position.top }
+            ? {
+                position: "fixed",
+                left: position.left,
+                top: position.top,
+                width: position.width,
+              }
             : undefined
         }
         role="dialog"
@@ -451,15 +512,51 @@ export function Modal({
   );
 }
 
+function hasFormControls(node: ReactNode): boolean {
+  if (Array.isArray(node)) return node.some(hasFormControls);
+  if (!isValidElement<{ children?: ReactNode }>(node)) return false;
+  if (
+    typeof node.type === "string" &&
+    ["label", "input", "select", "textarea"].includes(node.type)
+  ) {
+    return true;
+  }
+  return hasFormControls(node.props.children);
+}
+
+function stripMenuItemRoles(node: ReactNode): ReactNode {
+  return Children.map(node, (child) => {
+    if (!isValidElement<{ role?: string; children?: ReactNode }>(child)) {
+      return child;
+    }
+    const nextChildren =
+      child.props.children !== undefined
+        ? stripMenuItemRoles(child.props.children)
+        : child.props.children;
+    if (child.props.role === "menuitem") {
+      return cloneElement(child, { role: undefined }, nextChildren);
+    }
+    if (nextChildren !== child.props.children) {
+      return cloneElement(child, undefined, nextChildren);
+    }
+    return child;
+  });
+}
+
 export function ActionMenu({
   label,
   children,
+  role,
 }: {
   label: ReactNode;
   children: ReactNode;
+  role?: "menu" | "group";
 }) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
+  const resolvedRole = role ?? (hasFormControls(children) ? undefined : "menu");
   useEffect(() => {
     if (!open) return;
     const outside = (event: PointerEvent) => {
@@ -468,37 +565,106 @@ export function ActionMenu({
     const escape = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.stopPropagation();
+        event.preventDefault();
         setOpen(false);
-        root.current?.querySelector("button")?.focus();
+        trigger.current?.focus();
       }
     };
     document.addEventListener("pointerdown", outside);
-    document.addEventListener("keydown", escape);
+    document.addEventListener("keydown", escape, true);
     return () => {
       document.removeEventListener("pointerdown", outside);
-      document.removeEventListener("keydown", escape);
+      document.removeEventListener("keydown", escape, true);
     };
   }, [open]);
   return (
     <div className="action-menu" ref={root}>
       <button
+        ref={trigger}
+        type="button"
         className="button small"
-        aria-haspopup="menu"
+        aria-haspopup={resolvedRole === "menu" ? "menu" : undefined}
         aria-expanded={open}
         onClick={() => setOpen(!open)}
+        onKeyDown={(event) => {
+          if (open && resolvedRole === "menu" && event.key === "ArrowDown") {
+            const first = menu.current?.querySelector<HTMLButtonElement>(
+              "button:not(:disabled)",
+            );
+            if (first) {
+              event.preventDefault();
+              first.focus();
+            }
+          }
+        }}
       >
         {label}
       </button>
       {open ? (
         <div
+          ref={menu}
           className="action-menu-items"
-          role="menu"
+          role={resolvedRole}
+          onKeyDown={(event) => {
+            if (resolvedRole !== "menu") return;
+            if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key))
+              return;
+            const items = [
+              ...(event.currentTarget.querySelectorAll<HTMLButtonElement>(
+                "button:not(:disabled)",
+              ) ?? []),
+            ];
+            if (!items.length) return;
+            event.preventDefault();
+            const current = items.indexOf(
+              document.activeElement as HTMLButtonElement,
+            );
+            const next =
+              event.key === "Home"
+                ? 0
+                : event.key === "End"
+                  ? items.length - 1
+                  : event.key === "ArrowDown"
+                    ? current < 0
+                      ? 0
+                      : (current + 1) % items.length
+                    : current <= 0
+                      ? items.length - 1
+                      : current - 1;
+            items[next]?.focus();
+          }}
           onClick={(event) => {
-            if ((event.target as HTMLElement).closest("button:not(:disabled)"))
+            const target =
+              event.target instanceof Element ? event.target : null;
+            if (target?.closest("button:not(:disabled)")) {
+              const active = document.activeElement;
+              if (
+                !active ||
+                active === document.body ||
+                menu.current?.contains(active)
+              ) {
+                trigger.current?.focus({ preventScroll: true });
+              }
               setOpen(false);
+            }
+          }}
+          onChange={(event) => {
+            const target =
+              event.target instanceof Element ? event.target : null;
+            if (target?.closest("select")) {
+              const active = document.activeElement;
+              if (
+                !active ||
+                active === document.body ||
+                menu.current?.contains(active)
+              ) {
+                trigger.current?.focus({ preventScroll: true });
+              }
+              setOpen(false);
+            }
           }}
         >
-          {children}
+          {resolvedRole === "menu" ? children : stripMenuItemRoles(children)}
         </div>
       ) : null}
     </div>
@@ -535,7 +701,7 @@ export function PlayerName({
       <Badge player={player} />
       <span>
         <b>
-          {player.name}
+          <span className="player-name-label">{player.name}</span>
           {player.status !== "a" && (
             <AlertTriangle size={12} className="orange" />
           )}
@@ -625,18 +791,20 @@ export function LineChart({
   height = 200,
   yLabel = "Expected points",
   colors = ["#ff764d", "#61ba9a", "#7c94cb"],
+  maxY,
 }: {
   series: { name: string; values: (number | null)[] }[];
   labels: string[];
   height?: number;
   yLabel?: string;
   colors?: string[];
+  maxY?: number;
 }) {
   const width = 760,
-    top = 18,
+    top = 28,
     left = 46,
     bottom = 35,
-    right = 15;
+    right = 28;
   const plotHeight = height - top - bottom,
     plotWidth = width - left - right;
   const values = series.flatMap((s) =>
@@ -644,9 +812,13 @@ export function LineChart({
       (value): value is number => value !== null && Number.isFinite(value),
     ),
   );
-  const max = Math.max(1, ...values) * 1.1;
+  const peak = values.length ? Math.max(...values) : 0;
+  const max =
+    maxY !== undefined && peak <= maxY
+      ? maxY
+      : Math.max(1, ...values) * 1.1;
   const min = Math.min(0, ...values);
-  const range = max - min;
+  const range = Math.max(1e-6, max - min);
   return (
     <div className="chart">
       <svg
@@ -699,9 +871,7 @@ export function LineChart({
                   r="2.7"
                   fill={colors[index % colors.length]}
                 >
-                  <title>
-                    {s.name} · {labels[i]}: {fmt(value, 2)}
-                  </title>
+                  <title>{`${s.name} · ${labels[i]}: ${fmt(value, 2)}`}</title>
                 </circle>
               ),
             )}
@@ -709,7 +879,9 @@ export function LineChart({
         ))}
         {labels.map(
           (label, i) =>
-            (labels.length <= 12 || i % 4 === 0 || i === labels.length - 1) && (
+            (labels.length <= 12 ||
+              (i % 4 === 0 && labels.length - 1 - i >= 2) ||
+              i === labels.length - 1) && (
               <text
                 key={`${i}-${label}`}
                 x={left + (i * plotWidth) / Math.max(1, labels.length - 1)}

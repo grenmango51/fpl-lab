@@ -100,7 +100,9 @@ export default function DataRefreshSettings() {
       <p className="help-text">
         {status?.last_success_at
           ? `Last check ${new Date(status.last_success_at).toLocaleString()}. `
-          : "Waiting for first check. "}
+          : status === null && error
+            ? ""
+            : "Waiting for first check. "}
         Solio updates ~4h; requires running server.
       </p>
       {error || status?.last_error ? (

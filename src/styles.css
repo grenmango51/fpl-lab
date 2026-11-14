@@ -1154,6 +1154,7 @@ input[type="checkbox"] {
   padding: 3px 6px;
   border-radius: 4px;
   font-size: 8px;
+  white-space: nowrap;
 }
 .captain-highlight {
   display: flex;
@@ -1305,7 +1306,12 @@ input[type="checkbox"] {
   outline: 0;
 }
 .search-box input::placeholder {
-  color: #687c96;
+  color: #8296b0;
+}
+.search-box .search-clear {
+  padding: 4px;
+  min-width: 24px;
+  min-height: 24px;
 }
 .search-box.compact {
   margin: 12px 17px 8px;
@@ -1666,15 +1672,16 @@ input[type="checkbox"] {
 }
 .reference-score {
   position: relative;
-  display: inline-block;
-  min-width: 68px;
+  display: block;
+  max-width: 64px;
+  margin-left: auto;
   text-align: right;
 }
 .reference-score i {
   position: absolute;
   height: 3px;
-  bottom: -7px;
-  left: 0;
+  bottom: -6px;
+  right: 0;
   background: #6a879f;
   border-radius: 2px;
 }
@@ -1744,7 +1751,15 @@ input[type="checkbox"] {
 }
 .reference-limitations summary {
   cursor: pointer;
-  margin-bottom: 12px;
+}
+.reference-limitations > summary {
+  margin-bottom: 0;
+}
+.reference-limitations[open] > summary {
+  margin-bottom: 10px;
+}
+.reference-limitations p + p {
+  margin-top: 6px;
 }
 @media (max-width: 640px) {
   .reference-toolbar {
@@ -1985,6 +2000,9 @@ input[type="checkbox"] {
   font-size: 7px;
   opacity: 0.8;
 }
+.fixture-chip.fdr-5 b > span {
+  opacity: 0.92;
+}
 .fixture-chip small {
   display: block;
   font-size: 7px;
@@ -2060,8 +2078,12 @@ input[type="checkbox"] {
 }
 .field-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
+}
+.field-grid > label,
+.field-grid > div {
+  min-width: 0;
 }
 .field-grid label {
   display: flex;
@@ -2917,8 +2939,9 @@ input[type="checkbox"] {
   margin-bottom: 8px;
 }
 .help-grid p {
-  font-size: 10px;
-  color: #819cbe;
+  font-size: 11px;
+  line-height: 1.6;
+  color: #8fa5c2;
 }
 .reference-links {
   display: flex;
@@ -3108,10 +3131,11 @@ input[type="checkbox"] {
   min-width: 50px;
   color: #b4c9e3;
 }
-.history-list small {
+.history-list small,
+.history-season small {
   display: block;
   font-size: 7px;
-  color: #52769f;
+  color: #8ea4c2;
   margin-top: 3px;
 }
 .history-list b {
@@ -3973,7 +3997,7 @@ input[type="checkbox"] {
     font-size: 12px;
   }
   .help-grid p {
-    font-size: 9px;
+    font-size: 11px;
   }
   .player-detail-top {
     flex-wrap: wrap;
@@ -3987,9 +4011,6 @@ input[type="checkbox"] {
   .player-detail-top > .stat {
     padding: 8px;
     min-width: 90px;
-  }
-  .player-detail-top > .stat:nth-child(4) {
-    display: none;
   }
   .player-detail-top > .stat > strong {
     font-size: 22px;
@@ -4063,6 +4084,12 @@ input[type="checkbox"] {
   }
   .pitch-row .player-tile {
     flex-basis: 82px;
+  }
+}
+@media (max-width: 560px) {
+  .help-grid {
+    grid-template-columns: 1fr;
+    gap: 16px;
   }
 }
 @media (prefers-reduced-motion: reduce) {

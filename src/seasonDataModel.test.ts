@@ -9,6 +9,7 @@ import {
   scatterStats,
   sortStatRows,
   statValue,
+  TEAM_METRICS,
   teamStatRows,
   type StatRow,
 } from "./seasonDataModel";
@@ -125,7 +126,18 @@ describe("observed season stats", () => {
       [2, 180, 3],
     ]);
     expect(plot.missing).toBe(1);
-    expect(plot.x).toEqual({ min: 0, max: 180 });
+    expect(plot.x).toEqual({ min: 0, max: 187.2 });
+    const gd = TEAM_METRICS.find((metric) => metric.key === "goal_difference")!;
+    const negPlot = scatterStats(
+      [
+        row(1, "A", { minutes: 90, goal_difference: -10 }),
+        row(2, "B", { minutes: 180, goal_difference: 15 }),
+      ],
+      minutes,
+      gd,
+      false,
+    );
+    expect(negPlot.y).toEqual({ min: -11, max: 16 });
     expect(scatterStats([], minutes, goals, false).y).toEqual({
       min: 0,
       max: 1,

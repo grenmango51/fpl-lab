@@ -7,6 +7,7 @@ import {
   Info,
   Search,
   Star,
+  X,
 } from "lucide-react";
 import { PlayerName } from "./components";
 import { download, fmt, money, xp } from "./lib";
@@ -200,6 +201,19 @@ export function ReferenceView({
                   setPage(0);
                 }}
               />
+              {query && (
+                <button
+                  type="button"
+                  className="icon-button search-clear"
+                  aria-label="Clear search"
+                  onClick={() => {
+                    setQuery("");
+                    setPage(0);
+                  }}
+                >
+                  <X size={14} />
+                </button>
+              )}
             </div>
             <select
               aria-label="Reference position"
@@ -262,13 +276,17 @@ export function ReferenceView({
                 <tr>
                   <th aria-label="Watchlist"></th>
                   <th>PLAYER</th>
-                  <th>PRICE</th>
-                  {baseline && <th>IMPORTANCE / 100</th>}
-                  <th>{baseline ? "GOALS" : `GW${selectedGW} GOALS`}</th>
-                  <th>{baseline ? "ASSISTS" : `GW${selectedGW} ASSISTS`}</th>
-                  <th>INVOLVEMENT</th>
+                  <th className="numeric">PRICE</th>
+                  {baseline && <th className="numeric">IMPORTANCE / 100</th>}
+                  <th className="numeric">
+                    {baseline ? "GOALS" : `GW${selectedGW} GOALS`}
+                  </th>
+                  <th className="numeric">
+                    {baseline ? "ASSISTS" : `GW${selectedGW} ASSISTS`}
+                  </th>
+                  <th className="numeric">INVOLVEMENT</th>
                   {baseline && <th>CAPTAIN FLAG</th>}
-                  <th>OPEN FPL GW{selectedGW} xP</th>
+                  <th className="numeric">OPEN FPL GW{selectedGW} xP</th>
                 </tr>
               </thead>
               <tbody>
@@ -297,7 +315,7 @@ export function ReferenceView({
                             onClick={() => onDetail(p.id, selectedGW)}
                           />
                         </td>
-                        <td>{money(p.price)}</td>
+                        <td className="numeric">{money(p.price)}</td>
                         {baseline && (
                           <td className="numeric">
                             {r.future_importance === undefined ? (

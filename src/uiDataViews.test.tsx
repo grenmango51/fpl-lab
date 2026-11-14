@@ -245,6 +245,15 @@ describe("owned data views and tab strip", () => {
     try {
       hooks.effects = [];
       hooks.cursor = 0;
+      const initialHtml = renderToStaticMarkup(
+        createElement(LeadTimeView, { captureKey: "k1", data }),
+      );
+      expect(initialHtml).toContain("Loading lead-time evaluation…");
+      expect(initialHtml).not.toContain("Capture forecasts to start.");
+      expect(initialHtml).not.toContain("<thead");
+
+      hooks.effects = [];
+      hooks.cursor = 0;
       walk(createElement(LeadTimeView, { captureKey: "k1", data }));
       const cleanups = hooks.effects.map((effect) => effect());
       await new Promise((resolve) => setTimeout(resolve, 0));
@@ -273,7 +282,7 @@ describe("owned data views and tab strip", () => {
     }
   });
 
-  it("ProspectiveView discloses Showing latest 5 of N and toggles to show all captures", () => {
+  it("ProspectiveView formats source keys, discloses Showing latest 5 of N, and toggles to show all captures", () => {
     const captures = Array.from({ length: 7 }, (_, i) => ({
       gw: 10 - i,
       filename: `gw${10 - i}.json`,
@@ -281,7 +290,61 @@ describe("owned data views and tab strip", () => {
       deadline: "2026-10-02T17:30:00Z",
       lead_hours: 12,
       players: 250,
-      capture_receipt: null,
+      capture_receipt:
+        i === 0
+          ? {
+              capture_started_at: "2026-10-01T12:00:00Z",
+              capture_finished_at: "2026-10-01T12:00:05Z",
+              dataset_loaded_at: "2026-10-01T12:00:00Z",
+              refresh_requested: true,
+              max_source_age_seconds: 1800,
+              eligible_primary: { "Live ensemble": true },
+              eligibility_reasons: {},
+              required_sources: {
+                "Live ensemble": [
+                  "fpl_bootstrap",
+                  "fpljoe",
+                  "elevenify_sheet",
+                  "fplform_2026-27_gw7",
+                ],
+              },
+              method: "Frozen capture",
+              sources: {
+                fpl_bootstrap: {
+                  status: "live",
+                  fetched_at: "2026-10-01T12:00:00Z",
+                  sha256: "1234567890abcdef",
+                  age_seconds: 30,
+                  refetched: true,
+                  content_changed: false,
+                },
+                fpljoe: {
+                  status: "cached",
+                  fetched_at: "2026-10-01T11:55:00Z",
+                  sha256: "abcdef1234567890",
+                  age_seconds: 300,
+                  refetched: false,
+                  content_changed: null,
+                },
+                elevenify_sheet: {
+                  status: "live",
+                  fetched_at: "2026-10-01T11:58:00Z",
+                  sha256: "fedcba0987654321",
+                  age_seconds: 120,
+                  refetched: true,
+                  content_changed: true,
+                },
+                "fplform_2026-27_gw7": {
+                  status: "live",
+                  fetched_at: "2026-10-01T11:59:00Z",
+                  sha256: "0011223344556677",
+                  age_seconds: 60,
+                  refetched: true,
+                  content_changed: false,
+                },
+              },
+            }
+          : null,
     }));
     const report: Prospective = {
       method: "Deadline-aligned scoring.",
@@ -296,6 +359,10 @@ describe("owned data views and tab strip", () => {
       createElement(ProspectiveView, props),
     );
     expect(collapsed).toContain("Showing latest 5 of 7");
+    expect(collapsed).toContain("<td>Official FPL</td>");
+    expect(collapsed).toContain("<td>FPL Joe</td>");
+    expect(collapsed).toContain("<td>Elevenify</td>");
+    expect(collapsed).toContain("<td>FPL Form (GW7)</td>");
     expect(collapsed).toContain("gw10.json");
     expect(collapsed).not.toContain("gw4.json");
 
@@ -382,6 +449,7 @@ describe("owned data views and tab strip", () => {
       },
     } as unknown as Bootstrap;
 
+    viewState.set("market.references.query", "Player 1");
     const tree = createElement(ReferenceView, {
       data,
       gw: 7,
@@ -391,12 +459,29 @@ describe("owned data views and tab strip", () => {
     });
     const html = renderToStaticMarkup(tree);
     expect(html).toContain('aria-label="Watch Player 1" aria-pressed="true"');
-    expect(html).toContain('aria-label="Watch Player 2" aria-pressed="false"');
     expect(html).toContain('fill="currentColor"');
+    expect(html).toContain('<th class="numeric">PRICE</th>');
+    expect(html).toContain('<td class="numeric">£7.5m</td>');
+    expect(html).toContain('aria-label="Clear search"');
 
     hooks.cursor = 0;
     const allNodes = walk(tree);
-    const playerBtn = allNodes.find(
+    const clearBtn = allNodes.find(
+      (n) => n.type === "button" && n.props["aria-label"] === "Clear search",
+    );
+    expect(clearBtn).toBeDefined();
+    clearBtn!.props.onClick();
+    expect(viewState.get("market.references.query")).toBe("");
+
+    hooks.cursor = 0;
+    const htmlAfterClear = renderToStaticMarkup(tree);
+    expect(htmlAfterClear).toContain(
+      'aria-label="Watch Player 2" aria-pressed="false"',
+    );
+    expect(htmlAfterClear).not.toContain('aria-label="Clear search"');
+
+    hooks.cursor = 0;
+    const playerBtn = walk(tree).find(
       (n) => n.type === "button" && n.props.className === "player-name-cell",
     );
     expect(playerBtn).toBeDefined();
@@ -404,7 +489,7 @@ describe("owned data views and tab strip", () => {
     expect(onDetail).toHaveBeenCalledWith(1, 9);
   });
 
-  it("DataRefreshSettings renders shortened status copy and orange alert text", async () => {
+  it("DataRefreshSettings renders shortened status copy and suppresses waiting text on initial error", async () => {
     const prevFetch = globalThis.fetch;
     const prevWindow = (globalThis as Record<string, unknown>).window;
     globalThis.fetch = vi.fn(() =>
@@ -418,13 +503,20 @@ describe("owned data views and tab strip", () => {
     try {
       hooks.effects = [];
       hooks.cursor = 0;
+      const loadingHtml = renderToStaticMarkup(
+        createElement(DataRefreshSettings),
+      );
+      expect(loadingHtml).toContain("Waiting for first check.");
+
+      hooks.effects = [];
+      hooks.cursor = 0;
       walk(createElement(DataRefreshSettings));
       const cleanups = hooks.effects.map((effect) => effect());
       await new Promise((resolve) => setTimeout(resolve, 0));
 
       hooks.cursor = 0;
       const html = renderToStaticMarkup(createElement(DataRefreshSettings));
-      expect(html).toContain("Waiting for first check.");
+      expect(html).not.toContain("Waiting for first check.");
       expect(html).toContain("Solio updates ~4h; requires running server.");
       expect(html).toContain('class="orange help-text" role="alert"');
       expect(html).toContain("Timeout");
@@ -532,8 +624,23 @@ describe("owned data views and tab strip", () => {
       const graphHtml = renderHtml();
       expect(graphHtml).not.toContain("\\n");
       expect(graphHtml).toContain("Player Full 1 · ARS\n");
+      expect(graphHtml).toContain('x1="64"');
+      expect(graphHtml).toContain('x="57"');
+      expect(graphHtml).toContain('transform="translate(13 170) rotate(-90)"');
+      expect(graphHtml).toContain(">936<");
+      expect(graphHtml).not.toContain(">936.0<");
       expect(graphHtml).toContain('text-anchor="end"');
       expect(graphHtml).toContain('y="48"');
+
+      // Select Goalkeeping group in Players, then switch to Teams: Goalkeeping tab is omitted and columns reset cleanly:
+      const gkTab = renderTree().find(
+        (n) =>
+          n.type === "button" &&
+          n.props.role === "tab" &&
+          n.props.children === "Goalkeeping",
+      );
+      expect(gkTab).toBeDefined();
+      gkTab!.props.onClick();
 
       // Switch to Teams entity and Maps tool via TabStrip buttons:
       const teamsTab = renderTree().find(
@@ -544,6 +651,10 @@ describe("owned data views and tab strip", () => {
       );
       expect(teamsTab).toBeDefined();
       teamsTab!.props.onClick();
+
+      const teamsHtml = renderHtml();
+      expect(teamsHtml).not.toContain(">Goalkeeping</button>");
+      expect(teamsHtml).toContain(">Played</button>");
 
       const mapsTab = renderTree().find(
         (n) =>

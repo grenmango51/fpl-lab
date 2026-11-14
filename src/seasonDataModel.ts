@@ -366,7 +366,12 @@ export function scatterStats(
   const domain = (values: number[]) => {
     const low = Math.min(0, ...values),
       high = Math.max(0, ...values);
-    return { min: low, max: low === high ? high + 1 : high };
+    if (low === high) return { min: low, max: high + 1 };
+    const pad = (high - low) * 0.04;
+    const min = values.every((v) => v >= 0)
+      ? Math.max(0, low - pad)
+      : low - pad;
+    return { min, max: high + pad };
   };
   return {
     points,

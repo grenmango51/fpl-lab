@@ -36,10 +36,6 @@ const modeItems = (["players", "teams"] as const).map((id) => ({
   id,
   label: id === "players" ? "Players" : "Teams",
 }));
-const groupItems = [...STATS_GROUPS, "Custom" as const].map((id) => ({
-  id,
-  label: id,
-}));
 const sourceTime = (source: Source) =>
   source.fetched_at
     ? new Date(source.fetched_at).toLocaleString("en-GB", {
@@ -48,6 +44,19 @@ const sourceTime = (source: Source) =>
         timeZone: "UTC",
       }) + " UTC"
     : "Extraction time unavailable";
+
+function axisTickDecimals(
+  metric: StatsMetric,
+  per90: boolean,
+  valuesMax: number,
+  span: number,
+): number {
+  const base = metric.decimals ?? (span > 0 && span < 4 ? 1 : 0);
+  if (per90 && metric.per90) {
+    return Math.max(base, span > 0 && span < 0.08 ? 3 : 2);
+  }
+  return valuesMax >= 100 && base <= 1 ? 0 : base;
+}
 
 function StatsScatter({
   rows,
@@ -76,10 +85,27 @@ function StatsScatter({
   const yMetric =
     metrics.find((metric) => metric.key === yKey) ?? metrics[1] ?? metrics[0];
   const plot = scatterStats(rows, xMetric, yMetric, per90);
+  const xLeft = 64;
+  const xRight = 470;
+  const xSpan = xRight - xLeft;
   const x = (value: number) =>
-    60 + (410 * (value - plot.x.min)) / (plot.x.max - plot.x.min);
+    xLeft + (xSpan * (value - plot.x.min)) / (plot.x.max - plot.x.min);
   const y = (value: number) =>
     300 - (260 * (value - plot.y.min)) / (plot.y.max - plot.y.min);
+  const xValuesMax = Math.max(0, ...plot.points.map((point) => point.x));
+  const yValuesMax = Math.max(0, ...plot.points.map((point) => point.y));
+  const xDecimals = axisTickDecimals(
+    xMetric,
+    per90,
+    xValuesMax,
+    plot.x.max - plot.x.min,
+  );
+  const yDecimals = axisTickDecimals(
+    yMetric,
+    per90,
+    yValuesMax,
+    plot.y.max - plot.y.min,
+  );
   return (
     <section className="season-data-side" aria-label="Season stats graph">
       <div className="season-data-axes">
@@ -119,32 +145,32 @@ function StatsScatter({
         {[0, 0.25, 0.5, 0.75, 1].map((step) => (
           <g key={step}>
             <line
-              x1="60"
-              x2="470"
+              x1={xLeft}
+              x2={xRight}
               y1={300 - step * 260}
               y2={300 - step * 260}
               className="season-data-grid"
             />
-            <text x="51" y={304 - step * 260} textAnchor="end">
+            <text x="57" y={304 - step * 260} textAnchor="end">
               {formatStat(
                 plot.y.min + step * (plot.y.max - plot.y.min),
-                { ...yMetric, decimals: 1 },
+                { ...yMetric, decimals: yDecimals },
                 false,
               )}
             </text>
-            <text x={60 + step * 410} y="321" textAnchor="middle">
+            <text x={xLeft + step * xSpan} y="321" textAnchor="middle">
               {formatStat(
                 plot.x.min + step * (plot.x.max - plot.x.min),
-                { ...xMetric, decimals: 1 },
+                { ...xMetric, decimals: xDecimals },
                 false,
               )}
             </text>
           </g>
         ))}
-        <text x="265" y="349" textAnchor="middle">
+        <text x={(xLeft + xRight) / 2} y="349" textAnchor="middle">
           {statLabel(xMetric, per90)}
         </text>
-        <text transform="translate(15 170) rotate(-90)" textAnchor="middle">
+        <text transform="translate(13 170) rotate(-90)" textAnchor="middle">
           {statLabel(yMetric, per90)}
         </text>
         {plot.points.map((point) => {
@@ -463,6 +489,12 @@ export function SeasonData({
   const detail = (id: number) => {
     if (knownIds.has(id)) onDetail(id);
   };
+  const groupItems = [
+    ...(mode === "teams"
+      ? STATS_GROUPS.filter((id) => id !== "Goalkeeping")
+      : STATS_GROUPS),
+    "Custom" as const,
+  ].map((id) => ({ id, label: id }));
   const setModeAndDefaults = (value: StatsMode) => {
     setMode(value);
     setPage(0);
@@ -471,7 +503,30 @@ export function SeasonData({
       direction: "desc",
     });
     setActiveView("");
-    setGroup("Custom");
+    if (value === "teams" && group === "Goalkeeping") {
+      setGroup("All");
+      setColumns((current) => ({
+        ...current,
+        teams: [...DEFAULT_TEAM_COLUMNS],
+      }));
+    } else if (group !== "Custom") {
+      const targetMetrics = value === "players" ? PLAYER_METRICS : TEAM_METRICS;
+      setColumns((current) => ({
+        ...current,
+        [value]: targetMetrics
+          .filter((metric) => group === "All" || metric.group === group)
+          .map((metric) => metric.key),
+      }));
+    } else {
+      setColumns((current) => ({
+        ...current,
+        [value]: current[value].length
+          ? current[value]
+          : value === "players"
+            ? [...DEFAULT_PLAYER_COLUMNS]
+            : [...DEFAULT_TEAM_COLUMNS],
+      }));
+    }
   };
   const changeColumns = (next: string[]) => {
     setColumns((current) => ({ ...current, [mode]: next }));

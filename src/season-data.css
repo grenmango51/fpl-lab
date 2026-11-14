@@ -87,8 +87,11 @@
 }
 .season-data-axes {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
+}
+.season-data-axes > label {
+  min-width: 0;
 }
 .season-data-scatter {
   display: block;
@@ -122,6 +125,13 @@
   stroke-width: 2;
   outline: none;
 }
+.season-data-scatter circle:focus-visible {
+  fill: var(--green);
+  fill-opacity: 1;
+  stroke: var(--orange);
+  stroke-width: 3px;
+  outline: none;
+}
 .season-data-scatter .season-data-point-label {
   fill: var(--soft);
   font-size: 11px;
@@ -150,7 +160,7 @@
   border: 1px solid var(--line);
   border-radius: 9px;
 }
-.season-data-table {
+.season-data .season-data-table {
   font-size: 12px;
   width: 100%;
   border-collapse: separate;
@@ -169,6 +179,15 @@
   font-weight: inherit;
   white-space: nowrap;
   padding: 0;
+}
+.season-data-table th:nth-child(n + 3),
+.season-data-table td:nth-child(n + 3) {
+  text-align: right;
+}
+.season-data-table th:nth-child(n + 3) > button {
+  justify-content: flex-end;
+  width: 100%;
+  margin-left: auto;
 }
 .season-data-table td {
   white-space: nowrap;
@@ -320,6 +339,13 @@
 }
 .season-data-compare th:not(:first-child) {
   min-width: 120px;
+}
+.season-data-compare th:nth-child(n + 2),
+.season-data-compare td:nth-child(n + 2) {
+  text-align: right;
+}
+.season-data-compare th:nth-child(n + 2) .season-data-compare-name {
+  justify-content: flex-end;
 }
 .season-data-compare td {
   white-space: nowrap;

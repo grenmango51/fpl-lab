@@ -67,6 +67,11 @@
   min-height: 36px;
   font-size: 12px;
 }
+.solio-detail-panel .button.small {
+  min-height: 30px;
+  padding: 5px 10px;
+  font-size: 11px;
+}
 .solio-detail-panel .icon-button {
   min-width: 32px;
   min-height: 32px;
@@ -286,19 +291,20 @@
 .fixture-table tbody tr:hover td:first-child {
   background: #152334;
 }
-.team-projection-table th:first-child,
-.fixture-table th:first-child {
-  z-index: 4;
-  background: #132034;
-}
 .fixture-scroll {
   max-height: calc(100dvh - 255px);
 }
+.team-projection-table th,
 .fixture-table th {
   position: sticky;
   top: 0;
   background: #132034;
   z-index: 3;
+}
+.team-projection-table th:first-child,
+.fixture-table th:first-child {
+  z-index: 5;
+  background: #132034;
 }
 .fixture-chip {
   min-height: 48px;
@@ -527,11 +533,11 @@
 .reference-table th:nth-child(1) {
   position: sticky;
   left: 0;
-  padding-left: 4px;
-  padding-right: 4px;
-  width: 44px;
-  min-width: 44px;
-  max-width: 44px;
+  padding-left: 5px;
+  padding-right: 5px;
+  width: 46px;
+  min-width: 46px;
+  max-width: 46px;
   background: #0b1626;
   z-index: 3;
 }
@@ -540,16 +546,41 @@
 .reference-table td:nth-child(2),
 .reference-table th:nth-child(2) {
   position: sticky;
-  left: 44px;
-  min-width: 155px;
+  left: 46px;
+  min-width: 130px;
+  max-width: 160px;
   background: #0b1626;
   z-index: 3;
   box-shadow: 3px 0 8px #03071266;
+}
+.price-table .player-name-cell,
+.reference-table .player-name-cell {
+  min-width: 0;
+  max-width: 100%;
+  width: 100%;
+}
+.price-table .player-name-cell > span,
+.reference-table .player-name-cell > span {
+  min-width: 0;
+  flex: 1;
+}
+.price-table .player-name-cell b,
+.reference-table .player-name-cell b {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .price-table th:nth-child(-n + 2),
 .reference-table th:nth-child(-n + 2) {
   z-index: 4;
   background: #132034;
+}
+.price-table th.numeric,
+.price-table td.numeric,
+.reference-table th.numeric,
+.reference-table td.numeric {
+  text-align: right;
 }
 .price-table tbody tr:hover td:nth-child(-n + 2),
 .reference-table tbody tr:hover td:nth-child(-n + 2) {
@@ -733,6 +764,13 @@
   }
   .fixture-scroll {
     max-height: 520px;
+  }
+  .price-table td:nth-child(2),
+  .price-table th:nth-child(2),
+  .reference-table td:nth-child(2),
+  .reference-table th:nth-child(2) {
+    min-width: 112px;
+    max-width: 128px;
   }
   .settings-body {
     display: block;

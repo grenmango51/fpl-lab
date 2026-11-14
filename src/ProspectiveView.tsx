@@ -3,6 +3,30 @@ import { Clock3, Info } from "lucide-react";
 import { fmt } from "./lib";
 import type { Bootstrap, Prospective } from "./types";
 
+const SOURCE_LABELS: Record<string, string> = {
+  fpl_bootstrap: "Official FPL",
+  fpl_fixtures: "Official FPL fixtures",
+  fpljoe: "FPL Joe",
+  elevenify_sheet: "Elevenify",
+  elevenify_player_baselines: "Elevenify baselines",
+  elevenify_fast_fantasy: "Elevenify shortlist",
+  elevenify_next_gw_attack: "Elevenify next-GW attack",
+  elevenify_three_gw_goals: "Elevenify 3-GW goals",
+  elevenify_three_gw_assists: "Elevenify 3-GW assists",
+  solio_public: "Solio",
+  solio_authenticated: "Solio (planner)",
+};
+
+function formatSourceKey(key: string): string {
+  if (key in SOURCE_LABELS) return SOURCE_LABELS[key];
+  const formMatch = /^fplform_.+_gw(\d+)$/i.exec(key);
+  if (formMatch) return `FPL Form (GW${formMatch[1]})`;
+  if (/^fplform/i.test(key)) return "FPL Form";
+  const archiveMatch = /^archive_(.+)_gws$/i.exec(key);
+  if (archiveMatch) return `Archive (${archiveMatch[1]})`;
+  return key.replaceAll("_", " ");
+}
+
 export function ProspectiveView({
   data,
   report,
@@ -111,7 +135,7 @@ export function ProspectiveView({
                             const source = receipt.sources[key];
                             return (
                               <tr key={key}>
-                                <td>{key.replaceAll("_", " ")}</td>
+                                <td>{formatSourceKey(key)}</td>
                                 <td
                                   className={
                                     source?.status === "stale" || !source

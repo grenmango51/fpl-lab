@@ -1,3 +1,14 @@
+.fixture-explorer {
+  container-type: inline-size;
+  min-width: 0;
+}
+.fixture-scenario-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+}
 .fixture-controls {
   display: flex;
   flex-wrap: wrap;
@@ -12,7 +23,8 @@
   color: #91a4bf;
   font-size: 12px;
 }
-.fixture-controls select {
+.fixture-controls select,
+.fixture-controls > .button {
   min-height: 36px;
   font-size: 12px;
 }
@@ -25,18 +37,25 @@
   cursor: pointer;
   list-style: none;
   display: flex;
-  gap: 14px;
+  gap: 10px;
   justify-content: space-between;
   align-items: center;
-  padding: 10px 12px;
+  padding: 8px 11px;
   border: 1px solid #293b54;
   border-radius: 5px;
   background: #101d30;
   min-height: 36px;
 }
+.fixture-filter > summary::-webkit-details-marker {
+  display: none;
+}
 .fixture-filter > summary::after {
   content: "⌄";
   color: #93a6c0;
+}
+.fixture-filter.is-active > summary {
+  border-color: #6b4b3e;
+  color: #ffcab0;
 }
 .fixture-filter[open] > summary {
   border-color: #b46848;
@@ -44,10 +63,15 @@
 .fixture-filter-body {
   position: absolute;
   left: 0;
+  right: auto;
   top: calc(100% + 5px);
   z-index: 12;
   width: 330px;
-  max-width: calc(100vw - 70px);
+  max-width: min(330px, calc(100cqw - 16px));
+  max-height: min(380px, calc(100dvh - 200px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
   padding: 12px;
   border: 1px solid #34445d;
   border-radius: 6px;
@@ -73,8 +97,6 @@
 .fixture-week-choices {
   display: grid;
   gap: 4px;
-  max-height: 300px;
-  overflow: auto;
 }
 .fixture-team-choices {
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -125,6 +147,10 @@
   white-space: nowrap;
   text-align: left;
 }
+.fixture-table th:not(:first-child) .fixture-sort {
+  justify-content: center;
+  width: 100%;
+}
 .fixture-table .fixture-total {
   font-weight: 600;
   font-variant-numeric: tabular-nums;
@@ -137,17 +163,25 @@
   width: 84px;
   height: 34px;
   display: block;
+  margin-inline: auto;
   fill: #ff9c70;
 }
 .fixture-trend-line {
   fill: none;
   stroke: #ff9c70;
-  stroke-width: 1.4;
+  stroke-width: 1.5;
 }
 .fixture-trend-baseline {
   fill: none;
-  stroke: #37445b;
-  stroke-width: 0.5;
+  stroke: #5d7597;
+  stroke-width: 0.9;
+  stroke-dasharray: 2 2;
+}
+.fixture-explorer .club-name-short {
+  display: none;
+}
+.fixture-explorer .fixture-table th {
+  color: #91a4bf;
 }
 .fixture-explorer .fixture-table th,
 .fixture-explorer .fixture-table td {
@@ -161,11 +195,21 @@
   padding: 4px 6px;
   margin: 0;
 }
+.fixture-explorer .fixture-chip + .fixture-chip {
+  margin-top: 4px;
+}
 .fixture-explorer .fixture-chip b {
   font-size: 11px;
 }
 .fixture-explorer .fixture-chip small {
   margin-top: 1px;
+  opacity: 0.92;
+}
+details.compact-details {
+  display: block;
+}
+.fixture-detail .compact-details p + p {
+  margin-top: 6px;
 }
 .fixture-explorer > .view-heading {
   align-items: flex-start;
@@ -173,38 +217,74 @@
 .fixture-explorer > .view-heading .tab-strip {
   max-width: 100%;
 }
-@container (max-width:500px) {
+@container (max-width: 680px) {
   .fixture-controls {
     position: relative;
   }
+  .fixture-week-filter {
+    position: static;
+  }
+  .fixture-week-filter .fixture-filter-body {
+    left: auto;
+    right: 0;
+  }
+}
+@container (max-width: 520px) {
+  .fixture-controls {
+    position: relative;
+    align-items: flex-end;
+  }
   .fixture-filter {
     position: static;
+    min-width: 95px;
   }
   .fixture-filter .fixture-filter-body {
     left: 0;
     right: auto;
-    max-width: 100%;
-    max-height: calc(100dvh - 420px);
-    overflow: auto;
+    width: 100%;
+    max-width: min(330px, calc(100cqw - 16px));
   }
-  .fixture-explorer .club-cell {
-    min-width: 115px;
-  }
-}
-@media (max-width: 700px) {
   .fixture-explorer .fixture-chip {
     min-height: 44px;
   }
-  .fixture-controls {
-    align-items: flex-end;
-  }
-  .fixture-filter-body {
-    width: 285px;
-  }
-  .fixture-filter {
-    min-width: 95px;
-  }
   .fixture-team-choices {
     grid-template-columns: minmax(0, 1fr);
+  }
+}
+@container (max-width: 500px) {
+  .fixture-explorer .fixture-table th:first-child,
+  .fixture-explorer .fixture-table td:first-child {
+    min-width: 64px;
+    max-width: 76px;
+    padding: 4px 6px;
+  }
+  .fixture-explorer .club-cell {
+    min-width: 0;
+    gap: 5px;
+  }
+  .fixture-explorer .club-cell .club-badge {
+    width: 18px;
+    height: 18px;
+  }
+  .fixture-explorer .club-name-full {
+    display: none;
+  }
+  .fixture-explorer .club-name-short {
+    display: inline;
+  }
+  .fixture-explorer .fixture-trend-cell {
+    min-width: 56px;
+  }
+  .fixture-explorer .fixture-trend {
+    width: 52px;
+    height: 28px;
+  }
+  .fixture-explorer .fixture-table th,
+  .fixture-explorer .fixture-table td {
+    padding: 4px 3px;
+  }
+  .fixture-explorer .fixture-chip {
+    min-width: 58px;
+    padding: 4px;
   }
 }

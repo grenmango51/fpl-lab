@@ -49,7 +49,7 @@
 }
 .ts-plot svg {
   width: 100%;
-  height: 300px;
+  height: auto;
   display: block;
   overflow: visible;
 }
@@ -123,6 +123,7 @@
   stroke: white;
 }
 .ts-editor {
+  margin-top: 10px;
   border: 1px solid #2d3c53;
   border-radius: 7px;
   background: #101c2e;
@@ -218,8 +219,20 @@
 .ts-notice {
   display: block;
   min-height: 15px;
+  margin-top: 8px;
   color: #ffc09e;
   font-size: 11px;
+}
+.ts-notice:empty {
+  display: none;
+}
+.team-strengths details.ts-details {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid #243349;
+}
+.team-strengths details.ts-details p + p {
+  margin-top: 6px;
 }
 @container (max-width: 400px) {
   .ts-heading {
@@ -234,9 +247,6 @@
   .ts-search input {
     max-width: none;
     width: 100%;
-  }
-  .ts-plot svg {
-    height: 270px;
   }
   .ts-point text {
     font-size: 12px;

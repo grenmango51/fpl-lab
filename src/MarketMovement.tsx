@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { TabStrip } from "./TabStrip";
 import { useViewState } from "./useViewState";
 import "./MarketMovement.css";
 
@@ -51,8 +52,6 @@ const date = (at: string | null) =>
         minute: "2-digit",
       })
     : "Unknown";
-const provider = (source: string) =>
-  source === "fpljoe" ? "FPL Joe" : "Elevenify sheet";
 const value = (n: number | null, cs: boolean) =>
   n === null ? "—" : `${n.toFixed(cs ? 1 : 2)}${cs ? "%" : ""}`;
 
@@ -61,9 +60,12 @@ function HistoryGraph({ rows, cs }: { rows: Series[]; cs: boolean }) {
   const times = points.map((p) => new Date(p.extracted_at).getTime());
   const first = Math.min(...times),
     last = Math.max(...times);
+  const singleTimestamp = first === last;
   const max = cs ? 100 : Math.max(1, ...points.map((p) => p.value ?? 0)) * 1.1;
   const x = (at: string) =>
-    48 + ((new Date(at).getTime() - first) / Math.max(1, last - first)) * 620;
+    singleTimestamp
+      ? 358
+      : 48 + ((new Date(at).getTime() - first) / (last - first)) * 620;
   const y = (n: number) => 178 - (n / max) * 150;
   const colors = ["#ff764d", "#61ba9a"];
   return (
@@ -112,8 +114,7 @@ function HistoryGraph({ rows, cs }: { rows: Series[]; cs: boolean }) {
                       fill={colors[i % 2]}
                     >
                       <title>
-                        {row.team} · {date(p.extracted_at)} ·{" "}
-                        {value(p.value, cs)}
+                        {`${row.team} · ${date(p.extracted_at)} · ${value(p.value, cs)}`}
                       </title>
                     </circle>
                   )}
@@ -122,12 +123,18 @@ function HistoryGraph({ rows, cs }: { rows: Series[]; cs: boolean }) {
             })}
           </g>
         ))}
-        <text x="48" y="205">
+        <text
+          x={singleTimestamp ? "358" : "48"}
+          y="205"
+          textAnchor={singleTimestamp ? "middle" : undefined}
+        >
           {date(Number.isFinite(first) ? new Date(first).toISOString() : null)}
         </text>
-        <text x="668" y="205" textAnchor="end">
-          {date(Number.isFinite(last) ? new Date(last).toISOString() : null)}
-        </text>
+        {!singleTimestamp && (
+          <text x="668" y="205" textAnchor="end">
+            {date(Number.isFinite(last) ? new Date(last).toISOString() : null)}
+          </text>
+        )}
       </svg>
       <div className="movement-legend">
         {rows.map((row, i) => (
@@ -137,10 +144,7 @@ function HistoryGraph({ rows, cs }: { rows: Series[]; cs: boolean }) {
           </span>
         ))}
       </div>
-      <p>
-        Dots are archived observations. Gaps remain missing; lines only join
-        adjacent observations.
-      </p>
+      <p>Archived snapshots; gaps are not interpolated.</p>
     </div>
   );
 }
@@ -308,7 +312,7 @@ export function MarketMovement({ gw }: { gw: number }) {
             {week &&
             history &&
             !history.coverage.gameweeks.includes(Number(week)) ? (
-              <option value={week}>GW{week} ? no archives</option>
+              <option value={week}>GW{week} · no archives</option>
             ) : null}
             {history?.coverage.gameweeks.map((w) => (
               <option key={w} value={w}>
@@ -356,34 +360,46 @@ export function MarketMovement({ gw }: { gw: number }) {
         </label>
       </div>
       <div className="movement-actions">
-        <div className="segmented">
-          <button
-            className={!cs ? "active" : ""}
-            onClick={() => setMetric("goals")}
-          >
-            Goals
-          </button>
-          <button
-            className={cs ? "active" : ""}
-            onClick={() => setMetric("clean_sheet_probability")}
-          >
-            Clean sheets
-          </button>
-        </div>
-        <button disabled={busy} onClick={capture}>
+        <TabStrip
+          label="Movement metric"
+          value={cs ? "clean_sheet_probability" : "goals"}
+          onChange={setMetric}
+          items={[
+            { id: "goals", label: "Goals" },
+            { id: "clean_sheet_probability", label: "Clean sheets" },
+          ]}
+        />
+        <button type="button" disabled={busy} onClick={capture}>
           {busy ? "Saving…" : "Save cached inputs"}
         </button>
-        <button disabled={!rows.length} onClick={() => download("csv")}>
+        <button
+          type="button"
+          disabled={!rows.length}
+          onClick={() => download("csv")}
+        >
           CSV
         </button>
-        <button disabled={!rows.length} onClick={() => download("json")}>
+        <button
+          type="button"
+          disabled={!rows.length}
+          onClick={() => download("json")}
+        >
           JSON
         </button>
       </div>
       {error && (
-        <p role="alert" className="movement-error">
-          {error}
-        </p>
+        <div className="movement-error-row">
+          <p role="alert" className="movement-error">
+            {error}
+          </p>
+          <button
+            type="button"
+            className="button small"
+            onClick={() => setRevision((n) => n + 1)}
+          >
+            Retry
+          </button>
+        </div>
       )}
       {!history && !error && <p>Loading archives…</p>}
       {history && (
@@ -440,24 +456,37 @@ export function MarketMovement({ gw }: { gw: number }) {
                             ? "selected-fixture"
                             : ""
                         }
+                        onClick={() => setFixture(String(row.fixture_id))}
                       >
                         <td>
                           <button
+                            type="button"
                             className="movement-fixture-link"
-                            onClick={() => setFixture(String(row.fixture_id))}
+                            onClick={(event) => {
+                              event?.stopPropagation?.();
+                              setFixture(String(row.fixture_id));
+                            }}
                             aria-label={`Graph GW${row.gameweek} ${row.home} v ${row.away}`}
                           >
                             GW{row.gameweek} · {row.home} v {row.away}
                           </button>
                         </td>
                         <td>{row.team}</td>
-                        <td>{value(row.latest.value, cs)}</td>
-                        <td>{value(row.previous?.value ?? null, cs)}</td>
+                        <td className="numeric">
+                          {value(row.latest.value, cs)}
+                        </td>
+                        <td className="numeric">
+                          {value(row.previous?.value ?? null, cs)}
+                        </td>
                         <td
                           className={
-                            row.delta !== null && row.delta !== 0
-                              ? "movement-changed"
-                              : ""
+                            row.delta === null
+                              ? "numeric muted"
+                              : row.delta > 0
+                                ? "numeric green"
+                                : row.delta < 0
+                                  ? "numeric red"
+                                  : "numeric"
                           }
                         >
                           {row.delta === null
@@ -482,18 +511,12 @@ export function MarketMovement({ gw }: { gw: number }) {
               No archived observations in this window.
             </p>
           )}
-          <details>
+          <details className="compact-details">
             <summary>Coverage & source times</summary>
             <p>
-              Changes compare the latest and previous available observation
-              inside this window, for the same fixture, source and metric. CS
-              changes use percentage points. Extraction is separate from
-              provider publication.
-            </p>
-            <p>
-              Save preserves existing cached inputs; refresh public sources
-              elsewhere to acquire new observations. Model scenarios never enter
-              this history.
+              Compares latest vs previous archived value in window per fixture,
+              source and metric (CS in pp). Extraction and provider times stay
+              separate; model scenarios never enter history.
             </p>
             {history.notes.map((note) => (
               <p key={note}>{note}</p>

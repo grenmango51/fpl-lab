@@ -472,7 +472,7 @@
   white-space: nowrap;
 }
 .player-window .player-detail-top .eyebrow {
-  font-size: 10px;
+  font-size: 9px;
 }
 .player-dialog-actions {
   gap: 6px;
@@ -700,7 +700,7 @@
   border: 1px solid #ff6a3d44;
 }
 .transfer-list .unavailable-transfer td {
-  color: #72849d;
+  color: #8da2bf;
 }
 .unavailable-transfer .player-name-cell {
   opacity: 0.65;
@@ -1088,7 +1088,7 @@
     font-size: 19px;
   }
   .player-window .player-detail-top .eyebrow {
-    font-size: 8px;
+    font-size: 9px;
     letter-spacing: 0;
   }
   .player-dialog-actions .button {
@@ -1136,7 +1136,7 @@
     white-space: nowrap;
   }
   .transfer-list .player-name-cell small {
-    font-size: 9px;
+    font-size: 10px;
   }
   .transfer-list .club-badge {
     width: 19px;
@@ -1257,7 +1257,7 @@
   font-size: 19px;
 }
 .floating-player-window .player-detail-top .eyebrow {
-  font-size: 8px;
+  font-size: 9px;
   letter-spacing: 0.3px;
 }
 .floating-player-window .player-dialog-actions {

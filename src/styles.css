@@ -603,7 +603,7 @@ input[type="checkbox"] {
   align-items: center;
   color: #91a0b4;
   letter-spacing: 0;
-  font-size: 9px;
+  font-size: 11px;
 }
 .planner-heading {
   display: flex;
@@ -1050,8 +1050,8 @@ input[type="checkbox"] {
   letter-spacing: 1px;
 }
 .bench-label > span:last-child {
-  font-size: 7px;
-  color: #5b718b;
+  font-size: 9px;
+  color: #8da2bf;
   letter-spacing: 0;
 }
 .bench-row {
@@ -1153,7 +1153,7 @@ input[type="checkbox"] {
   border: 1px solid #304055;
   padding: 3px 6px;
   border-radius: 4px;
-  font-size: 8px;
+  font-size: 10px;
   white-space: nowrap;
 }
 .captain-highlight {
@@ -1359,7 +1359,7 @@ input[type="checkbox"] {
   display: flex;
   align-items: center;
   gap: 5px;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 550;
   white-space: nowrap;
 }
@@ -1367,7 +1367,7 @@ input[type="checkbox"] {
   display: flex;
   gap: 4px;
   align-items: center;
-  font-size: 7px;
+  font-size: 10px;
   color: #8fa4bf;
   margin-top: 3px;
 }
@@ -1997,7 +1997,7 @@ input[type="checkbox"] {
   line-height: 1.4;
 }
 .fixture-chip b > span {
-  font-size: 7px;
+  font-size: 9px;
   opacity: 0.8;
 }
 .fixture-chip.fdr-5 b > span {
@@ -3059,7 +3059,7 @@ input[type="checkbox"] {
   font-size: 10px;
 }
 .fixture-source-detail b {
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 500;
 }
 .fixture-source-detail small {
@@ -3584,7 +3584,7 @@ input[type="checkbox"] {
     gap: 10px;
   }
   .page-context > div {
-    font-size: 8px;
+    font-size: 11px;
     text-align: right;
   }
   .page-context > div > svg {
@@ -3979,7 +3979,7 @@ input[type="checkbox"] {
     font-size: 21px;
   }
   .modal-header p {
-    font-size: 9px;
+    font-size: 11px;
     line-height: 1.7;
   }
   .modal-body {
@@ -4822,7 +4822,7 @@ input[type="checkbox"] {
     margin-bottom: 10px;
   }
   .page-context > div {
-    font-size: 9px;
+    font-size: 11px;
   }
   .planner-heading {
     flex-direction: row;

@@ -120,6 +120,8 @@ npm run build
 python tools/verify_forecast_coverage.py
 ```
 
+The App saved-plan regressions use real in-process FastAPI receipts without starting a server. `npm test` uses `.venv` when present; set `FPL_TEST_PYTHON` to use another Python environment with the backend dependencies installed.
+
 The checks cover squad legality, scoring, sale rounding, transfer hits, FT caps, Free Hit restoration, weekly constraints, stat scenarios, chip placement, saved-state recovery, source blending and strictly pre-deadline evaluation. The separate coverage script checks every current player in every remaining GW, fixture membership, component totals, blank weeks and provenance against the running API; it writes an ignored report under `data/`.
 
 Research and build plan: [docs/PLAN.md](docs/PLAN.md). Model derivation and limits: [docs/MODEL.md](docs/MODEL.md). Provider access findings: [docs/PROVIDER_ACCESS.md](docs/PROVIDER_ACCESS.md). Current handover and verification: [docs/STATUS.md](docs/STATUS.md).

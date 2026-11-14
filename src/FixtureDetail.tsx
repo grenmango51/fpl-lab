@@ -24,13 +24,16 @@ export function FixtureDetail({
       (row) => row.team === team && row.position_id === 1 && row.gw[weekKey],
     ) ?? data.players.find((row) => row.team === team && row.gw[weekKey]);
   const forecast = player?.gw[weekKey];
-  const date = (value?: string | null, fallback = "Unknown") =>
-    value
-      ? new Date(value).toLocaleString("en-GB", {
+  const date = (value?: string | null, fallback = "Unknown") => {
+    if (!value) return fallback;
+    const parsed = new Date(value);
+    return Number.isFinite(parsed.getTime())
+      ? parsed.toLocaleString("en-GB", {
           dateStyle: "medium",
           timeStyle: "short",
         })
       : fallback;
+  };
   return (
     <Modal title={`${club.name} · GW${effectiveGW}`} onClose={onClose}>
       <div className="modal-body fixture-detail">
@@ -111,7 +114,9 @@ export function FixtureDetail({
                     <b>{fmt(fixture.team_goals, 2)}</b>
                   </span>
                   <span>
-                    <small>{opponent?.short_name} goals</small>
+                    <small>
+                      {opponent?.short_name ?? fixture.opponent} goals
+                    </small>
                     <b>{fmt(fixture.conceded, 2)}</b>
                   </span>
                   <span>
@@ -119,7 +124,7 @@ export function FixtureDetail({
                     <b>{fmt(cs * 100, 1)}%</b>
                   </span>
                   <span>
-                    <small>{opponent?.short_name} CS</small>
+                    <small>{opponent?.short_name ?? fixture.opponent} CS</small>
                     <b>
                       {otherCS === undefined
                         ? "—"

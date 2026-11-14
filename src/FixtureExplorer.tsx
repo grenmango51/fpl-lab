@@ -40,7 +40,7 @@ export function fixtureTrendScale(
   const low = Math.min(0, ...values);
   return {
     low,
-    high: Math.max(low + minSpan, ...values),
+    high: Math.max(0, low + minSpan, ...values),
     baseline: 0,
   };
 }
@@ -105,7 +105,14 @@ export function FixtureExplorer({
       }
     };
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpenFilter(null);
+      if (event.key !== "Escape") return;
+      const activeDetails =
+        openFilter === "teams"
+          ? teamsFilterRef.current
+          : weeksFilterRef.current;
+      event.stopPropagation?.();
+      setOpenFilter(null);
+      activeDetails?.querySelector?.<HTMLElement>("summary")?.focus?.();
     };
     document.addEventListener("pointerdown", onPointerDown);
     document.addEventListener("keydown", onKeyDown);
@@ -295,6 +302,16 @@ export function FixtureExplorer({
           ref={teamsFilterRef}
           className={`fixture-filter${!allTeams ? " is-active" : ""}`}
           open={openFilter === "teams"}
+          onKeyDown={(event) => {
+            if (event.key === "Escape" && openFilter === "teams") {
+              event.preventDefault();
+              event.stopPropagation();
+              setOpenFilter(null);
+              event.currentTarget
+                .querySelector<HTMLElement>("summary")
+                ?.focus();
+            }
+          }}
         >
           <summary
             onClick={(event) => {
@@ -335,6 +352,16 @@ export function FixtureExplorer({
           ref={weeksFilterRef}
           className={`fixture-filter fixture-week-filter${selectedWeeks !== null ? " is-active" : ""}`}
           open={openFilter === "weeks"}
+          onKeyDown={(event) => {
+            if (event.key === "Escape" && openFilter === "weeks") {
+              event.preventDefault();
+              event.stopPropagation();
+              setOpenFilter(null);
+              event.currentTarget
+                .querySelector<HTMLElement>("summary")
+                ?.focus();
+            }
+          }}
         >
           <summary
             onClick={(event) => {
@@ -593,7 +620,7 @@ export function FixtureExplorer({
       ) : (
         <p className="inline-empty">Select at least one club and gameweek.</p>
       )}
-      <details className="compact-details source-caption">
+      <details className="compact-details">
         <summary>Sources & totals</summary>
         <p>
           Official FDR. Goals and CS use FPL Joe, Elevenify or labelled

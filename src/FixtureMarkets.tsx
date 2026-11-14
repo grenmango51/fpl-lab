@@ -29,6 +29,14 @@ export function FixtureMarkets({
   const remaining = data.gameweeks.filter((week) => week >= gw);
   const effectiveHorizon = Math.min(horizon, remaining.length);
   const weeks = remaining.slice(0, effectiveHorizon);
+  const clubForecast = (clubId: number, week: number) => {
+    const key = String(week);
+    return (
+      data.players.find(
+        (p) => p.team === clubId && p.position_id === 1 && p.gw[key],
+      ) ?? data.players.find((p) => p.team === clubId && p.gw[key])
+    )?.gw[key];
+  };
   const rows = useMemo(() => {
     type Side = { team: number; fixture: Fixture; cs: number };
     const mapped = new Map<
@@ -37,12 +45,7 @@ export function FixtureMarkets({
     >();
     for (const club of data.teams) {
       for (const week of weeks) {
-        const key = String(week);
-        const player =
-          data.players.find(
-            (p) => p.team === club.id && p.position_id === 1 && p.gw[key],
-          ) ?? data.players.find((p) => p.team === club.id && p.gw[key]);
-        const forecast = player?.gw[key];
+        const forecast = clubForecast(club.id, week);
         for (const [index, fixture] of (forecast?.fixtures ?? []).entries()) {
           const rowKey = `${week}-${fixture.id}`;
           const row = mapped.get(rowKey) ?? { gw: week, id: fixture.id };
@@ -159,6 +162,7 @@ export function FixtureMarkets({
           </p>
           <LineChart
             height={220}
+            colors={["#ff764d", "#61ba9a", "#7c94cb", "#e0b15b"]}
             yLabel={
               metric === "goals" ? "Expected team goals" : "Mean clean-sheet %"
             }
@@ -166,6 +170,7 @@ export function FixtureMarkets({
             series={chartTeams.map((id) => ({
               name: lookup.get(id)?.short_name ?? String(id),
               values: weeks.map((week) => {
+                if (!clubForecast(id, week)) return null;
                 const sides = rows
                   .filter((row) => row.gw === week)
                   .flatMap((row) => [row.home, row.away])
@@ -177,12 +182,10 @@ export function FixtureMarkets({
                       (sum, side) => sum + (side?.fixture.team_goals ?? 0),
                       0,
                     )
-                  : sides.length
-                    ? sides.reduce(
-                        (sum, side) => sum + (side?.cs ?? 0) * 100,
-                        0,
-                      ) / sides.length
-                    : 0;
+                  : sides.reduce(
+                      (sum, side) => sum + (side?.cs ?? 0) * 100,
+                      0,
+                    ) / sides.length;
               }),
             }))}
           />

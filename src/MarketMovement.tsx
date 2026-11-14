@@ -60,9 +60,12 @@ function HistoryGraph({ rows, cs }: { rows: Series[]; cs: boolean }) {
   const times = points.map((p) => new Date(p.extracted_at).getTime());
   const first = Math.min(...times),
     last = Math.max(...times);
+  const singleTimestamp = first === last;
   const max = cs ? 100 : Math.max(1, ...points.map((p) => p.value ?? 0)) * 1.1;
   const x = (at: string) =>
-    48 + ((new Date(at).getTime() - first) / Math.max(1, last - first)) * 620;
+    singleTimestamp
+      ? 358
+      : 48 + ((new Date(at).getTime() - first) / (last - first)) * 620;
   const y = (n: number) => 178 - (n / max) * 150;
   const colors = ["#ff764d", "#61ba9a"];
   return (
@@ -111,8 +114,7 @@ function HistoryGraph({ rows, cs }: { rows: Series[]; cs: boolean }) {
                       fill={colors[i % 2]}
                     >
                       <title>
-                        {row.team} · {date(p.extracted_at)} ·{" "}
-                        {value(p.value, cs)}
+                        {`${row.team} · ${date(p.extracted_at)} · ${value(p.value, cs)}`}
                       </title>
                     </circle>
                   )}
@@ -121,12 +123,18 @@ function HistoryGraph({ rows, cs }: { rows: Series[]; cs: boolean }) {
             })}
           </g>
         ))}
-        <text x="48" y="205">
+        <text
+          x={singleTimestamp ? "358" : "48"}
+          y="205"
+          textAnchor={singleTimestamp ? "middle" : undefined}
+        >
           {date(Number.isFinite(first) ? new Date(first).toISOString() : null)}
         </text>
-        <text x="668" y="205" textAnchor="end">
-          {date(Number.isFinite(last) ? new Date(last).toISOString() : null)}
-        </text>
+        {!singleTimestamp && (
+          <text x="668" y="205" textAnchor="end">
+            {date(Number.isFinite(last) ? new Date(last).toISOString() : null)}
+          </text>
+        )}
       </svg>
       <div className="movement-legend">
         {rows.map((row, i) => (
@@ -439,12 +447,16 @@ export function MarketMovement({ gw }: { gw: number }) {
                             ? "selected-fixture"
                             : ""
                         }
+                        onClick={() => setFixture(String(row.fixture_id))}
                       >
                         <td>
                           <button
                             type="button"
                             className="movement-fixture-link"
-                            onClick={() => setFixture(String(row.fixture_id))}
+                            onClick={(event) => {
+                              event?.stopPropagation?.();
+                              setFixture(String(row.fixture_id));
+                            }}
                             aria-label={`Graph GW${row.gameweek} ${row.home} v ${row.away}`}
                           >
                             GW{row.gameweek} · {row.home} v {row.away}

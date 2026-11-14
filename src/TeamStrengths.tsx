@@ -393,8 +393,7 @@ export function TeamStrengths({
               }}
             >
               <title>
-                {row.name}: {base.derivedGoals!.toFixed(2)} goals / fixture;{" "}
-                {base.derivedConceded!.toFixed(2)} conceded / fixture
+                {`${row.name}: ${base.derivedGoals!.toFixed(2)} goals / fixture; ${base.derivedConceded!.toFixed(2)} conceded / fixture`}
               </title>
               <line
                 x1={points[i].x}

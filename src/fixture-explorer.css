@@ -63,6 +63,7 @@
 .fixture-filter-body {
   position: absolute;
   left: 0;
+  right: auto;
   top: calc(100% + 5px);
   z-index: 12;
   width: 330px;
@@ -76,10 +77,6 @@
   border-radius: 6px;
   background: #111d30;
   box-shadow: 0 14px 35px #0008;
-}
-.fixture-week-filter .fixture-filter-body {
-  left: auto;
-  right: 0;
 }
 .fixture-filter-body .button-row {
   justify-content: flex-start;
@@ -182,6 +179,9 @@
 .fixture-explorer .club-name-short {
   display: none;
 }
+.fixture-explorer .fixture-table th {
+  color: #91a4bf;
+}
 .fixture-explorer .fixture-table th,
 .fixture-explorer .fixture-table td {
   padding: 4px 7px;
@@ -202,12 +202,31 @@
 }
 .fixture-explorer .fixture-chip small {
   margin-top: 1px;
+  opacity: 0.92;
+}
+details.compact-details {
+  display: block;
+}
+.fixture-detail .compact-details p + p {
+  margin-top: 6px;
 }
 .fixture-explorer > .view-heading {
   align-items: flex-start;
 }
 .fixture-explorer > .view-heading .tab-strip {
   max-width: 100%;
+}
+@container (max-width: 680px) {
+  .fixture-controls {
+    position: relative;
+  }
+  .fixture-week-filter {
+    position: static;
+  }
+  .fixture-week-filter .fixture-filter-body {
+    left: auto;
+    right: 0;
+  }
 }
 @container (max-width: 520px) {
   .fixture-controls {

@@ -1,3 +1,6 @@
+.panel.market-chart {
+  padding: 14px 16px;
+}
 .market-movement {
   container-type: inline-size;
   background: #101a2c;

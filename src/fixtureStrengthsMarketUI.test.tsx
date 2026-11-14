@@ -11,6 +11,7 @@ import { FixtureSchedule } from "./FixtureSchedule";
 import { FixtureDetail } from "./FixtureDetail";
 import { TeamStrengths, formatSourceTimes } from "./TeamStrengths";
 import { MarketMovement } from "./MarketMovement";
+import { Badge, LineChart, Modal, PlayerName } from "./components";
 import { TabStrip } from "./TabStrip";
 import type { Bootstrap, Fixture, Forecast, Player } from "./types";
 import type { FixtureCatalog } from "./fixtureScheduleModel";
@@ -100,13 +101,20 @@ function renderWithHooks<T>(fn: () => T): T {
 }
 
 type Node = ReactElement<Record<string, any>>;
+const passthroughComponents = new Set<unknown>([
+  Badge,
+  LineChart,
+  Modal,
+  PlayerName,
+  FixtureDetail,
+]);
 function nodes(tree: ReactNode): Node[] {
   if (Array.isArray(tree)) return tree.flatMap(nodes);
   if (!isValidElement(tree)) return [];
   const node = tree as Node;
   const rendered =
-    node.type === TabStrip
-      ? (TabStrip as any)(node.props)
+    typeof node.type === "function" && !passthroughComponents.has(node.type)
+      ? (node.type as any)(node.props)
       : node.props.children;
   return [node, ...nodes(rendered)];
 }
@@ -310,10 +318,27 @@ describe("FixtureExplorer & FixtureTrend UI fixes", () => {
     tree = render();
     expect(detailsList().map((d) => d.props.open)).toEqual([false, true]);
 
-    // Escape closes the open popover.
-    listeners.get("keydown")?.({ key: "Escape" } as unknown as Event);
+    // Escape inside an open popover stops propagation and restores focus to <summary>.
+    const focusSummary = vi.fn();
+    const stopPropagation = vi.fn();
+    detailsList()[1].props.onKeyDown({
+      key: "Escape",
+      preventDefault: vi.fn(),
+      stopPropagation,
+      currentTarget: { querySelector: () => ({ focus: focusSummary }) },
+    });
     tree = render();
+    expect(stopPropagation).toHaveBeenCalledTimes(1);
+    expect(focusSummary).toHaveBeenCalledTimes(1);
     expect(detailsList().map((d) => d.props.open)).toEqual([false, false]);
+
+    // Sources & totals <details> never carries flex .source-caption class.
+    const sourcesDetails = nodes(tree).find(
+      (n) =>
+        n.type === "details" &&
+        textContent(n.props.children[0]) === "Sources & totals",
+    )!;
+    expect(sourcesDetails.props.className).toBe("compact-details");
 
     // Outside pointerdown closes the open popover; inside pointerdown keeps it open.
     detailsList()[0].props.children[0].props.onClick({
@@ -346,10 +371,15 @@ describe("FixtureExplorer & FixtureTrend UI fixes", () => {
     expect(chip.props["aria-label"]).toContain("Alpha GW7");
   });
 
-  it("scales CS sparkline with 0.5 min span, distinguishes Blank vs unavailable, and inverts difficulty y", () => {
+  it("scales CS sparkline with 0.5 min span, clamps all-negative GD high >= 0, distinguishes Blank vs unavailable, and inverts difficulty y", () => {
     expect(fixtureTrendScale([0.18, 0.42], "cs")).toEqual({
       low: 0,
       high: 0.5,
+      baseline: 0,
+    });
+    expect(fixtureTrendScale([-1.8, -1.3], "gd")).toEqual({
+      low: -1.8,
+      high: 0,
       baseline: 0,
     });
     expect(formatTrendPoint({ week: 7, value: 0.42, blank: false }, "cs")).toBe(
@@ -548,9 +578,29 @@ describe("FixtureMarkets & FixtureDetail guards and deadline clamping", () => {
       (n) => n.props["aria-label"] === "Fixture market horizon",
     )!;
     expect(nodes(horizonSelect.props.children)).toHaveLength(0);
+    // Graph view passes 4 distinct colors and returns null for missing GW forecasts (0 for scheduled blanks).
+    resetHooks();
+    vi.stubGlobal("sessionStorage", {
+      getItem: (key: string) =>
+        key === "open-fpl-view:market.fixtures.view" ? '"graph"' : null,
+      setItem: () => undefined,
+    });
+    const graphData = makeBootstrap();
+    // Team 1 has GW7 fixture, GW8 blank (fixtures: []), and GW9 missing (undefined).
+    const graphTree = renderWithHooks(() =>
+      FixtureMarkets({ data: graphData, gw: 7, onDetail: vi.fn() }),
+    );
+    const chart = nodes(graphTree).find((n) => n.type === LineChart)!;
+    expect(chart.props.colors).toEqual([
+      "#ff764d",
+      "#61ba9a",
+      "#7c94cb",
+      "#e0b15b",
+    ]);
+    expect(chart.props.series[0].values).toEqual([1.85, 0, null]);
   });
 
-  it("clamps expired gw to data.next_gw in FixtureDetail before opening player detail", () => {
+  it("clamps expired gw to data.next_gw in FixtureDetail, guards invalid dates, and falls back to fixture.opponent", () => {
     const onDetail = vi.fn();
     const onClose = vi.fn();
     const data = makeBootstrap({
@@ -563,6 +613,9 @@ describe("FixtureMarkets & FixtureDetail guards and deadline clamping", () => {
             "8": makeForecast(
               [
                 makeFixture({
+                  opponent: "UNK",
+                  opponent_id: 999,
+                  kickoff: "not-a-valid-date",
                   team_strength_scenario: {
                     label: "Human",
                     source: "user",
@@ -595,6 +648,9 @@ describe("FixtureMarkets & FixtureDetail guards and deadline clamping", () => {
       (n) => n.props.className === "subtle-tag",
     )!;
     expect(scenarioPill.type).toBe("span");
+    expect(textContent(tree)).not.toContain("Invalid Date");
+    expect(textContent(tree)).toContain("UNK goals");
+    expect(textContent(tree)).toContain("UNK CS");
 
     const playerBtn = nodes(tree).find(
       (n) => typeof n.props.onClick === "function" && n.props.player?.id === 11,
@@ -634,6 +690,8 @@ describe("TeamStrengths & MarketMovement UI fixes", () => {
       "Alpha: 1.85 goals, 0.95 conceded",
     );
     expect(points[0].props["aria-label"]).not.toContain("Arrow keys");
+    const pointTitle = nodes(points[0]).find((n) => n.type === "title")!;
+    expect(typeof pointTitle.props.children).toBe("string");
 
     const provenance = nodes(tree).find(
       (n) =>
@@ -751,6 +809,52 @@ describe("TeamStrengths & MarketMovement UI fixes", () => {
       const neg = cells.find((c) => textContent(c).includes("-0.15 goals"))!;
       expect(pos.props.className).toContain("green");
       expect(neg.props.className).toContain("red");
+
+      // Every SVG <title> has a single string child (React 19 compatibility).
+      for (const titleNode of nodes(tree).filter((n) => n.type === "title")) {
+        expect(typeof titleNode.props.children).toBe("string");
+      }
+    });
+
+    // Single-timestamp series centers points at cx=358, omits duplicate right label, and supports <tr> click.
+    resetHooks();
+    const singlePayload = {
+      ...payload,
+      series: [
+        {
+          ...payload.series[0],
+          fixture_id: 202,
+          points: [payload.series[0].points[1]],
+        },
+        {
+          ...payload.series[1],
+          fixture_id: 303,
+          points: [payload.series[1].points[1]],
+        },
+      ],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve({ ok: true, json: async () => singlePayload }),
+      ),
+    );
+    render();
+    await vi.waitFor(() => {
+      let tree = render();
+      const circle = nodes(tree).find((n) => n.type === "circle")!;
+      expect(circle.props.cx).toBe(358);
+      const axisStamps = nodes(tree).filter(
+        (n) => n.type === "text" && n.props.y === "205",
+      );
+      expect(axisStamps).toHaveLength(1);
+
+      const secondRow = nodes(tree).filter((n) => n.type === "tr")[2];
+      secondRow.props.onClick();
+      tree = render();
+      expect(
+        nodes(tree).filter((n) => n.type === "tr")[2].props.className,
+      ).toContain("selected-fixture");
     });
   });
 });

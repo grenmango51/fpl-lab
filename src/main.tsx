@@ -6,6 +6,7 @@ import "./studio.css";
 import "./interactions.css";
 import "./workspace-polish.css";
 import "./planner-workspace.css";
+import "./pitch-interactions.css";
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <App />

@@ -33,8 +33,63 @@
   opacity: 0.35;
 }
 
+.planner-board
+  .pitch-select-mode:not(.pitch-dragging):has(.pitch .player-selected)
+  .bench
+  .player-tile:not(.swap-target),
+.planner-board
+  .pitch-select-mode:not(.pitch-dragging):has(.bench .player-selected)
+  .pitch
+  .player-tile:not(.swap-target) {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+
+.planner-board
+  .pitch-select-mode:not(.pitch-dragging):has(.pitch .player-selected)
+  .bench
+  .player-tile:not(.swap-target)
+  .player-select,
+.planner-board
+  .pitch-select-mode:not(.pitch-dragging):has(.bench .player-selected)
+  .pitch
+  .player-tile:not(.swap-target)
+  .player-select {
+  cursor: not-allowed;
+}
+
 .planner-board:has(.pitch-dragging) .swap-banner {
   visibility: hidden;
+}
+
+.injury-badge {
+  bottom: 1px;
+  top: auto;
+  left: -3px;
+}
+
+.pitch-meta {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.pitch-meta span,
+.planner-board .pitch-meta span {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pitch-meta b,
+.planner-board .pitch-meta b {
+  flex-shrink: 0;
+}
+
+.planner-board {
+  width: 100%;
+  container-type: inline-size;
 }
 
 .planner-board .board-plan-header input {
@@ -47,6 +102,276 @@
   top: 0;
   z-index: 5; /* Above the scrolling gameweek controls (4). */
   background: #030712;
+}
+
+.tree-pitch-panel .board-plan-header {
+  background: #070e1a;
+}
+
+.planner-board .board-metrics {
+  align-items: end;
+}
+
+.planner-board .board-metrics > button,
+.planner-board .board-metrics > div {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 2px 0;
+  margin: 0;
+}
+
+.planner-board .board-metrics > :nth-child(n + 3) {
+  display: none;
+}
+
+.tree-pitch-panel .board-metrics > :nth-child(n + 3) {
+  display: flex;
+}
+
+.planner-board .board-metrics span {
+  display: block;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.planner-board .board-metrics b {
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+}
+
+.planner-board .board-week-bar .icon-button {
+  min-width: 32px;
+  min-height: 32px;
+  width: 32px;
+  height: 32px;
+}
+
+.planner-board .pitch {
+  min-height: 388px;
+  height: clamp(388px, calc(100dvh - 280px), 468px);
+  padding: 6px 0 8px;
+  justify-content: space-between;
+}
+
+.planner-board .pitch-row {
+  height: auto;
+  flex: 1 1 0;
+  min-height: 0;
+  margin: 0;
+  align-items: center;
+}
+
+.planner-board .player-select {
+  min-height: 0;
+  padding: 2px 1px;
+}
+
+.planner-board .player-shirt,
+.planner-board .shirt {
+  width: clamp(44px, calc((100dvh - 380px) / 5), 56px);
+  height: clamp(44px, calc((100dvh - 380px) / 5), 56px);
+}
+
+.planner-board .pitch-meta {
+  flex-wrap: nowrap;
+  flex-direction: row;
+  max-width: 100%;
+  padding: 0 2px;
+  margin-top: 2px;
+}
+
+.tree-pitch-panel .planner-board .pitch {
+  min-height: 376px;
+  height: clamp(376px, 46vh, 436px);
+}
+
+.tree-pitch-panel .planner-board .player-select {
+  min-height: 0;
+}
+
+.tree-pitch-panel .planner-board .player-shirt,
+.tree-pitch-panel .planner-board .shirt {
+  width: 46px;
+  height: 46px;
+}
+
+@container (max-width: 540px) {
+  .planner-board .board-metrics,
+  .planner-board .lineup-control-row,
+  .planner-board .board-week-bar {
+    position: static;
+    width: auto;
+  }
+
+  .planner-board .board-metrics {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px;
+    padding: 0 0 10px;
+  }
+
+  .planner-board .board-metrics > :nth-child(n + 3) {
+    display: flex;
+  }
+
+  .planner-board .board-metrics span {
+    font-size: 10px;
+  }
+
+  .planner-board .board-metrics b {
+    font-size: 16px;
+  }
+
+  .planner-board .board-metrics small {
+    font-size: 11px;
+  }
+
+  .planner-board .lineup-control-row {
+    gap: 8px;
+    margin: 0 0 8px;
+  }
+
+  .planner-board .lineup-control-row select {
+    height: 32px;
+    font-size: 12px;
+    padding: 5px 8px;
+    border-radius: 5px;
+  }
+
+  .planner-board .board-week-bar {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin: 0 0 8px;
+    padding-bottom: 6px;
+  }
+
+  .planner-board .board-week-bar > div {
+    gap: 4px;
+  }
+
+  .planner-board .board-week-bar small {
+    display: inline;
+    font-size: 11px;
+  }
+
+  .planner-board .board-week-bar select {
+    width: auto;
+    min-width: 64px;
+    font-size: 13px;
+    padding: 4px 6px;
+  }
+
+  .planner-board .board-week-bar .action-menu > .button {
+    min-height: 32px;
+    font-size: 11px;
+    padding: 6px 10px;
+  }
+
+  .planner-board .pitch {
+    min-height: 384px;
+    height: 384px;
+  }
+
+  .planner-board .player-shirt,
+  .planner-board .shirt {
+    width: 44px;
+    height: 44px;
+  }
+}
+
+@media (max-width: 700px) {
+  .planner-board .board-metrics,
+  .planner-board .lineup-control-row,
+  .planner-board .board-week-bar {
+    position: static;
+    width: auto;
+  }
+
+  .planner-board .board-metrics {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px;
+    padding: 0 0 10px;
+  }
+
+  .planner-board .board-metrics > :nth-child(n + 3) {
+    display: flex;
+  }
+
+  .planner-board .board-metrics span {
+    font-size: 10px;
+  }
+
+  .planner-board .board-metrics b {
+    font-size: 16px;
+  }
+
+  .planner-board .board-metrics small {
+    font-size: 11px;
+  }
+
+  .planner-board .lineup-control-row {
+    gap: 8px;
+    margin: 0 0 8px;
+  }
+
+  .planner-board .lineup-control-row select {
+    height: 32px;
+    font-size: 12px;
+    padding: 5px 8px;
+    border-radius: 5px;
+  }
+
+  .planner-board .board-week-bar {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin: 0 0 8px;
+    padding-bottom: 6px;
+  }
+
+  .planner-board .board-week-bar > div {
+    gap: 4px;
+  }
+
+  .planner-board .board-week-bar small {
+    display: inline;
+    font-size: 11px;
+  }
+
+  .planner-board .board-week-bar select {
+    width: auto;
+    min-width: 64px;
+    font-size: 13px;
+    padding: 4px 6px;
+  }
+
+  .planner-board .board-week-bar .action-menu > .button {
+    min-height: 32px;
+    font-size: 11px;
+    padding: 6px 10px;
+  }
+
+  .planner-board .pitch {
+    min-height: 384px;
+    height: 384px;
+  }
+
+  .planner-board .player-shirt,
+  .planner-board .shirt {
+    width: 44px;
+    height: 44px;
+  }
 }
 
 .board-pending-status {
@@ -77,4 +402,202 @@
 
 .global-busy > svg {
   flex-shrink: 0;
+}
+
+/* PlanTree layout, toolbar z-index, zoom pill and container responsiveness */
+.plan-canvas {
+  container-type: inline-size;
+  width: 100%;
+}
+
+.plan-canvas .tree-toolbar {
+  z-index: 12;
+}
+
+.plan-canvas:not(.tree-with-pitch) .tree-toolbar {
+  background: linear-gradient(180deg, #050b15f2 0%, #050b15bf 68%, transparent 100%);
+}
+
+@container (max-width: 440px) {
+  .tree-team-label {
+    display: none;
+  }
+}
+
+.plan-canvas > .tree-zoom {
+  background: #070c17e6;
+  border: 1px solid #1d293b;
+  border-radius: 6px;
+  padding: 3px 8px;
+  gap: 8px;
+}
+
+.tree-zoom-value {
+  min-width: 34px;
+  text-align: right;
+  font-size: 11px;
+  color: #9aaac1;
+  font-variant-numeric: tabular-nums;
+}
+
+.tree-gameweek-node {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.tree-gw-card {
+  width: 100%;
+}
+
+.tree-gw-card > span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+}
+
+.tree-gw-card > div > span {
+  white-space: nowrap;
+}
+
+.tree-hit-badge {
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1.2;
+  padding: 1px 4px;
+  border-radius: 3px;
+  color: var(--red, #ed8082);
+  background: #ed80821c;
+  border: 1px solid #ed808245;
+  white-space: nowrap;
+}
+
+.tree-mobile-gw > span > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.tree-expand-lineup {
+  position: static;
+  margin-top: 5px;
+}
+
+/* TeamOverview readable typography, WCAG AA contrast and responsive captain grid */
+.lineup-details {
+  font-size: 12px;
+  color: #9eb0c8;
+}
+
+.team-overview {
+  container-type: inline-size;
+}
+
+.overview-captains h3,
+.overview-targets h3,
+.overview-table-header h3 {
+  font-size: 13px;
+}
+
+.overview-captains small,
+.overview-table-header small {
+  font-size: 11px;
+  color: #8fa4bf;
+}
+
+.overview-captains button {
+  padding: 10px 6px;
+  gap: 5px;
+}
+
+.overview-captains button b {
+  font-size: 12px;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.overview-captains button span {
+  font-size: 11px;
+  color: #8fa4bf;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@container (max-width: 480px) {
+  .overview-captains > div {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.overview-targets header button {
+  font-size: 12px;
+}
+
+.overview-target-list > div {
+  font-size: 12px;
+  padding: 8px 0;
+}
+
+.overview-target-list .player-name-cell b {
+  font-size: 12px;
+}
+
+.overview-target-list .player-name-cell small {
+  font-size: 11px;
+  color: #8fa4bf;
+}
+
+.squad-table td.muted {
+  color: #8fa4bf;
+}
+
+.squad-name {
+  font-size: 12px;
+  gap: 8px;
+}
+
+.squad-name small {
+  font-size: 11px;
+  color: #8fa4bf;
+}
+
+.role-pill {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+/* LineupImageDialog frame border, loading placeholder and clean Save PNG row */
+.lineup-image-dialog img {
+  border: 1px solid var(--line);
+}
+
+.lineup-image-loading {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  max-width: 480px;
+  min-height: min(460px, 60dvh);
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  color: #8fa4bf;
+  font-size: 12px;
+}
+
+.lineup-image-actions {
+  display: flex;
+  justify-content: flex-end;
+  width: 100%;
+  max-width: 480px;
 }

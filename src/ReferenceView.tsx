@@ -29,7 +29,7 @@ export function ReferenceView({
 }: {
   data: Bootstrap;
   gw: number;
-  onDetail: (id: number) => void;
+  onDetail: (id: number, gw?: number) => void;
   watch: number[];
   onWatch: (id: number) => void;
 }) {
@@ -256,11 +256,11 @@ export function ReferenceView({
               </span>
             )}
           </div>
-          <div className="table-container">
+          <div className="table-container reference-scroll">
             <table className="data-table reference-table">
               <thead>
                 <tr>
-                  <th></th>
+                  <th aria-label="Watchlist"></th>
                   <th>PLAYER</th>
                   <th>PRICE</th>
                   {baseline && <th>IMPORTANCE / 100</th>}
@@ -274,70 +274,82 @@ export function ReferenceView({
               <tbody>
                 {rows
                   .slice(selectedPage * 25, (selectedPage + 1) * 25)
-                  .map(({ player: p, reference: r }) => (
-                    <tr key={p.id}>
-                      <td>
-                        <button
-                          className={`icon-button ${watch.includes(p.id) ? "starred" : ""}`}
-                          onClick={() => onWatch(p.id)}
-                          aria-label={`Watch ${p.name}`}
-                        >
-                          <Star size={14} />
-                        </button>
-                      </td>
-                      <td>
-                        <PlayerName player={p} onClick={() => onDetail(p.id)} />
-                      </td>
-                      <td>{money(p.price)}</td>
-                      {baseline && (
-                        <td className="numeric">
-                          {r.future_importance === undefined ? (
-                            "—"
-                          ) : (
-                            <span className="reference-score">
-                              <i style={{ width: `${r.future_importance}%` }} />
-                              <b>{fmt(r.future_importance, 0)}</b>
-                            </span>
-                          )}
-                        </td>
-                      )}
-                      <td className="numeric">
-                        {attack(r)?.goal === undefined
-                          ? "—"
-                          : fmt(attack(r)!.goal!, 2)}
-                      </td>
-                      <td className="numeric">
-                        {attack(r)?.assist === undefined
-                          ? "—"
-                          : fmt(attack(r)!.assist!, 2)}
-                      </td>
-                      <td className="numeric">
-                        {attack(r)?.goal_involvement === undefined
-                          ? "—"
-                          : fmt(attack(r)!.goal_involvement!, 2)}
-                      </td>
-                      {baseline && (
+                  .map(({ player: p, reference: r }) => {
+                    const watched = watch.includes(p.id);
+                    return (
+                      <tr key={p.id}>
                         <td>
-                          {r.captain ? (
-                            <span
-                              className={
-                                r.captain_gameweek === gw
-                                  ? "orange reference-captain"
-                                  : "muted reference-captain"
-                              }
-                            >
-                              <Star size={12} /> GW{r.captain_gameweek}
-                            </span>
-                          ) : (
-                            "—"
-                          )}
+                          <button
+                            className={`icon-button ${watched ? "starred" : ""}`}
+                            onClick={() => onWatch(p.id)}
+                            aria-label={`Watch ${p.name}`}
+                            aria-pressed={watched}
+                          >
+                            <Star
+                              size={14}
+                              fill={watched ? "currentColor" : "none"}
+                            />
+                          </button>
                         </td>
-                      )}
-                      <td className="orange numeric">
-                        {fmt(xp(p, selectedGW))}
-                      </td>
-                    </tr>
-                  ))}
+                        <td>
+                          <PlayerName
+                            player={p}
+                            onClick={() => onDetail(p.id, selectedGW)}
+                          />
+                        </td>
+                        <td>{money(p.price)}</td>
+                        {baseline && (
+                          <td className="numeric">
+                            {r.future_importance === undefined ? (
+                              "—"
+                            ) : (
+                              <span className="reference-score">
+                                <i
+                                  style={{ width: `${r.future_importance}%` }}
+                                />
+                                <b>{fmt(r.future_importance, 0)}</b>
+                              </span>
+                            )}
+                          </td>
+                        )}
+                        <td className="numeric">
+                          {attack(r)?.goal === undefined
+                            ? "—"
+                            : fmt(attack(r)!.goal!, 2)}
+                        </td>
+                        <td className="numeric">
+                          {attack(r)?.assist === undefined
+                            ? "—"
+                            : fmt(attack(r)!.assist!, 2)}
+                        </td>
+                        <td className="numeric">
+                          {attack(r)?.goal_involvement === undefined
+                            ? "—"
+                            : fmt(attack(r)!.goal_involvement!, 2)}
+                        </td>
+                        {baseline && (
+                          <td>
+                            {r.captain ? (
+                              <span
+                                className={
+                                  r.captain_gameweek === gw
+                                    ? "orange reference-captain"
+                                    : "muted reference-captain"
+                                }
+                              >
+                                <Star size={12} /> GW{r.captain_gameweek}
+                              </span>
+                            ) : (
+                              "—"
+                            )}
+                          </td>
+                        )}
+                        <td className="orange numeric">
+                          {fmt(xp(p, selectedGW))}
+                        </td>
+                      </tr>
+                    );
+                  })}
               </tbody>
             </table>
             {!rows.length && (
@@ -373,26 +385,18 @@ export function ReferenceView({
             <summary>
               <Info size={13} /> Help
             </summary>
-            <p className="help-text">
-              {baseline
-                ? "Goal and assist baselines assume a start against an average Premier League team. Importance is a 0–100 ranking score with an unspecified horizon."
-                : `GW${selectedGW} attacking counts assume a start. Next-GW and three-GW charts are separate series and can differ.`}{" "}
-              Playing duration is unspecified. These references do not alter
-              points forecasts. Open FPL xP uses its own appearance assumptions.
-              Missing values mean no supplied reference.
-            </p>
-            {baseline ? (
+            {baseline &&
+              captainGW !== undefined &&
+              captainGW !== data.next_gw && (
+                <p className="help-text orange">
+                  Source GW{captainGW} captain flags do not apply to upcoming GW
+                  {data.next_gw}.
+                </p>
+              )}
+            {!baseline && feed?.caption && (
               <p className="help-text">
-                Captain flags apply only to their labelled gameweek
-                {captainGW !== undefined && captainGW !== data.next_gw
-                  ? `; the source's GW${captainGW} flag is not for the current next gameweek`
-                  : ""}
-                .
-              </p>
-            ) : (
-              <p className="help-text">
-                Only labelled weeks are shown. Missing outcomes are not inferred
-                or summed across separate provider charts. {feed?.caption}
+                {feed.caption}. Only labelled weeks are shown; Open FPL xP uses
+                its own appearance model.
               </p>
             )}
             {source.limitations.map((note) => (

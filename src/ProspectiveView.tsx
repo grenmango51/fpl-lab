@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Clock3, Info } from "lucide-react";
 import { fmt } from "./lib";
 import type { Bootstrap, Prospective } from "./types";
@@ -13,6 +14,9 @@ export function ProspectiveView({
   onScore: () => void;
   busy: boolean;
 }) {
+  const [showAllCaptures, setShowAllCaptures] = useState(false);
+  const captures = report?.captures ?? [];
+  const visibleCaptures = showAllCaptures ? captures : captures.slice(0, 5);
   return (
     <section className="panel prospective-panel">
       <div className="panel-heading">
@@ -22,9 +26,25 @@ export function ProspectiveView({
           Score weeks
         </button>
       </div>
-      {!!report?.captures?.length && (
+      {!!captures.length && (
         <div className="capture-receipts">
-          {report.captures.slice(0, 5).map((c) => {
+          {captures.length > 5 && (
+            <div className="capture-receipts-more">
+              <span className="help-text">
+                {showAllCaptures
+                  ? `Showing all ${captures.length} captures`
+                  : `Showing latest 5 of ${captures.length}`}
+              </span>
+              <button
+                type="button"
+                className="text-button"
+                onClick={() => setShowAllCaptures((current) => !current)}
+              >
+                {showAllCaptures ? "Show latest 5" : "View all"}
+              </button>
+            </div>
+          )}
+          {visibleCaptures.map((c) => {
             const receipt = c.capture_receipt;
             const keys = receipt
               ? [...new Set(Object.values(receipt.required_sources).flat())]
@@ -46,7 +66,7 @@ export function ProspectiveView({
                       : "Legacy"}
                   </span>
                   <em>
-                    {report.gameweeks.some((week) => week.gw === c.gw)
+                    {report?.gameweeks.some((week) => week.gw === c.gw)
                       ? "Scored"
                       : event?.finished
                         ? "Not scored"
@@ -133,17 +153,15 @@ export function ProspectiveView({
                       </table>
                     </div>
                     <p className="source-caption">
-                      <Info size={13} /> Fresh-input policy: used sources
-                      extracted within {receipt.max_source_age_seconds / 60}{" "}
-                      minutes, with validated live/cached status. Refetching
-                      unchanged data advances extraction time, not the
-                      provider's publication time. {c.players} captured players.
+                      <Info size={13} /> Fresh-input policy: sources extracted
+                      within {receipt.max_source_age_seconds / 60} min
+                      (live/cached). Refetching unchanged data updates
+                      extraction time, not provider publication time.
                     </p>
                   </>
                 ) : (
                   <p className="help-text">
-                    Legacy capture: no freshness receipt. Its predictions remain
-                    available for exploratory scoring.
+                    Legacy capture without freshness receipt (exploratory only).
                   </p>
                 )}
                 <small className="muted">{c.filename}</small>
@@ -280,11 +298,9 @@ export function ProspectiveView({
           <Info size={13} /> Method
         </summary>
         <p className="help-text">
-          Capture refreshes live inputs before freezing all model forecasts from
-          one dataset. Comparisons use the same captured players after official
-          outcomes are checked. Missing provider values remain missing.
+          {report?.method ??
+            "Captures refresh live inputs, freeze all model forecasts on one dataset, and score matched players against checked official outcomes while keeping missing provider values blank."}
         </p>
-        {report?.method && <p className="help-text">{report.method}</p>}
         {data.forecast_layers?.map((layer) => (
           <p className="help-text" key={layer.name}>
             {layer.kind === "user-scenario" ? (

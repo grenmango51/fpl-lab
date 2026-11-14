@@ -41,6 +41,9 @@
   padding: 0 12px;
   min-width: max-content;
 }
+.solio-detail-panel > .main-nav button.nav-active::after {
+  display: none;
+}
 .tab-strip {
   overflow-x: auto;
   scrollbar-width: thin;
@@ -51,6 +54,9 @@
 .tab-strip > button {
   flex-shrink: 0;
   white-space: nowrap;
+}
+.tab-strip > button:focus-visible {
+  outline-offset: -2px;
 }
 .solio-detail-panel .segmented > button {
   min-height: 36px;
@@ -274,6 +280,11 @@
   background: #0b1626;
   z-index: 2;
   min-width: 125px;
+  box-shadow: 3px 0 8px #03071266;
+}
+.team-projection-table tbody tr:hover td:first-child,
+.fixture-table tbody tr:hover td:first-child {
+  background: #152334;
 }
 .team-projection-table th:first-child,
 .fixture-table th:first-child {
@@ -497,11 +508,13 @@
 .market-stats .eyebrow {
   font-size: 11px;
 }
-.price-scroll {
+.price-scroll,
+.reference-scroll {
   max-height: calc(100dvh - 400px);
   min-height: 260px;
 }
-.price-table th {
+.price-table th,
+.reference-table th {
   position: sticky;
   top: 0;
   background: #132034;
@@ -509,24 +522,35 @@
   white-space: nowrap;
 }
 .price-table td:nth-child(1),
-.price-table th:nth-child(1) {
+.price-table th:nth-child(1),
+.reference-table td:nth-child(1),
+.reference-table th:nth-child(1) {
   position: sticky;
   left: 0;
+  width: 40px;
   min-width: 40px;
   background: #0b1626;
   z-index: 3;
 }
 .price-table td:nth-child(2),
-.price-table th:nth-child(2) {
+.price-table th:nth-child(2),
+.reference-table td:nth-child(2),
+.reference-table th:nth-child(2) {
   position: sticky;
   left: 40px;
   min-width: 155px;
   background: #0b1626;
   z-index: 3;
+  box-shadow: 3px 0 8px #03071266;
 }
-.price-table th:nth-child(-n + 2) {
+.price-table th:nth-child(-n + 2),
+.reference-table th:nth-child(-n + 2) {
   z-index: 4;
   background: #132034;
+}
+.price-table tbody tr:hover td:nth-child(-n + 2),
+.reference-table tbody tr:hover td:nth-child(-n + 2) {
+  background: #152334;
 }
 .reference-toolbar > select {
   flex: 1;
@@ -643,12 +667,15 @@
     border: 0;
     padding-left: 0;
   }
+  .market-match {
+    grid-template-columns: minmax(0, 1fr);
+  }
   .market-match > span {
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
   }
   .market-match strong {
-    flex-basis: 100%;
-    text-align: center;
+    flex-basis: auto;
+    text-align: right;
   }
   .movement-actions {
     gap: 8px;
@@ -738,6 +765,19 @@
   font-size: 11px;
   line-height: 1.5;
 }
+.source-state.orange {
+  color: var(--orange);
+  border-color: #7c4d3a;
+  background: #ff764d14;
+}
+.solio-detail-panel .help-text {
+  font-size: 12px;
+  line-height: 1.6;
+}
+.help-text.orange,
+.solio-detail-panel .help-text.orange {
+  color: var(--orange);
+}
 .source-list small {
   color: #94a6bf;
 }
@@ -781,6 +821,7 @@
 .modal[aria-label="Settings"] .tab-strip > button,
 .settings-body .toggle-row b,
 .settings-body .setting-row b,
+.settings-body .field-row,
 .settings-body .source-setting b,
 .settings-body .range-label,
 .settings-body .compact-details > summary {

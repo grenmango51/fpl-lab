@@ -27,6 +27,7 @@ import {
 import "./season-data.css";
 
 const SAVED_VIEWS_KEY = "open-fpl-season-data-views-v1";
+const PAGE_SIZE = 50;
 type Tool = "Table" | "Graph" | "Compare" | "Maps";
 const toolItems = (["Table", "Graph", "Compare", "Maps"] as const).map(
   (id) => ({ id, label: id }),
@@ -146,43 +147,43 @@ function StatsScatter({
         <text transform="translate(15 170) rotate(-90)" textAnchor="middle">
           {statLabel(yMetric, per90)}
         </text>
-        {plot.points.map((point) => (
-          <g key={point.row.id}>
-            <circle
-              cx={x(point.x)}
-              cy={y(point.y)}
-              r={selected.includes(point.row.id) ? 6 : 4}
-              className={selected.includes(point.row.id) ? "selected" : ""}
-              tabIndex={0}
-              role="button"
-              aria-label={`${point.row.name}: ${statLabel(xMetric, per90)} ${formatStat(point.x, xMetric, per90)}, ${statLabel(yMetric, per90)} ${formatStat(point.y, yMetric, per90)}`}
-              onClick={() => onPlayer(point.row)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") {
-                  event.preventDefault();
-                  onPlayer(point.row);
-                }
-              }}
-            >
-              <title>
-                {point.row.full_name} · {point.row.team_short}\n
-                {statLabel(xMetric, per90)}:{" "}
-                {formatStat(point.x, xMetric, per90)}\n
-                {statLabel(yMetric, per90)}:{" "}
-                {formatStat(point.y, yMetric, per90)}
-              </title>
-            </circle>
-            {selected.includes(point.row.id) && (
-              <text
-                x={x(point.x) + 9}
-                y={y(point.y) - 8}
-                className="season-data-point-label"
+        {plot.points.map((point) => {
+          const px = x(point.x);
+          const py = y(point.y);
+          const flipLeft = px > 360;
+          return (
+            <g key={point.row.id}>
+              <circle
+                cx={px}
+                cy={py}
+                r={selected.includes(point.row.id) ? 6 : 4}
+                className={selected.includes(point.row.id) ? "selected" : ""}
+                tabIndex={0}
+                role="button"
+                aria-label={`${point.row.name}: ${statLabel(xMetric, per90)} ${formatStat(point.x, xMetric, per90)}, ${statLabel(yMetric, per90)} ${formatStat(point.y, yMetric, per90)}`}
+                onClick={() => onPlayer(point.row)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    onPlayer(point.row);
+                  }
+                }}
               >
-                {point.row.name}
-              </text>
-            )}
-          </g>
-        ))}
+                <title>{`${point.row.full_name} · ${point.row.team_short}\n${statLabel(xMetric, per90)}: ${formatStat(point.x, xMetric, per90)}\n${statLabel(yMetric, per90)}: ${formatStat(point.y, yMetric, per90)}`}</title>
+              </circle>
+              {selected.includes(point.row.id) && (
+                <text
+                  x={flipLeft ? px - 9 : px + 9}
+                  y={Math.max(48, py - 8)}
+                  textAnchor={flipLeft ? "end" : "start"}
+                  className="season-data-point-label"
+                >
+                  {point.row.name}
+                </text>
+              )}
+            </g>
+          );
+        })}
         {!plot.points.length && (
           <text x="265" y="168" textAnchor="middle">
             No paired observations
@@ -191,10 +192,8 @@ function StatsScatter({
       </svg>
       <p className="muted season-data-note">
         {plot.points.length} plotted
-        {plot.missing ? ` · ${plot.missing} missing an axis value` : ""}.{" "}
-        {isPlayer
-          ? "Select a point for player details."
-          : "Select a point to filter its team."}
+        {plot.missing ? ` · ${plot.missing} missing` : ""} · Click point to{" "}
+        {isPlayer ? "inspect player" : "filter club"}.
       </p>
     </section>
   );
@@ -299,39 +298,40 @@ function StatsComparison({
 }
 
 function StatsMaps({
+  entity,
   players,
   selected,
   onSelect,
 }: {
+  entity: StatsMode;
   players: StatRow[];
   selected: string;
   onSelect: (value: string) => void;
 }) {
   const [map, setMap] = useState<"Touches" | "Passes" | "Shots">("Touches");
   const requirements = {
-    Touches:
-      "Requires recorded touch coordinates, fixture times and event types, including defensive actions.",
-    Passes:
-      "Requires recorded pass start/end coordinates, fixture times and completion outcomes.",
-    Shots:
-      "Requires recorded shot coordinates, outcomes (goal/save/block/miss/post), trajectories and keeper positions.",
+    Touches: "Needs touch coordinates, timestamps and defensive actions.",
+    Passes: "Needs pass start/end coordinates and completion outcomes.",
+    Shots: "Needs shot coordinates, outcomes and keeper positions.",
   };
   return (
     <section className="season-data-maps" aria-label="Season event maps">
-      <label>
-        Player for maps
-        <select
-          value={selected}
-          onChange={(event) => onSelect(event.target.value)}
-        >
-          <option value="">Select player</option>
-          {players.map((player) => (
-            <option key={player.id} value={player.id}>
-              {player.name} · {player.team_short}
-            </option>
-          ))}
-        </select>
-      </label>
+      {entity === "players" && (
+        <label>
+          Player for maps
+          <select
+            value={selected}
+            onChange={(event) => onSelect(event.target.value)}
+          >
+            <option value="">Select player</option>
+            {players.map((player) => (
+              <option key={player.id} value={player.id}>
+                {player.name} · {player.team_short}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       <TabStrip
         label="Event map type"
         value={map}
@@ -344,10 +344,7 @@ function StatsMaps({
       <div className="season-data-map-empty">
         <strong>{map} data unavailable</strong>
         <p>{requirements[map]}</p>
-        <p className="muted">
-          The official FPL summary feed has no event coordinates. No event map
-          can be drawn from these season totals.
-        </p>
+        <p className="muted">Official FPL feeds omit event coordinates.</p>
       </div>
     </section>
   );
@@ -390,6 +387,7 @@ export function SeasonData({
   });
   const [fullNames, setFullNames] = useState(false);
   const [mapPlayer, setMapPlayer] = useState("");
+  const [page, setPage] = useState(0);
   const [editColumns, setEditColumns] = useState(false);
   const [viewName, setViewName] = useState("");
   const [activeView, setActiveView] = useState("");
@@ -467,6 +465,7 @@ export function SeasonData({
   };
   const setModeAndDefaults = (value: StatsMode) => {
     setMode(value);
+    setPage(0);
     setSort({
       key: value === "players" ? "total_points" : "points",
       direction: "desc",
@@ -525,12 +524,14 @@ export function SeasonData({
       setGroup("Custom");
     }
   };
-  const sortBy = (key: string) =>
+  const sortBy = (key: string) => {
+    setPage(0);
     setSort((current) => ({
       key,
       direction:
         current.key === key && current.direction === "desc" ? "asc" : "desc",
     }));
+  };
   const selectGroup = (next: StatsGroup) => {
     setGroup(next);
     setActiveView("");
@@ -541,6 +542,12 @@ export function SeasonData({
         .map((metric) => metric.key),
     }));
   };
+  const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  const safePage = Math.min(page, pageCount - 1);
+  const pageRows =
+    rows.length > PAGE_SIZE
+      ? rows.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE)
+      : rows;
   const missingCount = rows.filter((row) =>
     visibleColumns.some((metric) => statValue(row, metric, per90) == null),
   ).length;
@@ -582,7 +589,10 @@ export function SeasonData({
                 : "Arsenal, Liverpool"
             }
             value={query}
-            onChange={(event) => setQuery(event.target.value)}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              setPage(0);
+            }}
           />
         </label>
         {mode === "players" && (
@@ -590,7 +600,10 @@ export function SeasonData({
             Position
             <select
               value={position}
-              onChange={(event) => setPosition(event.target.value)}
+              onChange={(event) => {
+                setPosition(event.target.value);
+                setPage(0);
+              }}
             >
               <option value="">All positions</option>
               {["GKP", "DEF", "MID", "FWD"].map((item) => (
@@ -603,7 +616,10 @@ export function SeasonData({
           Team
           <select
             value={team}
-            onChange={(event) => setTeam(event.target.value)}
+            onChange={(event) => {
+              setTeam(event.target.value);
+              setPage(0);
+            }}
           >
             <option value="">All teams</option>
             {stats.teams.map((item) => (
@@ -621,9 +637,10 @@ export function SeasonData({
               min="0"
               step="90"
               value={minMinutes}
-              onChange={(event) =>
-                setMinMinutes(Math.max(0, Number(event.target.value) || 0))
-              }
+              onChange={(event) => {
+                setMinMinutes(Math.max(0, Number(event.target.value) || 0));
+                setPage(0);
+              }}
             />
           </label>
         )}
@@ -642,6 +659,7 @@ export function SeasonData({
             setPosition("");
             setTeam("");
             setMinMinutes(0);
+            setPage(0);
           }}
         >
           Reset filters
@@ -775,9 +793,28 @@ export function SeasonData({
           </div>
           <p role="status" className="muted season-data-note">
             {viewMessage ||
-              "Checked columns appear in this order. Saved views are local to this browser."}
+              "Checked columns show in order; views save locally."}
           </p>
         </section>
+      )}
+      {loading && (
+        <p className="muted season-data-note" role="status">
+          Loading official season stats…
+        </p>
+      )}
+      {loadError && (
+        <p className="season-data-fallback" role="alert">
+          <span>
+            {loadError}. Showing Bootstrap minutes, points, price and ownership
+            only.
+          </span>
+          <button
+            className="button small"
+            onClick={() => setRetry((current) => current + 1)}
+          >
+            Retry stats feed
+          </button>
+        </p>
       )}
       <div
         className={`season-data-workspace ${tool === "Graph" ? "with-graph" : ""}`}
@@ -802,9 +839,13 @@ export function SeasonData({
                 [mode]: [current[mode][0], key],
               }))
             }
-            onPlayer={(row) =>
-              mode === "players" ? detail(row.id) : setTeam(String(row.id))
-            }
+            onPlayer={(row) => {
+              if (mode === "players") detail(row.id);
+              else {
+                setTeam(String(row.id));
+                setPage(0);
+              }
+            }}
             isPlayer={mode === "players"}
           />
         )}
@@ -826,6 +867,7 @@ export function SeasonData({
           )}
           {tool === "Maps" && (
             <StatsMaps
+              entity={mode}
               players={stats.players}
               selected={mapPlayer}
               onSelect={setMapPlayer}
@@ -833,14 +875,16 @@ export function SeasonData({
           )}
           <div className="season-data-table-summary">
             <span>
-              {rows.length} / {allRows.length} {mode}
+              {rows.length > PAGE_SIZE
+                ? `${safePage * PAGE_SIZE + 1}–${Math.min((safePage + 1) * PAGE_SIZE, rows.length)} of ${rows.length} ${mode}`
+                : `${rows.length} / ${allRows.length} ${mode}`}
               {selected[mode].length
                 ? ` · ${selected[mode].length} selected`
                 : ""}
             </span>
             <span>
               {per90
-                ? "Counting metrics /90; minutes, prices and percentages unchanged"
+                ? "Counting stats /90 · mins, price & % unchanged"
                 : "Season totals"}
             </span>
           </div>
@@ -892,7 +936,7 @@ export function SeasonData({
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row) => (
+                {pageRows.map((row) => (
                   <tr
                     key={row.id}
                     className={
@@ -918,11 +962,13 @@ export function SeasonData({
                       <button
                         className="season-data-row-name"
                         disabled={mode === "players" && !knownIds.has(row.id)}
-                        onClick={() =>
-                          mode === "players"
-                            ? detail(row.id)
-                            : setTeam(String(row.id))
-                        }
+                        onClick={() => {
+                          if (mode === "players") detail(row.id);
+                          else {
+                            setTeam(String(row.id));
+                            setPage(0);
+                          }
+                        }}
                       >
                         <strong>{row.name}</strong>
                         <small>
@@ -951,17 +997,41 @@ export function SeasonData({
               </p>
             )}
           </div>
+          {rows.length > PAGE_SIZE && (
+            <div className="season-data-pagination">
+              <span>
+                Page {safePage + 1} of {pageCount} · {rows.length} {mode}
+              </span>
+              <div>
+                <button
+                  type="button"
+                  className="button small"
+                  disabled={safePage === 0}
+                  onClick={() => setPage(safePage - 1)}
+                >
+                  Previous
+                </button>
+                <button
+                  type="button"
+                  className="button small"
+                  disabled={safePage >= pageCount - 1}
+                  onClick={() => setPage(safePage + 1)}
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
           {!visibleColumns.length && (
             <p className="season-data-note muted">
               {mode === "teams" && group === "Goalkeeping"
-                ? "The fixture feed has no team goalkeeping event stats."
+                ? "No team goalkeeping event stats in fixture feed."
                 : "Choose columns in Columns & saved views."}
             </p>
           )}
           {missingCount > 0 && (
             <p className="season-data-note muted">
-              — Missing source value or zero minutes for /90. {missingCount}{" "}
-              rows have a missing displayed value.
+              — Missing source value or 0 mins for /90 ({missingCount} rows).
             </p>
           )}
         </div>
@@ -972,11 +1042,10 @@ export function SeasonData({
           {sourceTime(stats.source)}
         </summary>
         <p>
-          Season-to-date aggregates; xG/xA describe matches played. No forecast
-          fields or scenario edits are included.{" "}
+          Observed season totals only (no forecasts or scenario edits).{" "}
           {mode === "teams"
-            ? "Team results use completed fixture scores, not sums of player clean sheets. /90 uses 90 minutes per completed match."
-            : "Per 90 divides counting totals by recorded minutes; zero-minute rates remain missing."}
+            ? "Team totals use completed fixtures; /90 uses 90 mins per match."
+            : "Per 90 divides counting stats by minutes; 0-min rates stay blank."}
         </p>
         <p>
           <a href={stats.source.url} target="_blank" rel="noreferrer">
@@ -985,7 +1054,7 @@ export function SeasonData({
           {stats.source.sha256
             ? ` · SHA-256 ${stats.source.sha256.slice(0, 12)}`
             : ""}
-          . Extraction time is not provider publication time.
+          {" · "}Extraction time is not publication time.
         </p>
         {stats.fixture_source && (
           <p>
@@ -997,23 +1066,6 @@ export function SeasonData({
           </p>
         )}
       </details>
-      {loading && (
-        <p className="muted season-data-note" role="status">
-          Loading official season aggregates…
-        </p>
-      )}
-      {loadError && (
-        <p className="season-data-fallback" role="status">
-          {loadError}. Showing Bootstrap minutes, FPL points, price and
-          ownership only.{" "}
-          <button
-            className="button small"
-            onClick={() => setRetry((current) => current + 1)}
-          >
-            Retry stats feed
-          </button>
-        </p>
-      )}
     </div>
   );
 }

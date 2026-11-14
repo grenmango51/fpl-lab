@@ -95,7 +95,7 @@
   width: 100%;
   height: auto;
   margin-top: 12px;
-  overflow: visible;
+  overflow: hidden;
 }
 .season-data-scatter text {
   fill: var(--muted);
@@ -159,7 +159,7 @@
 .season-data-table thead th {
   position: sticky;
   top: 0;
-  z-index: 2;
+  z-index: 3;
   background: var(--panel2);
   white-space: nowrap;
 }
@@ -173,17 +173,30 @@
 .season-data-table td {
   white-space: nowrap;
 }
+.season-data-table td:nth-child(1),
+.season-data-table th:nth-child(1) {
+  position: sticky;
+  left: 0;
+  width: 40px;
+  min-width: 40px;
+  max-width: 40px;
+  padding-left: 7px;
+  padding-right: 7px;
+  background: var(--panel);
+  z-index: 2;
+}
 .season-data-table td:nth-child(2),
 .season-data-table th:nth-child(2) {
   position: sticky;
-  left: 0;
+  left: 40px;
   background: var(--panel);
-  z-index: 1;
+  z-index: 2;
   min-width: 135px;
+  box-shadow: 3px 0 8px #03071266;
 }
-.season-data-table th:nth-child(2) {
+.season-data-table th:nth-child(-n + 2) {
   background: var(--panel2);
-  z-index: 3;
+  z-index: 4;
 }
 .season-data-row-name {
   text-align: left;
@@ -212,12 +225,33 @@
   color: var(--orange);
   font-size: 16px;
 }
-.season-data-selected td {
-  background-color: #ff764d0c;
+.season-data-table tbody tr:hover td {
+  background-color: #152334;
+}
+.season-data-selected td,
+.season-data-table tbody tr.season-data-selected td {
+  background-color: #1c181d;
+}
+.season-data-table tbody tr.season-data-selected:hover td {
+  background-color: #231d27;
 }
 .season-data-selected .season-data-add {
   background: #ff764d20;
   border-color: #ff764d60;
+}
+.season-data-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.season-data-pagination > div {
+  display: flex;
+  gap: 6px;
 }
 .season-data-note {
   padding: 7px 0;
@@ -341,10 +375,16 @@
   color: var(--orange);
 }
 .season-data-fallback {
-  padding: 10px;
-  background: #ff764d0c;
-  border: 1px solid #ff764d40;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 12px;
+  background: #ff764d12;
+  border: 1px solid #ff764d45;
   border-radius: 7px;
+  color: var(--soft);
   font-size: 11px;
   line-height: 1.5;
 }

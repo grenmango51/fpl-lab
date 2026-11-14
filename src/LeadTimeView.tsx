@@ -17,6 +17,7 @@ export function LeadTimeView({
   const [scope, setScope] = useState<"primary" | "all" | "exploratory">(
     "primary",
   );
+  const [retryCount, setRetryCount] = useState(0);
   useEffect(() => {
     let alive = true;
     api<LeadTimeReport>("/lead-time")
@@ -32,7 +33,7 @@ export function LeadTimeView({
     return () => {
       alive = false;
     };
-  }, [captureKey]);
+  }, [captureKey, retryCount]);
   async function score() {
     setBusy(true);
     setError("");
@@ -95,9 +96,16 @@ export function LeadTimeView({
         </button>
       </div>
       {error && (
-        <p className="orange help-text">
+        <p className="orange help-text" role="alert">
           {error}{" "}
-          <button className="text-button" onClick={score} disabled={busy}>
+          <button
+            type="button"
+            className="text-button"
+            onClick={() =>
+              report ? void score() : setRetryCount((n) => n + 1)
+            }
+            disabled={busy}
+          >
             Retry
           </button>
         </p>
@@ -239,7 +247,7 @@ export function LeadTimeView({
                       {target.deadline_changed ? " · deadline changed" : ""}
                     </td>
                     <td>
-                      {target.coverage["FPL Form"]?.forecast_count ?? 0}/
+                      {target.coverage[model]?.forecast_count ?? 0}/
                       {target.cohort.eligible_count} eligible
                     </td>
                     <td>GW{target.origin_gameweek}</td>
@@ -351,25 +359,15 @@ export function LeadTimeView({
           <Info size={13} /> Method
         </summary>
         <p className="help-text">
-          Every capture freezes the remaining season. Each time window selects
-          its latest valid capture for each target gameweek. Live ensemble and{" "}
-          {model} use identical player-GW rows. Counts labelled captured are
-          saved targets, not scored forecasts. Missing results remain
-          unavailable.
+          Latest valid capture per window and GW on matched player-GW rows.
+          Descriptive only: cohorts, versions and manual assumptions can differ
+          across windows, missing provider weeks stay blank, and rescheduled
+          fixtures remain in the error.
         </p>
         <p className="help-text">
-          Metrics pool individual matched player-GW errors within each window.
-          Cohorts, model versions and manual assumptions can differ across
-          windows; the same outcomes recur across windows. These are descriptive
-          results, with no claim that one horizon is more accurate until those
-          differences are controlled. Provider coverage stays missing beyond its
-          supplied weeks. Fixture changes remain part of the error; they are not
-          discarded after outcomes.
-        </p>
-        <p className="help-text">
-          Primary eligibility requires the declared capture policy and checked
-          official outcomes. Exploratory results can include stale inputs,
-          legacy receipts or changed deadlines.
+          Primary requires fresh inputs and checked official outcomes;
+          exploratory includes stale inputs, legacy captures or changed
+          deadlines.
         </p>
       </details>
       {report?.generated_at && (

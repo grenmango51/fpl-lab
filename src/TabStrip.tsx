@@ -14,6 +14,10 @@ export function TabStrip<T extends string>({
   className?: string;
 }) {
   const root = useRef<HTMLDivElement>(null);
+  const activeIndex = Math.max(
+    0,
+    items.findIndex((i) => i.id === value),
+  );
   useEffect(() => {
     const node = root.current;
     if (!node) return;
@@ -22,9 +26,11 @@ export function TabStrip<T extends string>({
       if (!active) return;
       const bounds = node.getBoundingClientRect();
       const item = active.getBoundingClientRect();
-      if (item.left < bounds.left) node.scrollLeft += item.left - bounds.left;
-      else if (item.right > bounds.right)
-        node.scrollLeft += item.right - bounds.right;
+      const inset = 12;
+      if (item.left < bounds.left + inset)
+        node.scrollLeft += item.left - (bounds.left + inset);
+      else if (item.right > bounds.right - inset)
+        node.scrollLeft += item.right - (bounds.right - inset);
     };
     reveal();
     const observer = new ResizeObserver(reveal);
@@ -43,7 +49,7 @@ export function TabStrip<T extends string>({
           key={item.id}
           role="tab"
           aria-selected={value === item.id}
-          tabIndex={value === item.id ? 0 : -1}
+          tabIndex={index === activeIndex ? 0 : -1}
           className={value === item.id ? "active nav-active" : ""}
           onClick={() => onChange(item.id)}
           onKeyDown={(event) => {

@@ -6,6 +6,7 @@ import {
   ChevronDown,
   Search,
   Star,
+  X,
 } from "lucide-react";
 import { Badge, PlayerName } from "./components";
 import { fmt, money, xp } from "./lib";
@@ -49,7 +50,9 @@ export function TransferPanel({
   const [error, setError] = useState("");
   const weeks = data.gameweeks.filter((gw) => gw >= week.gw).slice(0, horizon);
   const comparisonRange =
-    weeks.length === 1 ? `GW${weeks[0]}` : `GW${weeks[0]}–${weeks.at(-1)}`;
+    weeks.length <= 1
+      ? `GW${weeks[0] ?? week.gw}`
+      : `GW${weeks[0]}–${weeks.at(-1)}`;
   const total = (player: Player) =>
     weeks.reduce((sum, gw) => sum + xp(player, gw), 0);
   const allowance = useMemo(
@@ -60,12 +63,16 @@ export function TransferPanel({
   const lookup = new Map(data.players.map((player) => [player.id, player]));
   const target = targetId === null ? null : lookup.get(targetId) ?? null;
   const preview = target ? allowance.forTarget(target) : null;
+  const isOverBudget = (player: Player) =>
+    allowance.forTarget(player).bankAfter < 0;
+  const isClubCapped = (player: Player) =>
+    week.squad.filter(
+      (id) => id !== outgoing.id && lookup.get(id)?.team === player.team,
+    ).length >= 3;
   const reason = (player: Player) =>
-    allowance.forTarget(player).bankAfter < 0
+    isOverBudget(player)
       ? "Over budget"
-      : week.squad.filter(
-            (id) => id !== outgoing.id && lookup.get(id)?.team === player.team,
-          ).length >= 3
+      : isClubCapped(player)
         ? "3 players from club"
         : "";
   const rows = useMemo(
@@ -138,9 +145,23 @@ export function TransferPanel({
         <div className="transfer-confirm">
           <button
             className="button small"
-            onClick={() => {
+            onClick={(event) => {
+              const panel = event?.currentTarget?.closest?.(".transfer-panel");
+              const previousId = target.id;
               setTargetId(null);
               setError("");
+              if (panel && typeof requestAnimationFrame === "function") {
+                requestAnimationFrame(() => {
+                  (
+                    panel.querySelector<HTMLElement>(
+                      `button[data-pick-id="${previousId}"]:not(:disabled)`,
+                    ) ??
+                    panel.querySelector<HTMLElement>(
+                      'input[aria-label="Search replacements"]',
+                    )
+                  )?.focus({ preventScroll: true });
+                });
+              }
             }}
             disabled={busy}
           >
@@ -204,6 +225,11 @@ export function TransferPanel({
               ? "This Free Hit only."
               : "Carries into later weeks while held."}
           </p>
+          {error ? (
+            <p className="transfer-error" role="alert">
+              {error}
+            </p>
+          ) : null}
           <div className="button-row">
             <button
               className="button primary"
@@ -227,11 +253,6 @@ export function TransferPanel({
               Player details
             </button>
           </div>
-          {error ? (
-            <p className="transfer-error" role="alert">
-              {error}
-            </p>
-          ) : null}
         </div>
       ) : (
         <>
@@ -244,6 +265,22 @@ export function TransferPanel({
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
               />
+              {query ? (
+                <button
+                  type="button"
+                  className="icon-button search-clear"
+                  aria-label="Clear replacement search"
+                  onClick={(event) => {
+                    const input = event?.currentTarget
+                      ?.closest?.(".search-box")
+                      ?.querySelector?.("input");
+                    setQuery("");
+                    input?.focus();
+                  }}
+                >
+                  <X size={13} />
+                </button>
+              ) : null}
             </div>
             <button
               className={`icon-button ${watched ? "starred" : ""}`}
@@ -251,7 +288,7 @@ export function TransferPanel({
               aria-pressed={watched}
               onClick={() => setWatched(!watched)}
             >
-              <Star size={16} />
+              <Star size={16} fill={watched ? "currentColor" : "none"} />
             </button>
           </div>
           <div className="transfer-eligibility">
@@ -315,12 +352,17 @@ export function TransferPanel({
                 ]
                   .filter(
                     (n) =>
-                      n <= data.gameweeks.filter((gw) => gw >= week.gw).length,
+                      n > 0 &&
+                      n <=
+                        Math.max(
+                          1,
+                          data.gameweeks.filter((gw) => gw >= week.gw).length,
+                        ),
                   )
                   .sort((a, b) => a - b)
                   .map((n) => (
                     <option key={n} value={n}>
-                      {n} GWs
+                      {n} {n === 1 ? "GW" : "GWs"}
                     </option>
                   ))}
               </select>
@@ -357,50 +399,95 @@ export function TransferPanel({
                 </tr>
               </thead>
               <tbody>
-                {rows.map((player) => (
-                  <tr
-                    key={player.id}
-                    className={reason(player) ? "unavailable-transfer" : ""}
-                    title={reason(player) || undefined}
-                  >
-                    <td>
-                      <PlayerName
-                        player={player}
-                        onClick={() => onInspect(player.id)}
-                      />
-                    </td>
-                    <td>{money(player.price)}</td>
-                    <td>{fmt(xp(player, week.gw))}</td>
-                    <td
-                      className={
-                        total(player) >= total(outgoing) ? "green" : "red"
-                      }
+                {rows.map((player) => {
+                  const overBudget = isOverBudget(player);
+                  const clubCapped = isClubCapped(player);
+                  const blockReason = overBudget
+                    ? "Over budget"
+                    : clubCapped
+                      ? "3 players from club"
+                      : "";
+                  const isWatched = watch.includes(player.id);
+                  return (
+                    <tr
+                      key={player.id}
+                      className={blockReason ? "unavailable-transfer" : ""}
+                      title={blockReason || undefined}
                     >
-                      {total(player) >= total(outgoing) ? "+" : ""}
-                      {fmt(total(player) - total(outgoing))}
-                    </td>
-                    <td>
-                      <button
-                        className="transfer-pick"
-                        title={reason(player) || `Choose ${player.name}`}
-                        aria-label={`Choose ${player.name}${reason(player) ? `: ${reason(player)}` : ""}`}
-                        disabled={busy || Boolean(reason(player))}
-                        onClick={() => {
-                          if (!busy && !reason(player)) setTargetId(player.id);
-                        }}
+                      <td>
+                        <div className="transfer-player-cell">
+                          <PlayerName
+                            player={player}
+                            onClick={() => onInspect(player.id)}
+                          />
+                          {clubCapped ? (
+                            <span
+                              className="club-cap-pill"
+                              title="3 players from club"
+                            >
+                              3/3
+                            </span>
+                          ) : null}
+                        </div>
+                      </td>
+                      <td className={overBudget ? "over-budget-price" : undefined}>
+                        {money(player.price)}
+                      </td>
+                      <td>{fmt(xp(player, week.gw))}</td>
+                      <td
+                        className={
+                          total(player) >= total(outgoing) ? "green" : "red"
+                        }
                       >
-                        <ArrowRight size={16} />
-                      </button>
-                      <button
-                        className={`icon-button ${watch.includes(player.id) ? "starred" : ""}`}
-                        aria-label={`Watch ${player.name}`}
-                        onClick={() => onWatch(player.id)}
-                      >
-                        <Star size={12} />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                        {total(player) >= total(outgoing) ? "+" : ""}
+                        {fmt(total(player) - total(outgoing))}
+                      </td>
+                      <td>
+                        <button
+                          className="transfer-pick"
+                          data-pick-id={player.id}
+                          title={blockReason || `Choose ${player.name}`}
+                          aria-label={`Choose ${player.name}${blockReason ? `: ${blockReason}` : ""}`}
+                          disabled={busy || Boolean(blockReason)}
+                          onClick={(event) => {
+                            if (busy || blockReason) return;
+                            const panel =
+                              event?.currentTarget?.closest?.(".transfer-panel");
+                            setTargetId(player.id);
+                            if (
+                              panel &&
+                              typeof requestAnimationFrame === "function"
+                            ) {
+                              requestAnimationFrame(() => {
+                                (
+                                  panel.querySelector<HTMLElement>(
+                                    ".transfer-confirm .button.primary:not(:disabled)",
+                                  ) ??
+                                  panel.querySelector<HTMLElement>(
+                                    ".transfer-confirm button:not(:disabled)",
+                                  )
+                                )?.focus({ preventScroll: true });
+                              });
+                            }
+                          }}
+                        >
+                          <ArrowRight size={16} />
+                        </button>
+                        <button
+                          className={`icon-button ${isWatched ? "starred" : ""}`}
+                          aria-label={`Watch ${player.name}`}
+                          aria-pressed={isWatched}
+                          onClick={() => onWatch(player.id)}
+                        >
+                          <Star
+                            size={12}
+                            fill={isWatched ? "currentColor" : "none"}
+                          />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
             {!rows.length ? (

@@ -22,16 +22,33 @@ export function StatScenarioEditor({
 }) {
   const selectedGW = gw;
   const [scope, setScope] = useState("selected");
+  const formatStatValue = (key: string, value: number) =>
+    String(
+      key === "clean_sheet_probability"
+        ? Math.round(value * 100)
+        : Number(value.toFixed(2)),
+    );
   const stringDraft = (row: StatScenario = {}) =>
     Object.fromEntries(
-      Object.entries(row).map(([key, value]) => [
-        key,
-        String(value * (key === "clean_sheet_probability" ? 100 : 1)),
-      ]),
+      Object.entries(row)
+        .filter(([, value]) => value !== undefined)
+        .map(([key, value]) => [key, formatStatValue(key, value)]),
     ) as Partial<Record<keyof StatScenario, string>>;
+  const currentRow = schedule[String(selectedGW)];
+  const signature = `${player.id}:${selectedGW}:${JSON.stringify(currentRow ?? null)}`;
+  const [prevSignature, setPrevSignature] = useState(signature);
   const [draft, setDraft] = useState<
     Partial<Record<keyof StatScenario, string>>
-  >(stringDraft(schedule[String(gw)]));
+  >(stringDraft(currentRow));
+  let currentDraft = draft;
+  if (prevSignature !== signature) {
+    currentDraft = stringDraft(currentRow);
+    setPrevSignature(signature);
+    setDraft(currentDraft);
+  }
+  const hasGWEdit =
+    Boolean(currentRow && Object.keys(currentRow).length) ||
+    Object.keys(currentDraft).length > 0;
   const forecast = player.gw[String(selectedGW)];
   const defaults: StatScenario = {
     expected_points: forecast?.points ?? 0,
@@ -67,17 +84,19 @@ export function StatScenarioEditor({
     },
   ];
   function selectWeek(value: number) {
-    setDraft(stringDraft(schedule[String(value)]));
+    const nextRow = schedule[String(value)];
+    setPrevSignature(`${player.id}:${value}:${JSON.stringify(nextRow ?? null)}`);
+    setDraft(stringDraft(nextRow));
     onGWChange(value);
   }
   function save() {
-    if (!Object.keys(draft).length) {
+    if (!Object.keys(currentDraft).length) {
       onNotify("Enable a stat to edit.");
       return;
     }
     const values: StatScenario = {};
     for (const field of fields) {
-      const raw = draft[field.key];
+      const raw = currentDraft[field.key];
       if (raw === undefined) continue;
       const value = Number(raw);
       if (
@@ -114,10 +133,10 @@ export function StatScenarioEditor({
         <span className="subtle-tag">All plans</span>
       </header>
       <p className="help-text">GW totals shared across all plans.</p>
-      <div className="field-grid">
+      <div className="editor-scope-bar">
         <b className="editor-week">GW{selectedGW}</b>
-        <label>
-          Apply to
+        <label className="editor-scope-select">
+          <span>Apply to</span>
           <select
             aria-label="Stat scenario scope"
             value={scope}
@@ -131,7 +150,7 @@ export function StatScenarioEditor({
       </div>
       <div className="stat-edit-fields">
         {fields.map((field) => {
-          const enabled = draft[field.key] !== undefined;
+          const enabled = currentDraft[field.key] !== undefined;
           const percentage = field.key === "clean_sheet_probability";
           return (
             <label key={field.key}>
@@ -144,8 +163,9 @@ export function StatScenarioEditor({
                     setDraft((current) => {
                       const next = { ...current };
                       if (event.target.checked)
-                        next[field.key] = String(
-                          (defaults[field.key] ?? 0) * (percentage ? 100 : 1),
+                        next[field.key] = formatStatValue(
+                          field.key,
+                          defaults[field.key] ?? 0,
                         );
                       else delete next[field.key];
                       return next;
@@ -163,7 +183,7 @@ export function StatScenarioEditor({
                 step={field.step}
                 value={
                   enabled
-                    ? draft[field.key]
+                    ? currentDraft[field.key]
                     : fmt(
                         (defaults[field.key] ?? 0) * (percentage ? 100 : 1),
                         percentage ? 0 : 2,
@@ -181,16 +201,25 @@ export function StatScenarioEditor({
           );
         })}
       </div>
+      <details className="compact-details stat-notes">
+        <summary>Stat notes</summary>
+        <p className="help-text">
+          xG/xA are unconditional GW totals. In doubles, CS chance applies to
+          each fixture. Set minutes/availability first for unavailable players.
+        </p>
+      </details>
       <div className="button-row editor-actions">
         <button className="button primary small" onClick={save}>
           Save stats
         </button>
         <button
           className="button small"
+          disabled={!hasGWEdit}
           onClick={() => {
             const next = { ...schedule };
             delete next[String(selectedGW)];
             onSchedule(next);
+            setPrevSignature(`${player.id}:${selectedGW}:null`);
             setDraft({});
             onNotify(`${player.name} · GW${selectedGW}: Override cleared.`);
           }}
@@ -203,6 +232,7 @@ export function StatScenarioEditor({
           disabled={!Object.keys(schedule).length}
           onClick={() => {
             onSchedule({});
+            setPrevSignature(`${player.id}:${selectedGW}:null`);
             setDraft({});
             onNotify(`${player.name}: All stat edits cleared.`);
           }}
@@ -230,12 +260,16 @@ export function StatScenarioEditor({
                     .join(" · ")}
                 </button>
                 <button
+                  className="icon-button"
                   aria-label={`Clear stat edit GW${week}`}
                   onClick={() => {
                     const next = { ...schedule };
                     delete next[week];
                     onSchedule(next);
-                    if (+week === selectedGW) setDraft({});
+                    if (+week === selectedGW) {
+                      setPrevSignature(`${player.id}:${selectedGW}:null`);
+                      setDraft({});
+                    }
                   }}
                 >
                   <X size={12} />
@@ -244,10 +278,6 @@ export function StatScenarioEditor({
             ))}
         </details>
       ) : null}
-      <small className="help-text">
-        xG/xA are unconditional GW totals. In doubles, CS chance applies to each
-        fixture. Set minutes/availability first for unavailable players.
-      </small>
     </section>
   );
 }

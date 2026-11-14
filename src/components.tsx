@@ -9,6 +9,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import {
+  isValidElement,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -298,6 +299,41 @@ export function Pitch({
     </div>
   );
 }
+export function computeModalPosition(
+  anchor:
+    | { left: number; right: number; top: number; bottom: number }
+    | null
+    | undefined,
+  innerWidth: number,
+  innerHeight: number,
+): { left: number; top: number; width: number } | null {
+  if (!anchor || innerWidth <= 700) return null;
+  const maxWidth = Math.min(480, innerWidth - 24);
+  const minWidth = 340;
+  const height = Math.min(660, innerHeight - 24);
+  const leftSpace = anchor.left - 24;
+  const rightSpace = innerWidth - anchor.right - 24;
+  let width = maxWidth;
+  let left: number | null = null;
+  if (anchor.left - width - 12 >= 12) {
+    left = anchor.left - width - 12;
+  } else if (anchor.right + width + 12 <= innerWidth - 12) {
+    left = anchor.right + 12;
+  } else if (leftSpace >= rightSpace && leftSpace >= minWidth) {
+    width = Math.min(maxWidth, leftSpace);
+    left = anchor.left - width - 12;
+  } else if (rightSpace >= minWidth) {
+    width = Math.min(maxWidth, rightSpace);
+    left = anchor.right + 12;
+  }
+  if (left === null) return null;
+  return {
+    left: Math.max(12, left),
+    top: Math.max(12, Math.min(innerHeight - height - 12, anchor.top - 100)),
+    width,
+  };
+}
+
 export function Modal({
   title,
   subtitle,
@@ -319,31 +355,15 @@ export function Modal({
   const [position, setPosition] = useState<{
     left: number;
     top: number;
+    width: number;
   } | null>(null);
   const close = useRef(onClose);
   close.current = onClose;
   useLayoutEffect(() => {
-    const place = () => {
-      if (!anchor || window.innerWidth <= 700) {
-        setPosition(null);
-        return;
-      }
-      const width = Math.min(480, window.innerWidth - 24),
-        height = Math.min(660, window.innerHeight - 24);
-      const left =
-        anchor.left - width - 12 >= 12
-          ? anchor.left - width - 12
-          : anchor.right + width + 12 <= window.innerWidth
-            ? anchor.right + 12
-            : window.innerWidth - width - 12;
-      setPosition({
-        left: Math.max(12, left),
-        top: Math.max(
-          12,
-          Math.min(window.innerHeight - height - 12, anchor.top - 100),
-        ),
-      });
-    };
+    const place = () =>
+      setPosition(
+        computeModalPosition(anchor, window.innerWidth, window.innerHeight),
+      );
     place();
     window.addEventListener("resize", place);
     return () => window.removeEventListener("resize", place);
@@ -351,11 +371,10 @@ export function Modal({
   useEffect(() => {
     if (!position) return;
     const outside = (event: PointerEvent) => {
+      const target = event.target instanceof Element ? event.target : null;
       if (
         !dialog.current?.contains(event.target as Node) &&
-        !(event.target as HTMLElement).closest(
-          ".player-select,.projection-value",
-        )
+        !target?.closest(".player-select,.player-info,.projection-value")
       )
         close.current();
     };
@@ -378,6 +397,11 @@ export function Modal({
       if ([...document.querySelectorAll('[aria-modal="true"]')].at(-1) !== node)
         return;
       if (event.key === "Escape") {
+        if (
+          event.defaultPrevented ||
+          node.querySelector('.action-menu > button[aria-expanded="true"]')
+        )
+          return;
         event.preventDefault();
         event.stopPropagation();
         close.current();
@@ -425,7 +449,12 @@ export function Modal({
         className={`modal ${wide ? "modal-wide" : ""} ${className} ${position ? "floating-player-window" : ""}`}
         style={
           position
-            ? { position: "fixed", left: position.left, top: position.top }
+            ? {
+                position: "fixed",
+                left: position.left,
+                top: position.top,
+                width: position.width,
+              }
             : undefined
         }
         role="dialog"
@@ -451,15 +480,32 @@ export function Modal({
   );
 }
 
+function hasFormControls(node: ReactNode): boolean {
+  if (Array.isArray(node)) return node.some(hasFormControls);
+  if (!isValidElement<{ children?: ReactNode }>(node)) return false;
+  if (
+    typeof node.type === "string" &&
+    ["label", "input", "select", "textarea"].includes(node.type)
+  ) {
+    return true;
+  }
+  return hasFormControls(node.props.children);
+}
+
 export function ActionMenu({
   label,
   children,
+  role,
 }: {
   label: ReactNode;
   children: ReactNode;
+  role?: "menu" | "group";
 }) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
+  const resolvedRole = role ?? (hasFormControls(children) ? undefined : "menu");
   useEffect(() => {
     if (!open) return;
     const outside = (event: PointerEvent) => {
@@ -468,31 +514,74 @@ export function ActionMenu({
     const escape = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.stopPropagation();
+        event.preventDefault();
         setOpen(false);
-        root.current?.querySelector("button")?.focus();
+        trigger.current?.focus();
       }
     };
     document.addEventListener("pointerdown", outside);
-    document.addEventListener("keydown", escape);
+    document.addEventListener("keydown", escape, true);
     return () => {
       document.removeEventListener("pointerdown", outside);
-      document.removeEventListener("keydown", escape);
+      document.removeEventListener("keydown", escape, true);
     };
   }, [open]);
   return (
     <div className="action-menu" ref={root}>
       <button
+        ref={trigger}
+        type="button"
         className="button small"
-        aria-haspopup="menu"
+        aria-haspopup={resolvedRole === "menu" ? "menu" : undefined}
         aria-expanded={open}
         onClick={() => setOpen(!open)}
+        onKeyDown={(event) => {
+          if (open && resolvedRole === "menu" && event.key === "ArrowDown") {
+            const first = menu.current?.querySelector<HTMLButtonElement>(
+              "button:not(:disabled)",
+            );
+            if (first) {
+              event.preventDefault();
+              first.focus();
+            }
+          }
+        }}
       >
         {label}
       </button>
       {open ? (
         <div
+          ref={menu}
           className="action-menu-items"
-          role="menu"
+          role={resolvedRole}
+          onKeyDown={(event) => {
+            if (resolvedRole !== "menu") return;
+            if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key))
+              return;
+            const items = [
+              ...(event.currentTarget.querySelectorAll<HTMLButtonElement>(
+                "button:not(:disabled)",
+              ) ?? []),
+            ];
+            if (!items.length) return;
+            event.preventDefault();
+            const current = items.indexOf(
+              document.activeElement as HTMLButtonElement,
+            );
+            const next =
+              event.key === "Home"
+                ? 0
+                : event.key === "End"
+                  ? items.length - 1
+                  : event.key === "ArrowDown"
+                    ? current < 0
+                      ? 0
+                      : (current + 1) % items.length
+                    : current <= 0
+                      ? items.length - 1
+                      : current - 1;
+            items[next]?.focus();
+          }}
           onClick={(event) => {
             if ((event.target as HTMLElement).closest("button:not(:disabled)"))
               setOpen(false);
@@ -535,7 +624,7 @@ export function PlayerName({
       <Badge player={player} />
       <span>
         <b>
-          {player.name}
+          <span className="player-name-label">{player.name}</span>
           {player.status !== "a" && (
             <AlertTriangle size={12} className="orange" />
           )}

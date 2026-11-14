@@ -9,6 +9,7 @@ import {
   Search,
   Star,
   Upload,
+  X,
 } from "lucide-react";
 import { FixtureDetail } from "./FixtureDetail";
 import { useViewState } from "./useViewState";
@@ -122,6 +123,11 @@ export function ProjectionsView({
   const [page, setPage] = useState(0);
   const remaining = data.gameweeks.filter((week) => week >= gw);
   const weeks = remaining.slice(0, horizon);
+  const activeSort =
+    sort.startsWith("gw") && !weeks.includes(+sort.slice(2)) ? "average" : sort;
+  useEffect(() => {
+    if (activeSort !== sort) setSort("average");
+  }, [activeSort, sort, setSort]);
   const filtersActive = Boolean(
     query ||
     position !== "ALL" ||
@@ -159,16 +165,16 @@ export function ProjectionsView({
     [gw, horizon, metric, team, maxPrice, minMinutes, heldOnly],
   );
   const sortValue = (player: Player) =>
-    sort === "name"
+    activeSort === "name"
       ? 0
-      : sort === "price"
+      : activeSort === "price"
         ? player.price
-        : sort === "ownership"
+        : activeSort === "ownership"
           ? player.ownership
-          : sort === "total"
+          : activeSort === "total"
             ? total(player)
-            : sort.startsWith("gw")
-              ? projectionMetric(player, +sort.slice(2), metric)
+            : activeSort.startsWith("gw")
+              ? projectionMetric(player, +activeSort.slice(2), metric)
               : average(player);
   const rows = useMemo(
     () =>
@@ -185,7 +191,7 @@ export function ProjectionsView({
         )
         .sort(
           (a, b) =>
-            (sort === "name"
+            (activeSort === "name"
               ? a.name.localeCompare(b.name)
               : sortValue(a) - sortValue(b)) * (descending ? -1 : 1),
         ),
@@ -200,7 +206,7 @@ export function ProjectionsView({
       watch,
       squad,
       query,
-      sort,
+      activeSort,
       descending,
       metric,
       horizon,
@@ -216,13 +222,15 @@ export function ProjectionsView({
   );
   const header = (label: string, key: string) => (
     <button
+      type="button"
       onClick={() => {
         setSort(key);
-        setDescending(sort === key ? !descending : true);
+        setDescending(activeSort === key ? !descending : true);
+        setPage(0);
       }}
     >
       {label}
-      {sort === key ? (
+      {activeSort === key ? (
         <ChevronDown size={11} className={descending ? "" : "rotate"} />
       ) : (
         <ArrowDownUp size={10} />
@@ -299,14 +307,17 @@ export function ProjectionsView({
       </div>
       {editing ? (
         <button
+          type="button"
           className="button small projection-controls-toggle"
           aria-expanded={controlsOpen}
           onClick={() => setControlsOpen(!controlsOpen)}
         >
-          <ChevronDown size={13} />{" "}
-          {controlsOpen
-            ? "Hide controls"
-            : `Filters · ${query || "All players"} · ${metric} · ${weeks.length} GWs`}
+          <ChevronDown size={13} className={controlsOpen ? "rotate" : ""} />
+          <span>
+            {controlsOpen
+              ? "Hide controls"
+              : `Filters · ${query || "All players"} · ${metrics.find((m) => m.id === metric)?.label ?? metric} · ${weeks.length} ${weeks.length === 1 ? "GW" : "GWs"}`}
+          </span>
         </button>
       ) : null}
       <div className="projection-controls" hidden={section === "fixtures"}>
@@ -330,7 +341,7 @@ export function ProjectionsView({
           Horizon
           <select
             aria-label="Projection horizon"
-            value={Math.min(horizon, remaining.length)}
+            value={remaining.length ? Math.min(horizon, remaining.length) : horizon}
             onChange={(event) => setHorizon(+event.target.value)}
           >
             {[
@@ -346,11 +357,11 @@ export function ProjectionsView({
                 Math.min(horizon, remaining.length),
               ]),
             ]
-              .filter((value) => value <= remaining.length)
+              .filter((value) => value > 0 && value <= remaining.length)
               .sort((a, b) => a - b)
               .map((value) => (
                 <option value={value} key={value}>
-                  {value} GWs
+                  {value} {value === 1 ? "GW" : "GWs"}
                 </option>
               ))}
           </select>
@@ -361,7 +372,11 @@ export function ProjectionsView({
             : `${data.teams.length} clubs`}
           <br />
           <small>
-            GW{weeks[0]}–{weeks.at(-1)}
+            {weeks.length === 0
+              ? "—"
+              : weeks.length === 1
+                ? `GW${weeks[0]}`
+                : `GW${weeks[0]}–${weeks.at(-1)}`}
           </small>
         </span>
       </div>
@@ -374,6 +389,14 @@ export function ProjectionsView({
                 Transfer out <b>{selectedPlayer.name}</b>
               </span>
               <small>Choose a replacement · server checks budget</small>
+              <button
+                type="button"
+                className="icon-button"
+                aria-label="Cancel transfer"
+                onClick={onCancelTransfer}
+              >
+                <X size={14} />
+              </button>
             </div>
           ) : null}
           <div className="table-toolbar">
@@ -388,8 +411,26 @@ export function ProjectionsView({
                   setPage(0);
                 }}
               />
+              {query ? (
+                <button
+                  type="button"
+                  className="icon-button search-clear"
+                  aria-label="Clear search"
+                  onClick={(event) => {
+                    const input = event?.currentTarget
+                      ?.closest?.(".search-box")
+                      ?.querySelector?.("input");
+                    setQuery("");
+                    setPage(0);
+                    input?.focus();
+                  }}
+                >
+                  <X size={13} />
+                </button>
+              ) : null}
             </div>
             <button
+              type="button"
               className={`icon-button ${watched ? "starred" : ""}`}
               aria-label="Filter watchlist"
               aria-pressed={watched}
@@ -398,7 +439,7 @@ export function ProjectionsView({
                 setPage(0);
               }}
             >
-              <Star size={15} />
+              <Star size={15} fill={watched ? "currentColor" : "none"} />
             </button>
             <button
               className={`button small ${heldOnly ? "selected" : ""}`}
@@ -487,130 +528,140 @@ export function ProjectionsView({
                   <th className="projection-player-col">
                     {header("Name", "name")}
                   </th>
-                  <th>{header("£", "price")}</th>
-                  <th>{header("Avg", "average")}</th>
+                  <th className="numeric">{header("£", "price")}</th>
+                  <th className="numeric">{header("Avg", "average")}</th>
                   {weeks.map((week) => (
-                    <th key={week}>{header(`GW${week}`, `gw${week}`)}</th>
+                    <th key={week} className="projection-gw-col">
+                      {header(`GW${week}`, `gw${week}`)}
+                    </th>
                   ))}
-                  <th>{header("Σ xPts", "total")}</th>
-                  {selectedPlayer ? <th>Δ xPts</th> : null}
+                  <th className="numeric">{header("Σ xPts", "total")}</th>
+                  {selectedPlayer ? <th className="numeric">Δ xPts</th> : null}
                   <th></th>
                 </tr>
               </thead>
               <tbody>
-                {rows.slice(page * 35, page * 35 + 35).map((player) => (
-                  <tr
-                    key={player.id}
-                    className={squad.includes(player.id) ? "held-row" : ""}
-                  >
-                    <td className="projection-player-col">
-                      <PlayerName
-                        player={player}
-                        onClick={() => onDetail(player.id)}
-                      />
-                    </td>
-                    <td>{fmt(player.price)}</td>
-                    <td className="numeric">
-                      <b>
-                        {fmt(
-                          average(player),
-                          metric === "goals" || metric === "assists" ? 2 : 1,
-                        )}
-                      </b>
-                    </td>
-                    {weeks.map((week) => {
-                      const value = projectionMetric(player, week, metric);
-                      const forecast = player.gw[String(week)];
-                      return (
-                        <td key={week}>
-                          <button
-                            className="projection-value"
-                            aria-label={`${player.name} GW${week} ${metric}`}
-                            aria-pressed={
-                              editing?.id === player.id && editing.gw === week
-                            }
-                            style={{
-                              background: `rgba(${metric === "cs" ? "52, 181, 152" : "255, 106, 61"},${Math.min(0.45, Math.max(0.02, (value / scale) * 0.38))})`,
-                            }}
-                            onClick={() => onDetail(player.id, week)}
-                            title={`${source(forecast)} · ${forecast?.fixtures.map((f) => `${f.opponent} (${f.home ? "H" : "A"})`).join(" + ") || "Blank"}`}
-                          >
-                            <b>
-                              {fmt(
-                                value,
-                                metric === "goals" || metric === "assists"
-                                  ? 2
-                                  : 1,
-                              )}
-                              {forecast?.fixture_scenario ||
-                              forecast?.team_strength_scenario ||
-                              forecast?.stat_scenario ||
-                              forecast?.minutes_scenario ? (
-                                <sup>✎</sup>
-                              ) : forecast?.prediction_source ? (
-                                <sup>
-                                  {forecast.prediction_source.kind ===
-                                  "provider"
-                                    ? "P"
-                                    : "E"}
-                                </sup>
-                              ) : null}
-                            </b>
-                            <small>
-                              {forecast?.fixtures
-                                .map(
-                                  (f) => `${f.opponent}${f.home ? "" : "(A)"}`,
-                                )
-                                .join("+") || "—"}
-                            </small>
-                          </button>
-                        </td>
-                      );
-                    })}
-                    <td className="numeric orange">
-                      <b>{fmt(total(player))}</b>
-                    </td>
-                    {selectedPlayer ? (
-                      <td
-                        className={
-                          total(player) >= total(selectedPlayer)
-                            ? "green numeric"
-                            : "red numeric"
-                        }
-                      >
-                        {fmt(total(player) - total(selectedPlayer))}
+                {rows.slice(page * 35, page * 35 + 35).map((player) => {
+                  const delta = selectedPlayer
+                    ? total(player) - total(selectedPlayer)
+                    : 0;
+                  return (
+                    <tr
+                      key={player.id}
+                      className={squad.includes(player.id) ? "held-row" : ""}
+                    >
+                      <td className="projection-player-col">
+                        <PlayerName
+                          player={player}
+                          onClick={() => onDetail(player.id)}
+                        />
                       </td>
-                    ) : null}
-                    <td>
-                      {selectedPlayer &&
-                      selectedPlayer.position_id === player.position_id &&
-                      !squad.includes(player.id) ? (
-                        <button
-                          className="button small primary"
-                          aria-label={`Transfer ${player.name} in`}
-                          onClick={() => onTransfer(player.id)}
+                      <td className="numeric">{fmt(player.price)}</td>
+                      <td className="numeric">
+                        <b>
+                          {fmt(
+                            average(player),
+                            metric === "goals" || metric === "assists" ? 2 : 1,
+                          )}
+                        </b>
+                      </td>
+                      {weeks.map((week) => {
+                        const value = projectionMetric(player, week, metric);
+                        const forecast = player.gw[String(week)];
+                        return (
+                          <td key={week} className="projection-gw-col">
+                            <button
+                              type="button"
+                              className="projection-value"
+                              aria-label={`${player.name} GW${week} ${metric}`}
+                              aria-pressed={
+                                editing?.id === player.id && editing.gw === week
+                              }
+                              style={{
+                                background: `rgba(${metric === "cs" ? "52, 181, 152" : "255, 106, 61"},${Math.min(0.45, Math.max(0.02, (value / scale) * 0.38))})`,
+                              }}
+                              onClick={() => onDetail(player.id, week)}
+                              title={`${source(forecast)} · ${forecast?.fixtures.map((f) => `${f.opponent} (${f.home ? "H" : "A"})`).join(" + ") || "Blank"}`}
+                            >
+                              <b>
+                                {fmt(
+                                  value,
+                                  metric === "goals" || metric === "assists"
+                                    ? 2
+                                    : 1,
+                                )}
+                                {forecast?.fixture_scenario ||
+                                forecast?.team_strength_scenario ||
+                                forecast?.stat_scenario ||
+                                forecast?.minutes_scenario ? (
+                                  <sup>✎</sup>
+                                ) : forecast?.prediction_source ? (
+                                  <sup>
+                                    {forecast.prediction_source.kind ===
+                                    "provider"
+                                      ? "P"
+                                      : "E"}
+                                  </sup>
+                                ) : null}
+                              </b>
+                              <small>
+                                {forecast?.fixtures
+                                  .map(
+                                    (f) => `${f.opponent}${f.home ? "" : "(A)"}`,
+                                  )
+                                  .join("+") || "—"}
+                              </small>
+                            </button>
+                          </td>
+                        );
+                      })}
+                      <td className="numeric orange">
+                        <b>{fmt(total(player))}</b>
+                      </td>
+                      {selectedPlayer ? (
+                        <td
+                          className={
+                            delta >= 0 ? "green numeric" : "red numeric"
+                          }
                         >
-                          <ArrowRight size={12} />
-                        </button>
-                      ) : (
-                        <button
-                          className={`icon-button ${watch.includes(player.id) ? "starred" : ""}`}
-                          aria-label={`Watch ${player.name}`}
-                          onClick={() => onWatch(player.id)}
-                        >
-                          <Star
-                            size={13}
-                            fill={
-                              watch.includes(player.id)
-                                ? "currentColor"
-                                : "none"
-                            }
-                          />
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
+                          {Number(fmt(delta)) > 0 ? "+" : ""}
+                          {fmt(delta)}
+                        </td>
+                      ) : null}
+                      <td>
+                        {selectedPlayer &&
+                        selectedPlayer.position_id === player.position_id &&
+                        !squad.includes(player.id) ? (
+                          <button
+                            type="button"
+                            className="button small primary"
+                            aria-label={`Transfer ${player.name} in`}
+                            onClick={() => onTransfer(player.id)}
+                          >
+                            <ArrowRight size={12} />
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            className={`icon-button ${watch.includes(player.id) ? "starred" : ""}`}
+                            aria-label={`Watch ${player.name}`}
+                            aria-pressed={watch.includes(player.id)}
+                            onClick={() => onWatch(player.id)}
+                          >
+                            <Star
+                              size={13}
+                              fill={
+                                watch.includes(player.id)
+                                  ? "currentColor"
+                                  : "none"
+                              }
+                            />
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
             {!rows.length ? (
@@ -754,7 +805,7 @@ function TeamProjectionGrid({
                             }
                             className={`team-fixture-value fixture-difficulty-${row.difficulty}`}
                             key={row.id}
-                            title={`${row.source} · ${row.source_at}`}
+                            title={`${row.source} · ${row.source_at ?? "Time unavailable"}`}
                           >
                             <b>
                               {fmt(

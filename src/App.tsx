@@ -2822,7 +2822,7 @@ export default function App() {
       onTransfer={(id) => void transferIn(id)}
       onPlayers={() => navigateTab("projections")}
       onCaptain={setCaptain}
-      {...({ busy: Boolean(busy) } as object)}
+      busy={Boolean(busy)}
     />
   ) : null;
   const forecastState = forecastStatus();
@@ -3140,6 +3140,7 @@ export default function App() {
                 onFixtureMoves={setFixtureMoves}
                 selectedPlayer={selectedPlayer}
                 squad={week?.squad ?? []}
+                busy={Boolean(busy)}
                 onTransfer={(id) => void transferIn(id)}
                 onCancelTransfer={() => setSelected(null)}
               />
@@ -3161,8 +3162,17 @@ export default function App() {
                   result={solveResult}
                   busy={Boolean(busy)}
                   resultFresh={solveContext?.fresh}
+                  sourceName={
+                    solveContext?.fresh
+                      ? "New £100m squad"
+                      : solveContext?.sourcePlan?.name
+                  }
                   baselinePlan={solveContext?.baselinePlan}
                   onApply={() => void applySolve()}
+                  onDiscard={() => {
+                    setSolveResult(null);
+                    setSolveContext(null);
+                  }}
                   onDetail={(id, week) =>
                     openPlayer(id, week ?? gw, Boolean(solveResult))
                   }
@@ -3212,6 +3222,7 @@ export default function App() {
                 selectedGW={gw}
                 onPlan={choosePlan}
                 onDetail={openPlayer}
+                lockedIds={settings.locked}
                 onLock={(id) => togglePlayerConstraint(id, "locked")}
               />
             ) : (

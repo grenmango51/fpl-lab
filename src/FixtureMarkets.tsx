@@ -166,6 +166,7 @@ export function FixtureMarkets({
           </p>
           <LineChart
             height={220}
+            maxY={metric === "cs" ? 100 : undefined}
             colors={["#ff764d", "#61ba9a", "#7c94cb", "#e0b15b"]}
             yLabel={
               metric === "goals" ? "Expected team goals" : "Mean clean-sheet %"

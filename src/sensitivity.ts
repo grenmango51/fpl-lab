@@ -17,7 +17,9 @@ export function watchSensitivity(
   let timer: ReturnType<typeof setTimeout>;
   async function poll() {
     try {
-      const job = await api<SensitivityJob>(`/sensitivity/${id}`);
+      const job = await api<SensitivityJob>(
+        `/sensitivity/${encodeURIComponent(id)}`,
+      );
       if (stopped) return;
       failures = 0;
       callbacks.error("");
@@ -31,7 +33,7 @@ export function watchSensitivity(
       }
       failures += 1;
       callbacks.error(
-        "Connection interrupted. The test may still be running; its ID is saved and this page will keep trying to reconnect.",
+        "Connection interrupted. The test ID is saved; reconnecting…",
       );
       timer = setTimeout(
         () => void poll(),

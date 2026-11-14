@@ -1,36 +1,82 @@
-.chip-strategy {
-  border: 1px solid var(--border, #233044);
+.solio-detail-panel details.solver-disclosure,
+details.solver-disclosure,
+details.panel.solver-disclosure {
+  border: 1px solid #26354b;
   border-radius: 7px;
-  margin: 12px 0;
-  background: #0c1422;
+  margin: 12px 0 0;
+  padding: 0;
+  background: #0b1525;
 }
-.chip-strategy > summary {
+.solio-detail-panel details.solver-disclosure > summary,
+details.solver-disclosure > summary {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 13px;
+  padding: 13px 15px;
+  margin: 0;
   cursor: pointer;
+  list-style: none;
+  color: #edf1f7;
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.06em;
+  user-select: none;
 }
-.chip-strategy > summary span {
-  color: #92a1b8;
+details.solver-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+details.solver-disclosure > summary:hover {
+  background: #0f1d32;
+  border-radius: 6px;
+}
+details.solver-disclosure[open] > summary {
+  border-bottom: 1px solid #1e2d42;
+  border-radius: 6px 6px 0 0;
+}
+.solio-detail-panel details.solver-disclosure > summary > b,
+details.solver-disclosure > summary > b {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: #edf1f7;
+}
+.solio-detail-panel details.solver-disclosure > summary > span,
+details.solver-disclosure > summary > span {
+  margin-left: 0;
+  margin-right: auto;
+  color: #95a8c2;
   font-size: 12px;
   font-weight: 500;
   letter-spacing: 0;
 }
-.chip-strategy > summary small {
-  margin-left: auto;
-  color: #ff895b;
+details.solver-disclosure > summary > .disclosure-badge {
+  color: #ff9a73;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
 }
-.chip-strategy-body {
-  padding: 0 13px 13px;
+details.solver-disclosure[open] > summary > .disclosure-ready {
+  display: none;
 }
+details.solver-disclosure > summary > .disclosure-chevron {
+  flex-shrink: 0;
+  color: #8fa6c5;
+  transition: transform 0.16s ease;
+}
+details.solver-disclosure[open] > summary > .disclosure-chevron {
+  transform: rotate(180deg);
+}
+.solio-detail-panel details.solver-disclosure > .solver-disclosure-body,
+details.solver-disclosure > .solver-disclosure-body {
+  padding: 13px 15px 15px;
+}
+.chip-planner > .solver-disclosure-body > p,
 .chip-strategy-body > p {
   margin: 0 0 12px;
   font-size: 12px;
   color: #a5b2c6;
+  line-height: 1.55;
 }
 .chip-strategy-controls {
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -50,7 +96,7 @@
 .chip-strategy-run > small,
 .chip-strategy-result > small {
   font-size: 11px;
-  color: #899ab2;
+  color: #94a6bf;
 }
 .chip-strategy-run {
   display: flex;
@@ -63,6 +109,10 @@
   color: #ffae9a !important;
   margin: 10px 0 !important;
   font-size: 12px;
+}
+.chip-strategy-stale {
+  margin: 10px 0 4px;
+  font-size: 11px;
 }
 .chip-strategy-result {
   margin-top: 14px;
@@ -81,7 +131,7 @@
 .chip-strategy-result > header small {
   display: block;
   margin-top: 4px;
-  color: #91a1b9;
+  color: #94a6bf;
   font-size: 11px;
 }
 .chip-strategy-result progress {
@@ -92,7 +142,7 @@
 }
 .chip-strategy-coverage {
   font-size: 11px;
-  color: #91a1b9;
+  color: #94a6bf;
   margin: 5px 0 10px;
 }
 .chip-strategy-best {
@@ -114,6 +164,7 @@
   font-size: 22px;
   color: #ff895b;
   text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 .chip-strategy-best > strong small {
   display: block;
@@ -136,9 +187,29 @@
   padding: 9px 8px;
   white-space: nowrap;
 }
+.chip-strategy-table th.numeric,
+.chip-strategy-table td.numeric {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
 .chip-strategy-table .best-candidate td {
   background: #ff895b0c;
   color: #ffd0b8;
+}
+.chip-strategy-failures {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid #593939;
+  border-radius: 5px;
+  background: #1a1318;
+}
+.chip-strategy-failures p {
+  font-size: 11px;
+  color: #ffb6a8;
+  line-height: 1.5;
+}
+.chip-strategy-failures p + p {
+  margin-top: 4px;
 }
 .chip-strategy-actions {
   display: flex;
@@ -154,19 +225,24 @@
   color: #9aacc3;
   line-height: 1.6;
 }
-@media (max-width: 480px) {
-  .chip-search-limits .field-grid {
+@container (max-width: 480px) {
+  .chip-strategy .chip-search-limits .field-grid {
     grid-template-columns: 1fr;
   }
-  .chip-strategy-best {
+  .chip-strategy .chip-strategy-best {
     grid-template-columns: 1fr;
   }
-  .chip-strategy-best > strong {
+  .chip-strategy .chip-strategy-best > strong {
     grid-column: 1;
     grid-row: auto;
     text-align: left;
   }
-  .chip-strategy-best > strong small {
+  .chip-strategy .chip-strategy-best > strong small {
     max-width: none;
+  }
+}
+@container (max-width: 360px) {
+  .chip-strategy .chip-strategy-controls {
+    grid-template-columns: 1fr;
   }
 }

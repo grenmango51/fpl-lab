@@ -5,6 +5,42 @@ import type { Plan } from "./types";
 import { useViewState } from "./useViewState";
 import { TabStrip } from "./TabStrip";
 
+const colors = [
+  "#ff8e66",
+  "#69cbb3",
+  "#7ea8ff",
+  "#ce9bff",
+  "#e3c576",
+  "#ed829b",
+];
+
+export function formatPlanGWs(weeks: readonly { gw: number }[]) {
+  if (!weeks.length) return "—";
+  const gws = weeks.map((week) => week.gw);
+  const first = Math.min(...gws);
+  const last = Math.max(...gws);
+  return first === last ? `GW${first}` : `GW${first}–${last}`;
+}
+
+export function comparisonYBounds(values: readonly number[]) {
+  const finite = values.filter(Number.isFinite);
+  if (!finite.length) return { min: 0, max: 4 };
+  const rawMin = Math.min(...finite);
+  const rawMax = Math.max(...finite);
+  const rawSpan = rawMax - rawMin;
+  const pad = Math.max(2, rawSpan * 0.16);
+  const targetLow = rawMin >= 0 ? Math.max(0, rawMin - pad) : rawMin - pad;
+  const targetHigh = rawMax + pad;
+  let step = Math.max(1, Math.ceil((targetHigh - targetLow) / 4));
+  let min = Math.floor((rawMin + rawMax) / 2 - step * 2);
+  if (rawMin >= 0 && min < 0) min = 0;
+  if (min > Math.floor(targetLow)) min = Math.floor(targetLow);
+  while (min + step * 4 < Math.ceil(targetHigh)) {
+    step += 1;
+  }
+  return { min, max: min + step * 4 };
+}
+
 export function PlanComparisonView({
   plans,
   activeId,
@@ -21,26 +57,34 @@ export function PlanComparisonView({
     () => alignPlanGameweeks(selected),
     [plans, excluded],
   );
-  const colors = [
-    "#ff8e66",
-    "#69cbb3",
-    "#7ea8ff",
-    "#ce9bff",
-    "#e3c576",
-    "#ed829b",
-  ];
-  const points = matched.plans.map((row, index) => ({
+  const planColor = (id: string) => {
+    const index = plans.findIndex((plan) => plan.id === id);
+    return colors[(index >= 0 ? index : 0) % colors.length];
+  };
+  const points = matched.plans.map((row) => ({
     ...row,
-    color: colors[index % colors.length],
+    color: planColor(row.plan.id),
     bank: Math.min(...row.weeks.map((week) => week.bank)),
     transfers: row.weeks.reduce(
       (sum, week) => sum + week.transfers_in.length,
       0,
     ),
   }));
-  const minimum = Math.min(...points.map((row) => row.points), 0),
-    maximum = Math.max(...points.map((row) => row.points), 1);
+  const orderedPoints = [
+    ...points.filter((row) => row.plan.id !== activeId),
+    ...points.filter((row) => row.plan.id === activeId),
+  ];
+  const { min: minimum, max: maximum } = comparisonYBounds(
+    points.map((row) => row.points),
+  );
   const bankMax = Math.max(...points.map((row) => row.bank), 1);
+  const xLeft = 48;
+  const xRight = 436;
+  const plotWidth = xRight - xLeft;
+  const yTop = 30;
+  const yBottom = 194;
+  const plotHeight = yBottom - yTop;
+
   return (
     <section className="plan-comparison-view">
       <header>
@@ -53,22 +97,24 @@ export function PlanComparisonView({
             { id: "scatter", label: "Scatter" },
           ]}
         />
-        <button
-          className="button small"
-          onClick={() =>
-            setExcluded(
-              selected.length === plans.length
-                ? plans.map((plan) => plan.id)
-                : [],
-            )
-          }
-        >
-          {selected.length === plans.length ? "Deselect all" : "Select all"}
-        </button>
+        {plans.length > 1 && (
+          <button
+            className="button small"
+            onClick={() =>
+              setExcluded(
+                selected.length === plans.length
+                  ? plans.map((plan) => plan.id)
+                  : [],
+              )
+            }
+          >
+            {selected.length === plans.length ? "Deselect all" : "Select all"}
+          </button>
+        )}
       </header>
       <p className="comparison-period">
         {matched.gameweeks.length
-          ? `${matched.gameweeks.length} shared GWs · GW${matched.gameweeks[0]}–${matched.gameweeks.at(-1)} · net of hits`
+          ? `${matched.gameweeks.length} shared GW${matched.gameweeks.length === 1 ? "" : "s"} · ${formatPlanGWs(matched.gameweeks.map((gw) => ({ gw })))} · net of hits`
           : "Select plans with shared gameweeks to compare."}
       </p>
       {view === "table" ? (
@@ -76,18 +122,21 @@ export function PlanComparisonView({
           <table className="data-table plan-comparison-table">
             <thead>
               <tr>
-                <th></th>
+                <th>
+                  <span className="sr-only">Compare</span>
+                </th>
                 <th>Plan</th>
                 <th>GWs</th>
-                <th>Matched xPts</th>
-                <th>Moves</th>
-                <th>Hits</th>
-                <th>Min bank</th>
+                <th className="numeric">Matched xPts</th>
+                <th className="numeric">Moves</th>
+                <th className="numeric">Hits</th>
+                <th className="numeric">Min bank</th>
               </tr>
             </thead>
             <tbody>
               {plans.map((plan) => {
                 const row = points.find((item) => item.plan.id === plan.id);
+                const included = !excluded.includes(plan.id);
                 return (
                   <tr
                     key={plan.id}
@@ -97,7 +146,7 @@ export function PlanComparisonView({
                       <input
                         type="checkbox"
                         aria-label={`Compare ${plan.name}`}
-                        checked={!excluded.includes(plan.id)}
+                        checked={included}
                         onChange={() =>
                           setExcluded((ids) =>
                             ids.includes(plan.id)
@@ -113,21 +162,26 @@ export function PlanComparisonView({
                         aria-current={plan.id === activeId ? "true" : undefined}
                         onClick={() => onPlan(plan.id)}
                       >
-                        <i style={{ background: row?.color ?? "#4a5b70" }} />
+                        <i
+                          style={{
+                            background: planColor(plan.id),
+                            opacity: included ? 1 : 0.4,
+                          }}
+                        />
                         {plan.name}
                       </button>
                     </td>
-                    <td>
-                      {plan.weeks[0]?.gw}–{plan.weeks.at(-1)?.gw}
-                    </td>
+                    <td>{formatPlanGWs(plan.weeks)}</td>
                     <td className="numeric">
                       {row && matched.gameweeks.length ? fmt(row.points) : "—"}
                     </td>
-                    <td>
+                    <td className="numeric">
                       {row && matched.gameweeks.length ? row.transfers : "—"}
                     </td>
-                    <td>{row && matched.gameweeks.length ? row.hits : "—"}</td>
-                    <td>
+                    <td className="numeric">
+                      {row && matched.gameweeks.length ? row.hits : "—"}
+                    </td>
+                    <td className="numeric">
                       {row && matched.gameweeks.length ? money(row.bank) : "—"}
                     </td>
                   </tr>
@@ -140,78 +194,93 @@ export function PlanComparisonView({
         <>
           <svg
             className="comparison-scatter"
-            viewBox="0 0 580 300"
+            viewBox="0 0 460 240"
             role="img"
             aria-label="Matched expected points versus minimum bank"
           >
-            <text x="12" y="18" fill="#8fa6c5" fontSize="11">
+            <text x="12" y="17" fill="#95abc9" fontSize="12">
               Matched net xPts
             </text>
-            {[0, 0.25, 0.5, 0.75, 1].map((n) => (
-              <g key={n}>
-                <path d={`M55 ${250 - n * 210} H555`} stroke="#24354d" />
-                <text
-                  x="47"
-                  y={254 - n * 210}
-                  textAnchor="end"
-                  fill="#8fa6c5"
-                  fontSize="10"
-                >
-                  {fmt(minimum + n * (maximum - minimum), 0)}
-                </text>
-              </g>
-            ))}
+            {[0, 0.25, 0.5, 0.75, 1].map((n) => {
+              const y = yBottom - n * plotHeight;
+              return (
+                <g key={n}>
+                  <path d={`M${xLeft} ${y} H${xRight}`} stroke="#24354d" />
+                  <text
+                    x={xLeft - 7}
+                    y={y + 4}
+                    textAnchor="end"
+                    fill="#95abc9"
+                    fontSize="12"
+                  >
+                    {fmt(minimum + n * (maximum - minimum), 0)}
+                  </text>
+                </g>
+              );
+            })}
             <text
-              x="310"
-              y="288"
+              x={xLeft + plotWidth / 2}
+              y="233"
               textAnchor="middle"
-              fill="#8fa6c5"
-              fontSize="11"
+              fill="#95abc9"
+              fontSize="12"
             >
               Minimum bank (£m)
             </text>
             {[0, 0.25, 0.5, 0.75, 1].map((n) => (
               <text
                 key={n}
-                x={55 + n * 490}
-                y="269"
+                x={xLeft + n * plotWidth}
+                y="214"
                 textAnchor="middle"
-                fill="#8fa6c5"
-                fontSize="10"
+                fill="#95abc9"
+                fontSize="12"
               >
                 {fmt(n * bankMax)}
               </text>
             ))}
-            {points.map((row) => (
-              <g
-                key={row.plan.id}
-                tabIndex={0}
-                role="button"
-                aria-label={`Select ${row.plan.name}`}
-                onClick={() => onPlan(row.plan.id)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    onPlan(row.plan.id);
-                  }
-                }}
-              >
-                <title>
-                  {row.plan.name}: {fmt(row.points)} net xPts ·{" "}
-                  {money(row.bank)} minimum bank · {row.transfers} moves
-                </title>
-                <circle
-                  cx={55 + (row.bank / bankMax) * 490}
-                  cy={
-                    250 - ((row.points - minimum) / (maximum - minimum)) * 210
-                  }
-                  r={row.plan.id === activeId ? 8 : 6}
-                  fill={row.color}
-                  stroke={row.plan.id === activeId ? "#fff" : "transparent"}
-                  strokeWidth="2"
-                />
-              </g>
-            ))}
+            {orderedPoints.map((row) => {
+              const cx =
+                xLeft + (Math.max(0, row.bank) / bankMax) * plotWidth;
+              const cy =
+                yBottom -
+                ((row.points - minimum) / Math.max(1e-6, maximum - minimum)) *
+                  plotHeight;
+              const isActive = row.plan.id === activeId;
+              return (
+                <g
+                  key={row.plan.id}
+                  tabIndex={0}
+                  role="button"
+                  aria-label={`Select ${row.plan.name}`}
+                  onClick={() => onPlan(row.plan.id)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      onPlan(row.plan.id);
+                    }
+                  }}
+                >
+                  <title>{`${row.plan.name}: ${fmt(row.points)} net xPts · ${money(row.bank)} minimum bank · ${row.transfers} moves`}</title>
+                  <circle cx={cx} cy={cy} r={14} fill="transparent" />
+                  <circle
+                    className="comparison-point-ring"
+                    cx={cx}
+                    cy={cy}
+                    r={isActive ? 11 : 9.5}
+                    fill="none"
+                  />
+                  <circle
+                    cx={cx}
+                    cy={cy}
+                    r={isActive ? 7.5 : 6}
+                    fill={row.color}
+                    stroke={isActive ? "#fff" : "#0b1628"}
+                    strokeWidth={isActive ? 2 : 1.5}
+                  />
+                </g>
+              );
+            })}
           </svg>
           <div className="comparison-scatter-key">
             {points.map((row) => (

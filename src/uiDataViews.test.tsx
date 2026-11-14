@@ -187,7 +187,7 @@ describe("owned data views and tab strip", () => {
     }
   });
 
-  it("LeadTimeView reads selected model coverage instead of hardcoded FPL Form and marks errors as alert", () => {
+  it("LeadTimeView reads selected model coverage instead of hardcoded FPL Form and marks errors as alert", async () => {
     const report: LeadTimeReport = {
       inventory: {
         bins: [
@@ -228,19 +228,49 @@ describe("owned data views and tab strip", () => {
         ],
       },
     };
-    hooks.values[0] = report;
-    hooks.values[1] = "Network down";
     const data = {
       teams: [],
       events: [],
       gameweeks: [10],
     } as unknown as Bootstrap;
-    const html = renderToStaticMarkup(
-      createElement(LeadTimeView, { captureKey: "k1", data }),
-    );
-    expect(html).toContain("<td>280/280 eligible</td>");
-    expect(html).not.toContain("<td>0/280 eligible</td>");
-    expect(html).toContain('role="alert"');
+
+    const prevFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(async (url: string) => {
+      if (url === "/api/lead-time") {
+        return { ok: true, json: async () => report };
+      }
+      throw new Error("Network down");
+    }) as unknown as typeof fetch;
+
+    try {
+      hooks.effects = [];
+      hooks.cursor = 0;
+      walk(createElement(LeadTimeView, { captureKey: "k1", data }));
+      const cleanups = hooks.effects.map((effect) => effect());
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      // Trigger Score button via UI handler to surface error alert while keeping loaded report:
+      hooks.cursor = 0;
+      const scoreBtn = walk(
+        createElement(LeadTimeView, { captureKey: "k1", data }),
+      ).find((n) => n.type === "button" && n.props.children === "Score");
+      expect(scoreBtn).toBeDefined();
+      await scoreBtn!.props.onClick();
+
+      hooks.cursor = 0;
+      const html = renderToStaticMarkup(
+        createElement(LeadTimeView, { captureKey: "k1", data }),
+      );
+      expect(html).toContain("<td>280/280 eligible</td>");
+      expect(html).not.toContain("<td>0/280 eligible</td>");
+      expect(html).toContain('role="alert"');
+      expect(html).toContain("Network down");
+
+      for (const cleanup of cleanups)
+        if (typeof cleanup === "function") cleanup();
+    } finally {
+      globalThis.fetch = prevFetch;
+    }
   });
 
   it("ProspectiveView discloses Showing latest 5 of N and toggles to show all captures", () => {
@@ -259,29 +289,26 @@ describe("owned data views and tab strip", () => {
       gameweeks: [],
     };
     const data = { events: [], forecast_layers: [] } as unknown as Bootstrap;
+    const props = { data, report, onScore: vi.fn(), busy: false };
 
     hooks.cursor = 0;
     const collapsed = renderToStaticMarkup(
-      createElement(ProspectiveView, {
-        data,
-        report,
-        onScore: vi.fn(),
-        busy: false,
-      }),
+      createElement(ProspectiveView, props),
     );
     expect(collapsed).toContain("Showing latest 5 of 7");
     expect(collapsed).toContain("gw10.json");
     expect(collapsed).not.toContain("gw4.json");
 
-    hooks.values[0] = true;
+    hooks.cursor = 0;
+    const viewAllBtn = walk(createElement(ProspectiveView, props)).find(
+      (n) => n.type === "button" && n.props.children === "View all",
+    );
+    expect(viewAllBtn).toBeDefined();
+    viewAllBtn!.props.onClick();
+
     hooks.cursor = 0;
     const expanded = renderToStaticMarkup(
-      createElement(ProspectiveView, {
-        data,
-        report,
-        onScore: vi.fn(),
-        busy: false,
-      }),
+      createElement(ProspectiveView, props),
     );
     expect(expanded).toContain("Showing all 7 captures");
     expect(expanded).toContain("gw4.json");
@@ -377,13 +404,41 @@ describe("owned data views and tab strip", () => {
     expect(onDetail).toHaveBeenCalledWith(1, 9);
   });
 
-  it("DataRefreshSettings renders shortened status copy and orange alert text", () => {
-    hooks.values[0] = null;
-    hooks.values[1] = "Timeout";
-    const html = renderToStaticMarkup(createElement(DataRefreshSettings));
-    expect(html).toContain("Waiting for first check.");
-    expect(html).toContain("Solio updates ~4h; requires running server.");
-    expect(html).toContain('class="orange help-text" role="alert"');
+  it("DataRefreshSettings renders shortened status copy and orange alert text", async () => {
+    const prevFetch = globalThis.fetch;
+    const prevWindow = (globalThis as Record<string, unknown>).window;
+    globalThis.fetch = vi.fn(() =>
+      Promise.reject(new Error("Timeout")),
+    ) as unknown as typeof fetch;
+    (globalThis as Record<string, unknown>).window = {
+      setInterval: vi.fn(() => 1),
+      clearInterval: vi.fn(),
+    };
+
+    try {
+      hooks.effects = [];
+      hooks.cursor = 0;
+      walk(createElement(DataRefreshSettings));
+      const cleanups = hooks.effects.map((effect) => effect());
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      hooks.cursor = 0;
+      const html = renderToStaticMarkup(createElement(DataRefreshSettings));
+      expect(html).toContain("Waiting for first check.");
+      expect(html).toContain("Solio updates ~4h; requires running server.");
+      expect(html).toContain('class="orange help-text" role="alert"');
+      expect(html).toContain("Timeout");
+
+      for (const cleanup of cleanups)
+        if (typeof cleanup === "function") cleanup();
+    } finally {
+      globalThis.fetch = prevFetch;
+      if (prevWindow === undefined) {
+        delete (globalThis as Record<string, unknown>).window;
+      } else {
+        (globalThis as Record<string, unknown>).window = prevWindow;
+      }
+    }
   });
 
   it("SeasonData paginates >50 rows, resets page on Per 90, places fallback above workspace, flips right-edge scatter labels, and hides map player select for teams", async () => {

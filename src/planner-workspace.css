@@ -399,7 +399,7 @@
 }
 .projection-value sup {
   color: #ffd4bd;
-  font-size: 8px;
+  font-size: 9px;
 }
 .projection-value[aria-pressed="true"] {
   outline: 2px solid var(--orange);
@@ -448,6 +448,20 @@
   grid-template-columns: 40px repeat(3, minmax(0, 1fr));
   gap: 10px;
   padding: 4px 0 9px;
+}
+.player-window .player-detail-top > .stat,
+.projection-player-editor .player-detail-top > .stat {
+  min-width: 0;
+  padding: 8px;
+}
+.player-window .player-detail-top > .stat:nth-child(4),
+.projection-player-editor .player-detail-top > .stat:nth-child(4) {
+  display: block;
+}
+.player-window .player-detail-top .eyebrow,
+.projection-player-editor .player-detail-top .eyebrow {
+  font-size: 9px;
+  letter-spacing: 0.3px;
 }
 .projection-player-editor .player-detail-top .shirt {
   width: 38px;
@@ -609,6 +623,9 @@ details.player-minutes-options > .minutes-schedule-editor > h3 {
 .projection-player-editor .transfer-list {
   max-height: none;
   overflow: visible;
+}
+.projection-player-editor .transfer-list th {
+  position: static;
 }
 .transfer-player-cell {
   display: flex;

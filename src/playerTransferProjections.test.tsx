@@ -298,7 +298,23 @@ describe("ProjectionExplorer UI & state sync", () => {
       ),
     ).toBe(false);
 
-    // Clicking a sort header resets page to 0 (slot 1 is page state)
+    // Position filter group ARIA & aria-sort on sortable headers
+    const posGroup = nodes(treeAfterClear).find(
+      (n) =>
+        n.props.role === "group" &&
+        n.props["aria-label"] === "Filter by position",
+    )!;
+    expect(posGroup).toBeDefined();
+    const allPosBtn = nodes(posGroup).find(
+      (n) => n.type === "button" && n.props.children === "All",
+    )!;
+    const midPosBtn = nodes(posGroup).find(
+      (n) => n.type === "button" && n.props.children === "MID",
+    )!;
+    expect(allPosBtn.props["aria-pressed"]).toBe(false);
+    expect(midPosBtn.props["aria-pressed"]).toBe(true);
+
+    // Clicking a sort header resets page to 0 (slot 1 is page state) and updates aria-sort
     state.values[1] = 2;
     const priceHeaderBtn = nodes(treeAfterClear).find(
       (n) =>
@@ -309,6 +325,24 @@ describe("ProjectionExplorer UI & state sync", () => {
     priceHeaderBtn.props.onClick();
     expect(state.viewStore["projections.sort"]).toBe("price");
     expect(state.values[1]).toBe(0);
+
+    let sortedTree = render();
+    let ths = nodes(sortedTree).filter((n) => n.type === "th");
+    expect(ths[0].props["aria-sort"]).toBe("none");
+    expect(ths[1].props["aria-sort"]).toBe("descending");
+
+    // Clicking again toggles to ascending
+    nodes(sortedTree)
+      .find(
+        (n) =>
+          n.type === "button" &&
+          Array.isArray(n.props.children) &&
+          n.props.children[0] === "£",
+      )!
+      .props.onClick();
+    sortedTree = render();
+    ths = nodes(sortedTree).filter((n) => n.type === "th");
+    expect(ths[1].props["aria-sort"]).toBe("ascending");
   });
 
   it("guards null source_at in TeamProjectionGrid fixture titles", () => {

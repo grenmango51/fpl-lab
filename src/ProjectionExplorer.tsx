@@ -222,6 +222,8 @@ export function ProjectionsView({
       ),
     [rows.length],
   );
+  const ariaSort = (key: string): "ascending" | "descending" | "none" =>
+    activeSort === key ? (descending ? "descending" : "ascending") : "none";
   const header = (label: string, key: string) => (
     <button
       type="button"
@@ -453,11 +455,17 @@ export function ProjectionsView({
             </button>
           </div>
           <div className="projection-filter-bar">
-            <div className="projection-position-tabs segmented">
+            <div
+              className="projection-position-tabs segmented"
+              role="group"
+              aria-label="Filter by position"
+            >
               {["ALL", "GKP", "DEF", "MID", "FWD"].map((value) => (
                 <button
                   key={value}
+                  type="button"
                   className={position === value ? "active" : ""}
+                  aria-pressed={position === value}
                   onClick={() => {
                     setPosition(value);
                     setPage(0);
@@ -528,17 +536,30 @@ export function ProjectionsView({
             <table className="data-table projections-table">
               <thead>
                 <tr>
-                  <th className="projection-player-col">
+                  <th
+                    className="projection-player-col"
+                    aria-sort={ariaSort("name")}
+                  >
                     {header("Name", "name")}
                   </th>
-                  <th className="numeric">{header("£", "price")}</th>
-                  <th className="numeric">{header("Avg", "average")}</th>
+                  <th className="numeric" aria-sort={ariaSort("price")}>
+                    {header("£", "price")}
+                  </th>
+                  <th className="numeric" aria-sort={ariaSort("average")}>
+                    {header("Avg", "average")}
+                  </th>
                   {weeks.map((week) => (
-                    <th key={week} className="projection-gw-col">
+                    <th
+                      key={week}
+                      className="projection-gw-col"
+                      aria-sort={ariaSort(`gw${week}`)}
+                    >
                       {header(`GW${week}`, `gw${week}`)}
                     </th>
                   ))}
-                  <th className="numeric">{header("Σ xPts", "total")}</th>
+                  <th className="numeric" aria-sort={ariaSort("total")}>
+                    {header("Σ xPts", "total")}
+                  </th>
                   {selectedPlayer ? <th className="numeric">Δ xPts</th> : null}
                   <th></th>
                 </tr>

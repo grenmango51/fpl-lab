@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowDownUp, ChevronDown, RotateCcw } from "lucide-react";
 import { Badge } from "./components";
 import { FixtureDetail } from "./FixtureDetail";
@@ -18,6 +18,47 @@ import {
 } from "./fixtureData";
 import type { Bootstrap } from "./types";
 import "./fixture-explorer.css";
+
+export type TrendPoint = {
+  week: number;
+  value: number | null;
+  blank: boolean;
+};
+
+export function fixtureTrendScale(
+  values: readonly number[],
+  metric: FixtureMetric,
+): { low: number; high: number; baseline: number } {
+  if (metric === "difficulty") {
+    return {
+      low: Math.min(1, ...values),
+      high: Math.max(5, ...values),
+      baseline: 3,
+    };
+  }
+  const minSpan = metric === "cs" ? 0.5 : 1;
+  const low = Math.min(0, ...values);
+  return {
+    low,
+    high: Math.max(low + minSpan, ...values),
+    baseline: 0,
+  };
+}
+
+export function formatTrendPoint(
+  point: TrendPoint,
+  metric: FixtureMetric,
+): string {
+  if (point.blank) return "Blank";
+  if (point.value === null || !Number.isFinite(point.value))
+    return "unavailable";
+  if (metric === "cs") return `${fmt(point.value * 100, 0)}%`;
+  if (metric === "difficulty")
+    return `FDR ${fmt(point.value, Number.isInteger(point.value) ? 0 : 1)}`;
+  if (metric === "gd")
+    return `${point.value > 0 ? "+" : ""}${fmt(point.value, 2)}`;
+  return fmt(point.value, 2);
+}
 
 export function FixtureExplorer({
   data,
@@ -45,9 +86,34 @@ export function FixtureExplorer({
     "fixtures.columnSort",
     { column: "club", direction: "ascending" },
   );
+  const [openFilter, setOpenFilter] = useState<"teams" | "weeks" | null>(null);
   const [selected, setSelected] = useState<{ team: number; gw: number } | null>(
     null,
   );
+  const teamsFilterRef = useRef<HTMLDetailsElement>(null);
+  const weeksFilterRef = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    if (!openFilter) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (
+        target &&
+        !teamsFilterRef.current?.contains(target) &&
+        !weeksFilterRef.current?.contains(target)
+      ) {
+        setOpenFilter(null);
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpenFilter(null);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [openFilter]);
   const available = fixtureSourceWeeks(data.gameweeks);
   const remaining = available.filter((week) => week >= gw);
   const effectiveHorizon = Math.min(horizon, remaining.length);
@@ -59,19 +125,31 @@ export function FixtureExplorer({
   );
   const sort = fixtureSortForWeeks(savedSort, weeks);
   const rows = fixtureRows(data, weeks, metric, selectedTeams, sort);
-  const trends = new Map(
+  const trends = new Map<number, TrendPoint[]>(
     rows.map((row) => [
       row.team.id,
-      weeks.map((week) => fixtureTotal([row.forecasts[String(week)]], metric)),
+      weeks.map((week) => {
+        const forecast = row.forecasts[String(week)];
+        const blank = Boolean(forecast && forecast.fixtures.length === 0);
+        return {
+          week,
+          value: fixtureTotal([forecast], metric),
+          blank,
+        };
+      }),
     ]),
   );
   const trendValues = [...trends.values()]
     .flat()
+    .map((point) => point.value)
     .filter(
       (value): value is number => value !== null && Number.isFinite(value),
     );
-  const trendLow = Math.min(0, ...trendValues);
-  const trendHigh = Math.max(trendLow + 1, ...trendValues);
+  const {
+    low: trendLow,
+    high: trendHigh,
+    baseline: trendBaseline,
+  } = fixtureTrendScale(trendValues, metric);
   const chosenTeams = data.teams.filter(
     (team) => selectedTeams === null || selectedTeams.includes(team.id),
   );
@@ -131,6 +209,7 @@ export function FixtureExplorer({
           : "Total goals";
   const sortButton = (column: FixtureSort["column"], label: string) => (
     <button
+      type="button"
       className="fixture-sort"
       onClick={() => sortBy(column)}
       title={`Sort by ${label}`}
@@ -151,12 +230,16 @@ export function FixtureExplorer({
     : "No gameweeks";
   return (
     <div className="fixture-explorer">
-      {data.fixture_scenario ? (
-        <p className="subtle-tag">Your fixture schedule is active.</p>
-      ) : null}
-      {data.team_strength_scenario ? (
-        <p className="subtle-tag">Your team-strength assumptions are active.</p>
-      ) : null}
+      {(data.fixture_scenario || data.team_strength_scenario) && (
+        <div className="fixture-scenario-tags">
+          {data.fixture_scenario && (
+            <span className="subtle-tag">Custom schedule active</span>
+          )}
+          {data.team_strength_scenario && (
+            <span className="subtle-tag">Team strengths active</span>
+          )}
+        </div>
+      )}
       <div className="view-heading compact-view-heading">
         <h2>Fixtures</h2>
         <TabStrip
@@ -178,6 +261,11 @@ export function FixtureExplorer({
             aria-label="Fixture horizon"
             value={effectiveHorizon}
             disabled={selectedWeeks !== null}
+            title={
+              selectedWeeks !== null
+                ? "Reset Filter GWs to use horizon"
+                : undefined
+            }
             onChange={(event) => setHorizon(Number(event.target.value))}
           >
             {[
@@ -203,14 +291,31 @@ export function FixtureExplorer({
               ))}
           </select>
         </label>
-        <details className="fixture-filter">
-          <summary>
-            Teams <b>{allTeams ? "All" : chosenTeams.length}</b>
+        <details
+          ref={teamsFilterRef}
+          className={`fixture-filter${!allTeams ? " is-active" : ""}`}
+          open={openFilter === "teams"}
+        >
+          <summary
+            onClick={(event) => {
+              event.preventDefault();
+              setOpenFilter((current) =>
+                current === "teams" ? null : "teams",
+              );
+            }}
+          >
+            <span>
+              Teams <b>({allTeams ? "All" : chosenTeams.length})</b>
+            </span>
           </summary>
           <div className="fixture-filter-body">
             <div className="button-row">
-              <button onClick={() => setSelectedTeams(null)}>Select all</button>
-              <button onClick={() => setSelectedTeams([])}>Clear</button>
+              <button type="button" onClick={() => setSelectedTeams(null)}>
+                Select all
+              </button>
+              <button type="button" onClick={() => setSelectedTeams([])}>
+                Clear
+              </button>
             </div>
             <div className="fixture-team-choices">
               {data.teams.map((team) => (
@@ -226,9 +331,22 @@ export function FixtureExplorer({
             </div>
           </div>
         </details>
-        <details className="fixture-filter fixture-week-filter">
-          <summary>
-            Gameweeks <b>{weeks.length}</b>
+        <details
+          ref={weeksFilterRef}
+          className={`fixture-filter fixture-week-filter${selectedWeeks !== null ? " is-active" : ""}`}
+          open={openFilter === "weeks"}
+        >
+          <summary
+            onClick={(event) => {
+              event.preventDefault();
+              setOpenFilter((current) =>
+                current === "weeks" ? null : "weeks",
+              );
+            }}
+          >
+            <span>
+              Filter GWs <b>({weeks.length})</b>
+            </span>
           </summary>
           <div className="fixture-filter-body">
             <div className="fixture-range">
@@ -284,17 +402,19 @@ export function FixtureExplorer({
               </label>
             </div>
             <div className="button-row">
-              <button onClick={() => setSelectedWeeks(available)}>
+              <button type="button" onClick={() => setSelectedWeeks(available)}>
                 All GWs
               </button>
-              <button onClick={() => setSelectedWeeks([])}>Clear</button>
-              <button onClick={() => setSelectedWeeks(null)}>
+              <button type="button" onClick={() => setSelectedWeeks([])}>
+                Clear
+              </button>
+              <button type="button" onClick={() => setSelectedWeeks(null)}>
                 <RotateCcw size={12} />
                 Reset
               </button>
             </div>
             <p className="fixture-selection-caption">
-              Untick a Free Hit week to exclude it from totals.
+              Untick a Free Hit GW to exclude it.
             </p>
             <div className="fixture-week-choices">
               {available.map((week) => (
@@ -312,6 +432,7 @@ export function FixtureExplorer({
           </div>
         </details>
         <button
+          type="button"
           className="button small"
           onClick={() =>
             setSort({
@@ -322,7 +443,7 @@ export function FixtureExplorer({
         >
           Best{" "}
           {metric === "difficulty"
-            ? "fixtures"
+            ? "run"
             : metric === "cs"
               ? "defence"
               : metric === "goals"
@@ -331,10 +452,12 @@ export function FixtureExplorer({
         </button>
         {(selectedWeeks !== null || selectedTeams !== null) && (
           <button
+            type="button"
             className="button small"
             onClick={() => {
               setSelectedTeams(null);
               setSelectedWeeks(null);
+              setOpenFilter(null);
             }}
           >
             Reset filters
@@ -342,7 +465,7 @@ export function FixtureExplorer({
         )}
       </div>
       <p className="fixture-selection-caption" title={weekLabel}>
-        {chosenTeams.length} clubs · {weeks.length} gameweeks
+        {chosenTeams.length} clubs · {weeks.length} GWs
         {selectedWeeks !== null ? " · Custom GWs" : ""}
       </p>
       {weeks.length && rows.length ? (
@@ -355,7 +478,13 @@ export function FixtureExplorer({
                 >
                   {sortButton("club", "Club")}
                 </th>
-                <th title="Selected GWs; shared scale across displayed clubs">
+                <th
+                  title={
+                    metric === "difficulty"
+                      ? "Selected GWs; shared scale (higher = easier)"
+                      : "Selected GWs; shared scale across displayed clubs"
+                  }
+                >
                   Trend
                 </th>
                 {weeks.map((week) => (
@@ -377,18 +506,20 @@ export function FixtureExplorer({
               {rows.map((row) => (
                 <tr key={row.team.id}>
                   <td>
-                    <div className="club-cell">
+                    <div className="club-cell" title={row.team.name}>
                       <Badge code={row.team.code} />
-                      <b>{row.team.name}</b>
+                      <b className="club-name-full">{row.team.name}</b>
+                      <b className="club-name-short">{row.team.short_name}</b>
                     </div>
                   </td>
                   <td className="fixture-trend-cell">
                     <FixtureTrend
                       club={row.team.name}
-                      weeks={weeks}
-                      values={trends.get(row.team.id)!}
+                      metric={metric}
+                      points={trends.get(row.team.id)!}
                       low={trendLow}
                       high={trendHigh}
+                      baseline={trendBaseline}
                     />
                   </td>
                   {weeks.map((week) => {
@@ -403,28 +534,31 @@ export function FixtureExplorer({
                                 index,
                                 metric,
                               );
+                              const metricText =
+                                metric === "difficulty"
+                                  ? `FDR ${value}`
+                                  : metric === "cs"
+                                    ? `${fmt(value * 100, 0)}% CS`
+                                    : metric === "gd"
+                                      ? `${value > 0 ? "+" : ""}${fmt(value, 2)} GD`
+                                      : `${fmt(value, 2)} xG`;
+                              const venue = fixture.home ? "H" : "A";
                               return (
                                 <button
+                                  type="button"
                                   key={fixture.id}
                                   className={`fixture-chip fdr-${fixture.difficulty}`}
+                                  aria-haspopup="dialog"
+                                  aria-label={`${row.team.name} GW${week}: ${fixture.opponent} (${venue}), ${metricText}`}
                                   onClick={() =>
                                     setSelected({ team: row.team.id, gw: week })
                                   }
-                                  title={`${row.team.name} v ${fixture.opponent} · ${fixture.source} · ${fixture.source_at ?? "Provider time unknown"}`}
+                                  title={`${row.team.name} · GW${week} v ${fixture.opponent} (${venue}) · ${fixture.source} · ${fixture.source_at ?? "Provider time unknown"}`}
                                 >
                                   <b>
-                                    {fixture.opponent}{" "}
-                                    <span>({fixture.home ? "H" : "A"})</span>
+                                    {fixture.opponent} <span>({venue})</span>
                                   </b>
-                                  <small>
-                                    {metric === "difficulty"
-                                      ? `FDR ${value}`
-                                      : metric === "cs"
-                                        ? `${fmt(value * 100, 0)}% CS`
-                                        : metric === "gd"
-                                          ? `${value > 0 ? "+" : ""}${fmt(value, 2)} GD`
-                                          : `${fmt(value, 2)} xG`}
-                                  </small>
+                                  <small>{metricText}</small>
                                 </button>
                               );
                             })
@@ -460,12 +594,12 @@ export function FixtureExplorer({
         <p className="inline-empty">Select at least one club and gameweek.</p>
       )}
       <details className="compact-details source-caption">
-        <summary>Sources and totals</summary>
+        <summary>Sources & totals</summary>
         <p>
-          Official FDR. Goals and CS use FPL Joe, Elevenify or the labelled
-          fallback. GD = goals for − against. Total CS is an expected count; Avg
-          FDR is per fixture. Doubles count both fixtures; blanks count zero.
-          Open a fixture for source times.
+          Official FDR. Goals and CS use FPL Joe, Elevenify or labelled
+          fallback. GD = goals for − against; Total CS = expected clean sheets;
+          Avg FDR = mean per fixture. Doubles sum both; blanks count zero. Click
+          a fixture for timestamps.
         </p>
       </details>
       {selected && (
@@ -481,54 +615,68 @@ export function FixtureExplorer({
   );
 }
 
-function FixtureTrend({
+export function FixtureTrend({
   club,
-  weeks,
-  values,
+  metric,
+  points,
   low,
   high,
+  baseline,
 }: {
   club: string;
-  weeks: number[];
-  values: (number | null)[];
+  metric: FixtureMetric;
+  points: TrendPoint[];
   low: number;
   high: number;
+  baseline: number;
 }) {
   const x = (index: number) =>
-    weeks.length === 1
+    points.length === 1
       ? 42
-      : 3 + (78 * (weeks[index] - weeks[0])) / (weeks.at(-1)! - weeks[0]);
-  const y = (value: number) => 29 - (24 * (value - low)) / (high - low);
+      : 3 +
+        (78 * (points[index].week - points[0].week)) /
+          (points.at(-1)!.week - points[0].week);
+  const span = Math.max(0.0001, high - low);
+  const y = (value: number) =>
+    metric === "difficulty"
+      ? 5 + (24 * (value - low)) / span
+      : 29 - (24 * (value - low)) / span;
   const known = (value: number | null): value is number =>
     value !== null && Number.isFinite(value);
-  if (!values.some(known)) return <span className="muted">Unavailable</span>;
-  const line = values
-    .map((value, index) =>
-      known(value)
-        ? `${index && known(values[index - 1]) ? "L" : "M"}${x(index)},${y(value)}`
+  if (!points.some((point) => known(point.value))) {
+    return (
+      <span className="muted">
+        {points.length > 0 && points.every((point) => point.blank)
+          ? "Blank"
+          : "Unavailable"}
+      </span>
+    );
+  }
+  const line = points
+    .map((point, index) =>
+      known(point.value)
+        ? `${index && known(points[index - 1].value) ? "L" : "M"}${x(index)},${y(point.value)}`
         : "",
     )
     .join(" ");
+  const summary = points
+    .map((point) => `GW${point.week}: ${formatTrendPoint(point, metric)}`)
+    .join("; ");
   return (
     <svg
       viewBox="0 0 84 34"
       className="fixture-trend"
       role="img"
-      aria-label={`${club} forecast trend across selected gameweeks`}
+      aria-label={`${club} ${metric === "difficulty" ? "difficulty trend (higher is easier)" : "forecast trend"} across selected gameweeks`}
     >
       <title>
-        {weeks
-          .map(
-            (week, index) =>
-              `GW${week}: ${known(values[index]) ? fmt(values[index]!, 2) : "unavailable"}`,
-          )
-          .join("; ")}
+        {metric === "difficulty" ? `${summary} (higher = easier)` : summary}
       </title>
-      <path d={`M3 ${y(0)} H81`} className="fixture-trend-baseline" />
+      <path d={`M3 ${y(baseline)} H81`} className="fixture-trend-baseline" />
       <path d={line} className="fixture-trend-line" />
-      {values.map((value, index) =>
-        known(value) ? (
-          <circle key={weeks[index]} cx={x(index)} cy={y(value)} r="1.6" />
+      {points.map((point, index) =>
+        known(point.value) ? (
+          <circle key={point.week} cx={x(index)} cy={y(point.value)} r="1.6" />
         ) : null,
       )}
     </svg>

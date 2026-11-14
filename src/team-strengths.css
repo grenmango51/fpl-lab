@@ -123,6 +123,7 @@
   stroke: white;
 }
 .ts-editor {
+  margin-top: 10px;
   border: 1px solid #2d3c53;
   border-radius: 7px;
   background: #101c2e;
@@ -218,8 +219,20 @@
 .ts-notice {
   display: block;
   min-height: 15px;
+  margin-top: 8px;
   color: #ffc09e;
   font-size: 11px;
+}
+.ts-notice:empty {
+  display: none;
+}
+.ts-details {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid #243349;
+}
+.ts-details p + p {
+  margin-top: 6px;
 }
 @container (max-width: 400px) {
   .ts-heading {

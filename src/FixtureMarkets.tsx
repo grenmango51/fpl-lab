@@ -36,15 +36,16 @@ export function FixtureMarkets({
       { gw: number; id: number; home?: Side; away?: Side }
     >();
     for (const club of data.teams) {
-      const player =
-        data.players.find((p) => p.team === club.id && p.position_id === 1) ??
-        data.players.find((p) => p.team === club.id);
-      if (!player) continue;
       for (const week of weeks) {
-        const forecast = player.gw[String(week)];
+        const key = String(week);
+        const player =
+          data.players.find(
+            (p) => p.team === club.id && p.position_id === 1 && p.gw[key],
+          ) ?? data.players.find((p) => p.team === club.id && p.gw[key]);
+        const forecast = player?.gw[key];
         for (const [index, fixture] of (forecast?.fixtures ?? []).entries()) {
-          const key = `${week}-${fixture.id}`;
-          const row = mapped.get(key) ?? { gw: week, id: fixture.id };
+          const rowKey = `${week}-${fixture.id}`;
+          const row = mapped.get(rowKey) ?? { gw: week, id: fixture.id };
           const side = {
             team: club.id,
             fixture,
@@ -54,7 +55,7 @@ export function FixtureMarkets({
           };
           if (fixture.home) row.home = side;
           else row.away = side;
-          mapped.set(key, row);
+          mapped.set(rowKey, row);
         }
       }
     }
@@ -77,7 +78,15 @@ export function FixtureMarkets({
     <div className="fixture-markets">
       <div className="view-heading compact-view-heading">
         <h2>Fixture markets</h2>
-        <span className="subtle-tag">FPL Joe · Elevenify</span>
+        <div className="toolbar-actions">
+          {data.fixture_scenario ? (
+            <span className="subtle-tag">Custom schedule active</span>
+          ) : null}
+          {data.team_strength_scenario ? (
+            <span className="subtle-tag">Team strengths active</span>
+          ) : null}
+          <span className="subtle-tag">FPL Joe · Elevenify</span>
+        </div>
       </div>
       <div className="market-controls">
         <TabStrip
@@ -123,7 +132,7 @@ export function FixtureMarkets({
             onChange={(event) => setHorizon(+event.target.value)}
           >
             {[...new Set([1, 3, 5, 10, remaining.length, effectiveHorizon])]
-              .filter((n) => n <= remaining.length)
+              .filter((n) => n > 0 && n <= remaining.length)
               .sort((a, b) => a - b)
               .map((n) => (
                 <option key={n} value={n}>
@@ -180,66 +189,76 @@ export function FixtureMarkets({
         </div>
       ) : (
         <div className="market-fixture-list">
-          {rows.map((row) => (
-            <button
-              className="market-fixture-card"
-              key={`${row.gw}-${row.id}`}
-              onClick={() =>
-                setSelected({
-                  team: row.home?.team ?? row.away!.team,
-                  gw: row.gw,
-                })
-              }
-              aria-label={`GW${row.gw} ${lookup.get(row.home?.team ?? 0)?.name ?? "Home"} v ${lookup.get(row.away?.team ?? 0)?.name ?? "Away"} fixture detail`}
-            >
-              <span className="market-fixture-header">
-                <b>GW{row.gw}</b>
-                <span>
-                  {row.home?.fixture.kickoff
-                    ? new Date(row.home.fixture.kickoff).toLocaleDateString(
-                        "en-GB",
-                        { month: "short", day: "numeric" },
-                      )
-                    : "TBC"}
-                </span>
-              </span>
-              <span className="market-match">
-                {[row.home, row.away].map((side, index) => (
-                  <span key={index}>
-                    <Badge
-                      code={side ? lookup.get(side.team)?.code : undefined}
-                      size={28}
-                    />
-                    <span>
-                      {side ? lookup.get(side.team)?.short_name : "—"}
-                      <small>{index === 0 ? "Home" : "Away"}</small>
-                    </span>
-                    <strong>
-                      {side
-                        ? fmt(
-                            metric === "goals"
-                              ? side.fixture.team_goals
-                              : side.cs * 100,
-                            metric === "goals" ? 2 : 1,
-                          )
-                        : "—"}
-                      {metric === "cs" ? "%" : ""}
-                    </strong>
+          {rows.map((row) => {
+            const matchFixture = (row.home ?? row.away)?.fixture;
+            const moved =
+              matchFixture?.original_event !== undefined &&
+              matchFixture.original_event !== matchFixture.target_event;
+            return (
+              <button
+                type="button"
+                className="market-fixture-card"
+                key={`${row.gw}-${row.id}`}
+                aria-haspopup="dialog"
+                onClick={() =>
+                  setSelected({
+                    team: row.home?.team ?? row.away!.team,
+                    gw: row.gw,
+                  })
+                }
+                aria-label={`GW${row.gw} ${lookup.get(row.home?.team ?? 0)?.name ?? "Home"} v ${lookup.get(row.away?.team ?? 0)?.name ?? "Away"} fixture detail`}
+              >
+                <span className="market-fixture-header">
+                  <b>GW{row.gw}</b>
+                  <span>
+                    {matchFixture?.kickoff
+                      ? new Date(matchFixture.kickoff).toLocaleDateString(
+                          "en-GB",
+                          { month: "short", day: "numeric" },
+                        )
+                      : moved
+                        ? "Moved"
+                        : "TBC"}
                   </span>
-                ))}
-              </span>
-              <span className="market-fixture-source">
-                {[row.home, row.away]
-                  .map((side) => side?.fixture.source)
-                  .filter(
-                    (value, index, values) =>
-                      value && values.indexOf(value) === index,
-                  )
-                  .join(" · ")}
-                <span>Details →</span>
-              </span>
-            </button>
-          ))}
+                </span>
+                <span className="market-match">
+                  {[row.home, row.away].map((side, index) => (
+                    <span key={index}>
+                      <Badge
+                        code={side ? lookup.get(side.team)?.code : undefined}
+                        size={28}
+                      />
+                      <span>
+                        {side ? lookup.get(side.team)?.short_name : "—"}
+                        <small>{index === 0 ? "Home" : "Away"}</small>
+                      </span>
+                      <strong>
+                        {side
+                          ? fmt(
+                              metric === "goals"
+                                ? side.fixture.team_goals
+                                : side.cs * 100,
+                              metric === "goals" ? 2 : 1,
+                            )
+                          : "—"}
+                        {metric === "cs" ? "%" : ""}
+                      </strong>
+                    </span>
+                  ))}
+                </span>
+                <span className="market-fixture-source">
+                  {[row.home, row.away]
+                    .map((side) => side?.fixture.source)
+                    .filter(
+                      (value, index, values) =>
+                        value && values.indexOf(value) === index,
+                    )
+                    .join(" · ")}
+                  <span>Details →</span>
+                </span>
+              </button>
+            );
+          })}
           {!rows.length ? (
             <p className="inline-empty">
               No matching fixtures. Change the club or source filter.
@@ -250,10 +269,8 @@ export function FixtureMarkets({
       <details className="compact-details">
         <summary>Source notes</summary>
         <p>
-          Current fixture expectations; future weeks may use Elevenify or
-          historical fallback. Graphs show the fixture horizon. Open a fixture
-          for provider and extraction times. Player scenarios do not alter team
-          inputs.
+          FPL Joe near-term; Elevenify or historical fallback further out. Open
+          a fixture for timestamps. Player scenarios do not alter team inputs.
         </p>
       </details>
       {selected ? (

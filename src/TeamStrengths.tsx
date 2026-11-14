@@ -27,6 +27,34 @@ export type TeamStrengthsProps = {
   onTeam?: (id: number) => void;
 };
 
+export function formatSourceTimes(
+  times: readonly (string | null | undefined)[],
+): string {
+  const valid: number[] = [];
+  const other: string[] = [];
+  for (const raw of times) {
+    if (!raw) continue;
+    const ms = Date.parse(raw);
+    if (Number.isFinite(ms)) valid.push(ms);
+    else other.push(raw);
+  }
+  valid.sort((a, b) => a - b);
+  const formatStamp = (ms: number) =>
+    new Date(ms).toLocaleString("en-GB", {
+      day: "numeric",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZone: "UTC",
+    }) + " UTC";
+  const stamps = [...new Set(valid.map(formatStamp))];
+  const parts: string[] = [];
+  if (stamps.length === 1) parts.push(stamps[0]);
+  else if (stamps.length > 1) parts.push(`${stamps[0]} – ${stamps.at(-1)!}`);
+  parts.push(...other);
+  return parts.join(" · ");
+}
+
 export function TeamStrengths({
   data,
   strengths,
@@ -312,8 +340,8 @@ export function TeamStrengths({
         <svg
           ref={svg}
           viewBox={`0 0 ${plotWidth} 300`}
-          preserveAspectRatio="none"
-          aria-label="Remaining-fixture averages: expected goals upward, expected conceded reversed horizontally; better defence to the right"
+          style={{ aspectRatio: `${plotWidth} / 300` }}
+          aria-label="Remaining-fixture goals vs conceded (up = better attack, right = better defence). Focus a club and use Arrow keys to preview ±0.01 (Shift ±0.1), Enter to apply, Escape to cancel."
         >
           <text x="58" y="16" className="ts-direction">
             Better attack ↑
@@ -340,62 +368,64 @@ export function TeamStrengths({
               </g>
             );
           })}
-          {plotRows.map(({ team: row, baseline: base }, i) => (
-            <g
-              key={row.id}
-              className={`ts-point ${row.id === team.id ? "is-selected" : ""}`}
-              role="button"
-              tabIndex={0}
-              aria-pressed={row.id === team.id}
-              aria-label={`${row.name}: ${base.derivedGoals!.toFixed(2)} expected goals, ${base.derivedConceded!.toFixed(2)} expected conceded per fixture. Arrow keys preview factors by 0.01; Shift by 0.1; Enter applies.`}
-              onFocus={() => {
-                if (row.id !== team.id) select(row.id);
-              }}
-              onClick={() => {
-                if (row.id !== team.id) select(row.id);
-              }}
-              onDoubleClick={() => onTeam?.(row.id)}
-              onKeyDown={(event) => keyboard(event, row.id)}
-              onPointerDown={(event) => pointerDown(event, row.id)}
-              onPointerMove={pointerMove}
-              onPointerUp={pointerUp}
-              onPointerCancel={() => {
-                drag.current = null;
-                setDraft(null);
-              }}
-            >
-              <title>
-                {row.name}: {base.derivedGoals!.toFixed(2)} goals / fixture;{" "}
-                {base.derivedConceded!.toFixed(2)} conceded / fixture
-              </title>
-              <line
-                x1={points[i].x}
-                y1={points[i].y}
-                x2={labels[i].x}
-                y2={labels[i].y}
-                className="ts-leader"
-              />
-              <circle cx={points[i].x} cy={points[i].y} r="3" />
-              <rect
-                x={labels[i].x - 23}
-                y={labels[i].y - 12}
-                width="46"
-                height="24"
-                rx="6"
-              />
-              <text x={labels[i].x} y={labels[i].y + 4} textAnchor="middle">
-                {row.short_name}
-              </text>
-            </g>
-          ))}
+          {plotRows.map(({ team: row, baseline: base }, i) => {
+            const focusableId = plotRows.some(
+              ({ team: candidate }) => candidate.id === team.id,
+            )
+              ? team.id
+              : plotRows[0]?.team.id;
+            return (
+              <g
+                key={row.id}
+                className={`ts-point ${row.id === team.id ? "is-selected" : ""}`}
+                role="button"
+                tabIndex={row.id === focusableId ? 0 : -1}
+                aria-pressed={row.id === team.id}
+                aria-label={`${row.name}: ${base.derivedGoals!.toFixed(2)} goals, ${base.derivedConceded!.toFixed(2)} conceded`}
+                onFocus={() => {
+                  if (row.id !== team.id) select(row.id);
+                }}
+                onClick={() => {
+                  if (row.id !== team.id) select(row.id);
+                }}
+                onDoubleClick={() => onTeam?.(row.id)}
+                onKeyDown={(event) => keyboard(event, row.id)}
+                onPointerDown={(event) => pointerDown(event, row.id)}
+                onPointerMove={pointerMove}
+                onPointerUp={pointerUp}
+                onPointerCancel={() => {
+                  drag.current = null;
+                  setDraft(null);
+                }}
+              >
+                <title>
+                  {`${row.name}: ${base.derivedGoals!.toFixed(2)} goals / fixture; ${base.derivedConceded!.toFixed(2)} conceded / fixture`}
+                </title>
+                <line
+                  x1={points[i].x}
+                  y1={points[i].y}
+                  x2={labels[i].x}
+                  y2={labels[i].y}
+                  className="ts-leader"
+                />
+                <circle cx={points[i].x} cy={points[i].y} r="3" />
+                <rect
+                  x={labels[i].x - 23}
+                  y={labels[i].y - 12}
+                  width="46"
+                  height="24"
+                  rx="6"
+                />
+                <text x={labels[i].x} y={labels[i].y + 4} textAnchor="middle">
+                  {row.short_name}
+                </text>
+              </g>
+            );
+          })}
         </svg>
         <span className="ts-defence-direction">Better defence →</span>
       </div>
       {!visibleTeams.length && <p className="ts-caption">No matching teams.</p>}
-      <p className="ts-caption">
-        Drag a label; release to apply. Arrows preview, Enter applies, Esc
-        cancels. Arrows change factors by 0.01 (Shift: 0.1).
-      </p>
       {!!unavailable.length && (
         <div
           className="ts-unavailable"
@@ -452,26 +482,21 @@ export function TeamStrengths({
           )}
         </div>
         <div className="ts-source">
-          <strong>Source baseline · remaining-fixture averages</strong>
+          <strong>Remaining-fixture baseline</strong>
           <span>
             {baseline?.goals === null
               ? "Unavailable"
-              : `${baseline?.goals.toFixed(2)} goals / fixture · ${baseline?.conceded?.toFixed(2)} conceded`}
+              : `Source: ${baseline?.goals.toFixed(2)} G · ${baseline?.conceded?.toFixed(2)} GA / fixture`}
           </span>
           <span>
             {baseline?.derivedGoals == null || baseline.derivedConceded == null
-              ? "Derived rates unavailable: incomplete baseline or opponent mapping"
-              : `${changed ? "Preview" : "Current scenario"}: ${baseline.derivedGoals.toFixed(2)} goals; ${baseline.derivedConceded.toFixed(2)} conceded / fixture`}
+              ? "Derived rates unavailable: incomplete baseline or opponent"
+              : `${changed ? "Preview" : "Active"}: ${baseline.derivedGoals.toFixed(2)} G · ${baseline.derivedConceded.toFixed(2)} GA / fixture`}
           </span>
           <small>
             {baseline?.fixtures ?? 0} fixtures ·{" "}
-            {baseline?.sources.join(" / ") || "Source unavailable"}
+            {baseline?.sources.join(" · ") || "Source unavailable"}
           </small>
-          {!!baseline?.sourceTimes.length && (
-            <small>
-              Source / extraction times: {baseline.sourceTimes.join(" / ")}
-            </small>
-          )}
           {!!baseline?.missingWeeks.length && (
             <small>
               Incomplete: missing GW {baseline.missingWeeks.join(", ")}
@@ -506,7 +531,7 @@ export function TeamStrengths({
           ))}
         </div>
         <p className="ts-caption">
-          Higher defence reduces goals conceded. Range 0.5–2×.
+          0.5–2× · higher defence lowers conceded goals.
         </p>
         {!valid && (
           <p className="ts-error" role="alert">
@@ -562,12 +587,23 @@ export function TeamStrengths({
             Undo
           </button>
         </div>
-        <p className="ts-caption">
-          Reset removes manual factors; sourced inputs stay intact.
-        </p>
         <span className="ts-notice" role="status">
           {notice || (changed ? "Preview · not applied" : "")}
         </span>
+        <details className="compact-details ts-details">
+          <summary>Controls & provenance</summary>
+          <p>
+            Drag a club label to apply, or use Arrow keys (±0.01, Shift ±0.1),
+            Enter to apply, Esc to cancel. Reset clears manual factors; sourced
+            inputs stay intact.
+          </p>
+          <p>
+            Source times:{" "}
+            {baseline?.sourceTimes.length
+              ? formatSourceTimes(baseline.sourceTimes)
+              : "Unavailable"}
+          </p>
+        </details>
       </div>
     </section>
   );

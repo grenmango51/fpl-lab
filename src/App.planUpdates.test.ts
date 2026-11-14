@@ -22,7 +22,7 @@ import {
 import { planReceipt } from "../tools/tests/planReceipt.mjs";
 import financialFixture from "../backend/tests/fixtures/transfer_affordability.json";
 import { transferAllowance, replacePlayer } from "./plannerInteractions";
-import { uid, chipNames, planFromSquad } from "./lib";
+import { uid, chipNames, optimalLineup, planFromSquad, xp } from "./lib";
 import { teamPoints } from "./scoring";
 import { quickSolveHorizon, planWithOptimisedSuffix } from "./quickOptimise";
 import type { Bootstrap, Player, Plan, Week, Prospective, SensitivityJob } from "./types";
@@ -2956,4 +2956,809 @@ describe("restored resources through production callers and real server receipts
     },
     30000,
   );
+});
+
+describe("app shell state, modals, keyboard, URL and surface coherence", () => {
+  const fn = (name: string) => {
+    const node = app.body!.statements.find(
+      (s): s is ts.FunctionDeclaration =>
+        ts.isFunctionDeclaration(s) && s.name?.text === name,
+    );
+    if (!node) throw new Error(`Missing function: ${name}`);
+    return printer.printNode(ts.EmitHint.Unspecified, node, source);
+  };
+  const selectedPlayerExpr = printer.printNode(
+    ts.EmitHint.Expression,
+    declarations.find((d) => d.name.getText(source) === "selectedPlayer")!
+      .initializer!,
+    source,
+  );
+  const hasCustomCSVExpr = printer.printNode(
+    ts.EmitHint.Expression,
+    declarations.find((d) => d.name.getText(source) === "hasCustomCSV")!
+      .initializer!,
+    source,
+  );
+  const moduleFn = (name: string) => {
+    const node = source.statements.find(
+      (s): s is ts.FunctionDeclaration =>
+        ts.isFunctionDeclaration(s) && s.name?.text === name,
+    );
+    if (!node) throw new Error(`Missing module function: ${name}`);
+    return printer.printNode(ts.EmitHint.Unspecified, node, source);
+  };
+  const moduleConst = (name: string) => {
+    const decl = source.statements
+      .flatMap((s) =>
+        ts.isVariableStatement(s) ? [...s.declarationList.declarations] : [],
+      )
+      .find((d) => d.name.getText(source) === name);
+    if (!decl?.initializer) throw new Error(`Missing module const: ${name}`);
+    return printer.printNode(ts.EmitHint.Expression, decl.initializer, source);
+  };
+  const availableTargetsMemo = (
+    declarations.find((d) => d.name.getText(source) === "availableTargets")!
+      .initializer as ts.CallExpression
+  ).arguments[0].getText(source);
+  const compileShell = ts.transpileModule(
+    `const {
+      active, week, gw, data, lookup, selected, selectedPlayer, detailId, detailBack, detailReadOnly,
+      solveResult, modal, teamBank, teamFT, tab, activeId, loading, plans,
+      playerQuery, listMode, watch, transferAllowance, xp,
+      customPoints, blendWeight, customName,
+      setOverrides, setMinutesSchedule, setStatSchedule, setTeamStrengths,
+      setFixtureMoves, setUseMarket, setCustomPoints, setBlendWeight,
+      setUseProvider, setUseSolio, setProviderWeight, setExtrapolate,
+      setAnchorHalfLife, setCustomName,
+      urlSyncedRef, popstateReplaceRef, optimalLineup, updatePlan, travelPlan,
+      setTeamBank, setTeamFT, setModal, setDetailAnchor, setDetailReadOnly,
+      setDetailInline, setDetailGW, setDetailTab, setDetailBack, setDetailId,
+      setActiveId, setGw, setSelected, setTab, setDetail, setDetailError, setDetailLoading, api, playerGW,
+      forecastArgs, notify, document, window, locationTab
+    } = scope;
+    const componentLabels = ${moduleConst("componentLabels")};
+    ${moduleFn("formatSourceLabel")}
+    ${fn("applyForecastConfiguration")}
+    ${fn("openResourceModal")}
+    ${fn("saveTeamSettings")}
+    ${fn("openPlayer")}
+    ${fn("changeHorizon")}
+    ${fn("resetWeek")}
+    return {
+      componentLabels,
+      formatSourceLabel,
+      availableTargets: ${availableTargetsMemo},
+      selectedPlayer: () => (${selectedPlayerExpr}),
+      hasCustomCSV: () => (${hasCustomCSVExpr}),
+      applyForecastConfiguration,
+      openResourceModal,
+      saveTeamSettings,
+      openPlayer,
+      changeHorizon,
+      resetWeek,
+      selectedCleanup: ${effectContaining("!week?.squad.includes(selected)")},
+      readOnlyCleanup: ${effectContaining("if (!solveResult && detailReadOnly)")},
+      phantomDetailCleanup: ${effectContaining("detailId !== null && !lookup.has(detailId)")},
+      detailFetchEffect: ${effectContaining("/players/${detailId}")},
+      keyboardEffect: ${effectContaining("event.defaultPrevented || event.isComposing")},
+      urlSyncEffect: ${effectContaining('next.searchParams.delete("view")')},
+      popstateEffect: ${effectContaining('window.addEventListener("popstate", back)')},
+    };`,
+    { compilerOptions: { target: ts.ScriptTarget.ES2022 } },
+  ).outputText;
+  const createShell = new Function("scope", compileShell) as (
+    scope: Record<string, any>,
+  ) => Record<string, (...args: any[]) => any>;
+
+  it("clears selected and detailId across branch creation/import/restore actions and guards applyStress metadata", async () => {
+    const h = harness();
+    h.state.plans[0].entry_id = 2200722;
+    h.state.plans[0].team_name = "Test XI";
+
+    const resetSelectionAndDetail = () => {
+      h.state.tab = "projections";
+      h.state.selected = 3;
+      h.state.detailId = 5;
+      h.state.detailInline = true;
+    };
+
+    resetSelectionAndDetail();
+    const createPending = h.render().createPlan();
+    h.requests.at(-1)!.resolve({ weeks: h.state.plans[0].weeks });
+    await createPending;
+    expect(h.state).toMatchObject({ selected: null, detailId: null });
+
+    resetSelectionAndDetail();
+    h.render().clonePlan();
+    expect(h.state).toMatchObject({ selected: null, detailId: null });
+
+    resetSelectionAndDetail();
+    const restorePending = h.render().restoreDeleted(branch("Restored"));
+    h.requests.at(-1)!.resolve({ weeks: h.state.plans[0].weeks });
+    await restorePending;
+    expect(h.state).toMatchObject({ selected: null, detailId: null });
+
+    resetSelectionAndDetail();
+    const importPending = h.render().importTeam();
+    h.requests.at(-1)!.resolve({
+      squad: h.state.plans[0].base_squad,
+      bank: 1.5,
+      free_transfers: 2,
+      name: "Imported FC",
+      entry_id: 999,
+      purchase_prices: {},
+      warnings: [],
+    });
+    await vi.waitFor(() =>
+      expect(h.requests.at(-1)!.path).toBe("/plan/validate"),
+    );
+    h.requests.at(-1)!.resolve({ weeks: h.state.plans[0].weeks });
+    await importPending;
+    expect(h.state).toMatchObject({ selected: null, detailId: null });
+
+    resetSelectionAndDetail();
+    const branchPending = h.render().startBranchAt(8);
+    h.requests.at(-1)!.resolve({
+      weeks: h.state.plans[0].weeks.map((w) => ({
+        ...w,
+        permanent_squad: w.squad,
+        permanent_bank: 1,
+        purchase_prices: { "1": 4.5 },
+      })),
+    });
+    await vi.waitFor(() =>
+      expect(h.requests.at(-1)!.body).toMatchObject({ free_transfers: 3 }),
+    );
+    h.requests.at(-1)!.resolve({ weeks: h.state.plans[0].weeks.slice(1) });
+    await branchPending;
+    expect(h.state).toMatchObject({
+      selected: null,
+      detailId: null,
+      tab: "lineup",
+      gw: 8,
+    });
+
+    resetSelectionAndDetail();
+    const solvePending = h.render({
+      solveContext: {
+        fresh: false,
+        startGW: 8,
+        sourcePlan: h.state.plans[0],
+        prefix: [h.state.plans[0].weeks[0]],
+        baselinePlan: h.state.plans[0],
+        prices: {},
+      },
+      solveResult: { weeks: h.state.plans[0].weeks.slice(1) },
+    }).applySolve();
+    h.requests.at(-1)!.resolve({ weeks: h.state.plans[0].weeks });
+    await solvePending;
+    expect(h.state).toMatchObject({
+      selected: null,
+      detailId: null,
+      tab: "lineup",
+      gw: 8,
+    });
+
+    resetSelectionAndDetail();
+    h.state.activeId = h.state.plans[0].id;
+    const stressPending = h
+      .render()
+      .applyStress(
+        {
+          ...stressJob,
+          settings: { ...stressJob.settings, name: h.state.plans[0].name },
+        },
+        h.state.plans[0].weeks,
+        "p10",
+      );
+    h.requests.at(-1)!.resolve({ weeks: h.state.plans[0].weeks });
+    await stressPending;
+    expect(h.state).toMatchObject({
+      selected: null,
+      detailId: null,
+      tab: "lineup",
+    });
+    expect(h.state.plans.at(-1)).toMatchObject({
+      entry_id: 2200722,
+      team_name: "Test XI",
+    });
+
+    // Unrelated stress job must NOT inherit active's entry_id / team_name
+    h.state.activeId = h.state.plans[0].id;
+    const unrelatedSquad = [16, ...h.state.plans[0].base_squad.slice(1)];
+    const unrelatedStress = h.render().applyStress(
+      {
+        ...stressJob,
+        settings: {
+          ...stressJob.settings,
+          name: "Unrelated scratch",
+          solve: { ...stressJob.settings.solve, squad: unrelatedSquad },
+        },
+      },
+      h.state.plans[0].weeks,
+      "p90",
+    );
+    h.requests.at(-1)!.resolve({ weeks: h.state.plans[0].weeks });
+    await unrelatedStress;
+    expect(h.state.plans.at(-1)!.entry_id).toBeUndefined();
+    expect(h.state.plans.at(-1)!.team_name).toBeUndefined();
+
+    resetSelectionAndDetail();
+    const chipPlanPending = h
+      .render()
+      .applyChipPlan(h.state.plans[0], h.state.plans[0].weeks);
+    h.requests.at(-1)!.resolve({ weeks: h.state.plans[0].weeks });
+    await chipPlanPending;
+    expect(h.state).toMatchObject({ selected: null, detailId: null });
+
+    resetSelectionAndDetail();
+    const chipPending = h.render().applyChipStrategy(
+      h.state.plans[0],
+      h.state.plans[0].weeks,
+      { settings: { auto_chip: "freehit" }, scope: { gameweeks: [9] } },
+    );
+    h.requests.at(-1)!.resolve({ weeks: h.state.plans[0].weeks });
+    await chipPending;
+    expect(h.state).toMatchObject({
+      selected: null,
+      detailId: null,
+      tab: "lineup",
+      gw: 9,
+    });
+  });
+
+  it("normalizes default Imported CSV placeholder name so Clear is disabled when no CSV is loaded", () => {
+    let customPoints: Record<string, Record<string, number>> = {};
+    let blendWeight = 0;
+    let customName = "Imported CSV";
+    const shell = () =>
+      createShell({
+        customPoints,
+        blendWeight,
+        customName,
+        setOverrides: vi.fn(),
+        setMinutesSchedule: vi.fn(),
+        setStatSchedule: vi.fn(),
+        setTeamStrengths: vi.fn(),
+        setFixtureMoves: vi.fn(),
+        setUseMarket: vi.fn(),
+        setCustomPoints: (v: typeof customPoints) => {
+          customPoints = v;
+        },
+        setBlendWeight: (v: number) => {
+          blendWeight = v;
+        },
+        setUseProvider: vi.fn(),
+        setUseSolio: vi.fn(),
+        setProviderWeight: vi.fn(),
+        setExtrapolate: vi.fn(),
+        setAnchorHalfLife: vi.fn(),
+        setCustomName: (v: string) => {
+          customName = v;
+        },
+      });
+
+    expect(shell().hasCustomCSV()).toBe(false);
+    shell().applyForecastConfiguration(defaultForecastConfiguration);
+    expect(customName).toBe("");
+    expect(shell().hasCustomCSV()).toBe(false);
+
+    shell().applyForecastConfiguration({
+      ...defaultForecastConfiguration,
+      custom_points: { "1": { "7": 6.2 } },
+      blend_weight: 0.5,
+      custom_name: "model.csv",
+    });
+    expect(customName).toBe("model.csv");
+    expect(shell().hasCustomCSV()).toBe(true);
+  });
+
+  it("scopes selectedPlayer to the current week's squad and clears phantom detailId/readOnly/null-week state", () => {
+    const h = harness();
+    const active = h.state.plans[0];
+    const week = active.weeks[0];
+    const lookup = new Map(h.data.players.map((p) => [p.id, p]));
+    const setDetailId = vi.fn();
+    const setDetailBack = vi.fn();
+    const setDetailReadOnly = vi.fn();
+    const setSelected = vi.fn();
+    const setDetail = vi.fn();
+    const setDetailLoading = vi.fn();
+    const api = vi.fn();
+
+    const shellOut = createShell({
+      loading: false,
+      active,
+      week,
+      gw: 7,
+      data: h.data,
+      lookup,
+      selected: 16, // in lookup, NOT in week.squad (1..15)
+      detailId: 999, // phantom player ID
+      detailBack: 998,
+      detailReadOnly: true,
+      solveResult: null,
+      optimalLineup,
+      updatePlan: vi.fn(),
+      setDetailId,
+      setDetailBack,
+      setDetailReadOnly,
+      setSelected,
+      setDetail,
+      setDetailError: vi.fn(),
+      setDetailLoading,
+      api,
+      playerGW: 7,
+      forecastArgs: defaultForecastConfiguration,
+      notify: vi.fn(),
+    });
+    expect(shellOut.selectedPlayer()).toBeNull();
+    shellOut.selectedCleanup();
+    expect(setSelected).toHaveBeenCalledWith(null);
+    shellOut.readOnlyCleanup();
+    expect(setDetailReadOnly).toHaveBeenCalledWith(false);
+    shellOut.phantomDetailCleanup();
+    expect(setDetailId).toHaveBeenCalledWith(null);
+    expect(setDetailBack).toHaveBeenCalledWith(null);
+    shellOut.detailFetchEffect();
+    expect(api).not.toHaveBeenCalled();
+
+    // Also clears selected when week becomes null after loading finishes
+    setSelected.mockClear();
+    createShell({
+      loading: false,
+      data: h.data,
+      week: null,
+      selected: 3,
+      setSelected,
+    }).selectedCleanup();
+    expect(setSelected).toHaveBeenCalledWith(null);
+
+    const shellIn = createShell({
+      loading: false,
+      active,
+      week,
+      gw: 7,
+      data: h.data,
+      lookup,
+      selected: 3,
+      optimalLineup,
+      updatePlan: vi.fn(),
+      setGw: vi.fn(),
+      setSelected,
+    });
+    expect(shellIn.selectedPlayer()?.id).toBe(3);
+    setSelected.mockClear();
+    shellIn.changeHorizon(2);
+    expect(setSelected).toHaveBeenCalledWith(null);
+    setSelected.mockClear();
+    shellIn.resetWeek();
+    expect(setSelected).toHaveBeenCalledWith(null);
+  });
+
+  it("syncs resource modals from active plan and clamps/closes in saveTeamSettings", async () => {
+    const h = harness();
+    h.state.plans[0].base_bank = 2.4;
+    h.state.plans[0].free_transfers = 4;
+    let teamBank = 0;
+    let teamFT = 1;
+    let modal: string | null = null;
+    const runShell = () => {
+      const actions = h.render();
+      return createShell({
+        active: h.state.plans[0],
+        teamBank,
+        teamFT,
+        modal,
+        updatePlan: actions.updatePlan,
+        setTeamBank: (v: number) => {
+          teamBank = v;
+        },
+        setTeamFT: (v: number) => {
+          teamFT = v;
+        },
+        setModal: (v: string | null) => {
+          modal = v;
+        },
+      });
+    };
+
+    runShell().openResourceModal("team");
+    expect({ teamBank, teamFT, modal }).toEqual({
+      teamBank: 2.4,
+      teamFT: 4,
+      modal: "team",
+    });
+
+    teamBank = Number.NaN;
+    teamFT = 9;
+    const failSave = runShell().saveTeamSettings();
+    expect({ teamBank, teamFT }).toEqual({ teamBank: 0, teamFT: 5 });
+    h.requests[0].reject(new Error("Server busy"));
+    await failSave;
+    expect(modal).toBe("team");
+
+    teamBank = 250;
+    teamFT = -2;
+    const okSave = runShell().saveTeamSettings();
+    expect({ teamBank, teamFT }).toEqual({ teamBank: 200, teamFT: 0 });
+    h.requests[1].resolve({ weeks: h.state.plans[0].weeks });
+    await okSave;
+    expect(modal).toBeNull();
+    expect(h.state.plans[0]).toMatchObject({
+      base_bank: 200,
+      free_transfers: 0,
+    });
+  });
+
+  it("preserves floating detailAnchor across squad neighbour navigation and anchors new triggers", () => {
+    const h = harness();
+    let anchor: unknown = null;
+    let activeEl: any = {
+      closest: (sel: string) =>
+        sel.includes(".board-transfers button") &&
+        sel.includes(".squad-table .icon-button") &&
+        !sel.includes(".squad-name") &&
+        sel.includes(".overview-target-list .player-name-cell")
+          ? {
+              getBoundingClientRect: () => ({
+                left: 10,
+                right: 90,
+                top: 20,
+                bottom: 50,
+              }),
+            }
+          : null,
+    };
+    const make = () =>
+      createShell({
+        active: h.state.plans[0],
+        gw: 7,
+        document: {
+          get activeElement() {
+            return activeEl;
+          },
+        },
+        setDetailAnchor: (v: unknown) => {
+          anchor = v;
+        },
+        setDetailReadOnly: vi.fn(),
+        setDetailInline: vi.fn(),
+        setDetailGW: vi.fn(),
+        setDetailTab: vi.fn(),
+        setDetailBack: vi.fn(),
+        setDetailId: vi.fn(),
+      });
+
+    make().openPlayer(1, 7, false, h.state.plans[0], false);
+    expect(anchor).toEqual({ left: 10, right: 90, top: 20, bottom: 50 });
+
+    // Neighbour navigation inside .player-window keeps existing floating anchor
+    activeEl = {
+      closest: (sel: string) => (sel === ".player-window" ? {} : null),
+    };
+    make().openPlayer(2, 7, false, h.state.plans[0], false);
+    expect(anchor).toEqual({ left: 10, right: 90, top: 20, bottom: 50 });
+
+    // Explicit preserveAnchor also keeps anchor without DOM focus
+    activeEl = null;
+    make().openPlayer(3, 7, false, h.state.plans[0], false, true);
+    expect(anchor).toEqual({ left: 10, right: 90, top: 20, bottom: 50 });
+
+    // Inline editor clears anchor
+    make().openPlayer(3, 7, false, h.state.plans[0], true);
+    expect(anchor).toBeNull();
+  });
+
+  it("peels Escape one layer at a time and supports Ctrl+Y redo alongside Ctrl+Shift+Z", () => {
+    let modal: string | null = "settings";
+    let detailId: number | null = 5;
+    let selected: number | null = 3;
+    const travelPlan = vi.fn();
+    const listeners: ((e: any) => void)[] = [];
+    const doc = {
+      addEventListener: (_: string, fn: (e: any) => void) => listeners.push(fn),
+      removeEventListener: (_: string, fn: (e: any) => void) => {
+        const idx = listeners.indexOf(fn);
+        if (idx >= 0) listeners.splice(idx, 1);
+      },
+    };
+    const bind = () => {
+      listeners.length = 0;
+      createShell({
+        modal,
+        detailId,
+        selected,
+        travelPlan,
+        document: doc,
+        setModal: (v: string | null) => {
+          modal = v;
+        },
+        setDetailId: (v: number | null) => {
+          detailId = v;
+        },
+        setSelected: (v: number | null) => {
+          selected = v;
+        },
+      }).keyboardEffect();
+      return listeners[0];
+    };
+    const press = (overrides: Record<string, any>) => {
+      const event = {
+        key: "Escape",
+        defaultPrevented: false,
+        isComposing: false,
+        ctrlKey: false,
+        metaKey: false,
+        shiftKey: false,
+        altKey: false,
+        target: { closest: () => null },
+        preventDefault: vi.fn(),
+        ...overrides,
+      };
+      bind()(event);
+      return event;
+    };
+
+    press({ defaultPrevented: true });
+    expect({ modal, detailId, selected }).toEqual({
+      modal: "settings",
+      detailId: 5,
+      selected: 3,
+    });
+
+    press({ key: "Escape" });
+    expect({ modal, detailId, selected }).toEqual({
+      modal: null,
+      detailId: 5,
+      selected: 3,
+    });
+
+    press({ key: "Escape" });
+    expect({ modal, detailId, selected }).toEqual({
+      modal: null,
+      detailId: null,
+      selected: 3,
+    });
+
+    press({ key: "Escape" });
+    expect({ modal, detailId, selected }).toEqual({
+      modal: null,
+      detailId: null,
+      selected: null,
+    });
+
+    press({ key: "y", ctrlKey: true });
+    expect(travelPlan).toHaveBeenLastCalledWith("future");
+
+    press({ key: "z", ctrlKey: true, shiftKey: true });
+    expect(travelPlan).toHaveBeenLastCalledWith("future");
+
+    press({ key: "z", ctrlKey: true });
+    expect(travelPlan).toHaveBeenLastCalledWith("past");
+
+    // Cmd+Y on macOS and typing inside inputs must not trigger redo
+    travelPlan.mockClear();
+    press({ key: "y", metaKey: true });
+    press({ key: "y", ctrlKey: true, target: { closest: () => ({}) } });
+    expect(travelPlan).not.toHaveBeenCalled();
+  });
+
+  it("uses replaceState on initial sync and popstate canonicalization, pushState on navigation, and drops ?view=tree", () => {
+    const h = harness();
+    let href = "https://open-fpl.test/?view=tree";
+    const replaceState = vi.fn((_s, _t, url: URL) => {
+      href = url.toString();
+    });
+    const pushState = vi.fn((_s, _t, url: URL) => {
+      href = url.toString();
+    });
+    let popHandler: (() => void) | null = null;
+    const win = {
+      location: {
+        get href() {
+          return href;
+        },
+        get search() {
+          return new URL(href).search;
+        },
+      },
+      history: { replaceState, pushState },
+      addEventListener: (type: string, fn: () => void) => {
+        if (type === "popstate") popHandler = fn;
+      },
+      removeEventListener: vi.fn(),
+    };
+    const urlSyncedRef = { current: false };
+    const popstateReplaceRef = { current: false };
+    let tab = "lineup";
+    let gw = 7;
+    let activeId = "A";
+
+    const sync = () =>
+      createShell({
+        loading: false,
+        data: h.data,
+        plans: h.state.plans,
+        active: h.state.plans.find((p) => p.id === activeId) ?? h.state.plans[0],
+        tab,
+        gw,
+        activeId,
+        urlSyncedRef,
+        popstateReplaceRef,
+        window: win,
+        locationTab: () => {
+          const v = new URL(href).searchParams.get("tab");
+          return v === "plans" ? "analysis" : v || "lineup";
+        },
+        setTab: (v: string) => {
+          tab = v;
+        },
+        setActiveId: (v: string) => {
+          activeId = v;
+        },
+        setGw: (v: number) => {
+          gw = v;
+        },
+        setDetailId: vi.fn(),
+        setSelected: vi.fn(),
+      });
+
+    // Initial load: replaceState + strips ?view=tree
+    sync().urlSyncEffect();
+    expect(replaceState).toHaveBeenCalledTimes(1);
+    expect(pushState).not.toHaveBeenCalled();
+    expect(href).toBe("https://open-fpl.test/?tab=lineup&gw=7&plan=A");
+
+    // Normal user navigation: pushState
+    tab = "analysis";
+    gw = 8;
+    sync().urlSyncEffect();
+    expect(pushState).toHaveBeenCalledTimes(1);
+    expect(href).toBe("https://open-fpl.test/?tab=plans&gw=8&plan=A");
+
+    // Popstate when state changes: replaceState canonicalizes
+    sync().popstateEffect();
+    href = "https://open-fpl.test/?view=tree&tab=lineup&gw=2&plan=deleted";
+    popHandler!();
+    sync().urlSyncEffect();
+    expect(pushState).toHaveBeenCalledTimes(1); // no extra pushState!
+    expect(href).toBe("https://open-fpl.test/?tab=lineup&gw=7&plan=A");
+    expect(new URL(href).searchParams.has("view")).toBe(false);
+
+    // Popstate when canonicalized {tab, gw, activeId} matches current state:
+    // popstateReplaceRef stays false so the next forward UI click uses pushState!
+    sync().popstateEffect();
+    href = "https://open-fpl.test/?view=tree&tab=lineup&gw=2&plan=deleted";
+    popHandler!(); // tab is already "lineup", gw is already 7, activeId is already "A"
+    expect(popstateReplaceRef.current).toBe(false);
+    expect(href).toBe("https://open-fpl.test/?tab=lineup&gw=7&plan=A");
+
+    tab = "projections";
+    sync().urlSyncEffect();
+    expect(pushState).toHaveBeenCalledTimes(2);
+    expect(href).toBe("https://open-fpl.test/?tab=projections&gw=7&plan=A");
+  });
+
+  it("filters availableTargets for affordability and 3-per-club cap, formats source/component labels, and preserves scenario editor keys", async () => {
+    // 1. StatScenarioEditor & MinutesScenarioEditor keys depend only on detailId, not playerGW
+    expect(appSource).toContain("key={`stats-${detailId}`}");
+    expect(appSource).toContain("key={`minutes-${detailId}`}");
+    expect(appSource).not.toContain("key={`stats-${detailId}-${playerGW}`}");
+    expect(appSource).not.toContain("key={`minutes-${detailId}-${playerGW}`}");
+
+    // 2. Source & component labels
+    const labelsShell = createShell({});
+    expect(labelsShell.formatSourceLabel("fpl_bootstrap")).toBe("Official FPL");
+    expect(labelsShell.formatSourceLabel("fpl_fixtures")).toBe(
+      "Official fixtures",
+    );
+    expect(labelsShell.formatSourceLabel("fpljoe")).toBe("FPL Joe");
+    expect(labelsShell.formatSourceLabel("elevenify_sheet")).toBe("Elevenify");
+    expect(labelsShell.formatSourceLabel("fplform_2026-27_gw7")).toBe(
+      "FPL Form · GW7",
+    );
+    expect(labelsShell.componentLabels).toMatchObject({
+      appearance: "Appearance",
+      clean_sheets: "Clean sheets",
+      defcon: "DefCon",
+      defensive: "DefCon",
+      penalty_saves: "Pen saves",
+      provider_adjustment: "Provider adj.",
+      solio_extrapolation: "Solio extrap.",
+      user_points_adjustment: "Your scenario",
+    });
+
+    // 3. availableTargets enforces transferAllowance bankAfter >= 0 and < 3 from club
+    const squadPlayers = Array.from({ length: 15 }, (_, i) => ({
+      id: i + 1,
+      name: `Squad ${i + 1}`,
+      team_name: "Club",
+      team: i < 4 ? 1 : i + 2, // players 1,2,3,4 on team 1 (if outgoing is 5, 3 remain on team 1!)
+      position_id: i < 2 ? 1 : i < 7 ? 2 : i < 12 ? 3 : 4,
+      price: 5.0,
+      pplay: 1,
+      gw: { "7": { points: 3, pplay: 1 } },
+    }));
+    const candidates = [
+      // Affordable & legal club (team 20, price 5.5, bank is 0.5 -> bankAfter = 0)
+      {
+        id: 20,
+        name: "Legal Target",
+        team_name: "LegalFC",
+        team: 20,
+        position_id: 2,
+        price: 5.5,
+        pplay: 1,
+        gw: { "7": { points: 7, pplay: 1 } },
+      },
+      // Over budget (price 6.0 -> bankAfter = -0.5)
+      {
+        id: 21,
+        name: "Priced Out",
+        team_name: "RichFC",
+        team: 21,
+        position_id: 2,
+        price: 6.0,
+        pplay: 1,
+        gw: { "7": { points: 9, pplay: 1 } },
+      },
+      // Blocked by 3-per-club cap on team 1
+      {
+        id: 22,
+        name: "Club Capped",
+        team_name: "CapFC",
+        team: 1,
+        position_id: 2,
+        price: 5.0,
+        pplay: 1,
+        gw: { "7": { points: 10, pplay: 1 } },
+      },
+    ];
+    const pool = [...squadPlayers, ...candidates];
+    const lookup = new Map(pool.map((p) => [p.id, p]));
+    const plan = {
+      ...branch("A", [7]),
+      base_bank: 0.5,
+      purchase_prices: {},
+    };
+    const targetsShell = createShell({
+      data: { players: pool, gameweeks: [7] },
+      lookup,
+      gw: 7,
+      selectedPlayer: lookup.get(5), // DEF on team 6, price 5.0; players 1..4 keep >=3 on team 1
+      active: plan,
+      week: plan.weeks[0],
+      playerQuery: "",
+      listMode: "targets",
+      watch: [],
+      transferAllowance,
+      xp,
+    });
+    expect(targetsShell.availableTargets().map((p: Player) => p.id)).toEqual([
+      20,
+    ]);
+
+    // 4. detailFetchEffect records detailError on failure for History retry
+    let detailError = "";
+    const detailDeferred = deferred<unknown>();
+    createShell({
+      data: { players: pool, gameweeks: [7] },
+      lookup,
+      detailId: 20,
+      playerGW: 7,
+      forecastArgs: defaultForecastConfiguration,
+      api: () => detailDeferred.promise,
+      notify: vi.fn(),
+      setDetail: vi.fn(),
+      setDetailError: (v: string) => {
+        detailError = v;
+      },
+      setDetailLoading: vi.fn(),
+    }).detailFetchEffect();
+    detailDeferred.reject(new Error("History endpoint offline"));
+    await vi.waitFor(() =>
+      expect(detailError).toBe("History endpoint offline"),
+    );
+  });
 });

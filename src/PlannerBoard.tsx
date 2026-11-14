@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import {
   ArrowRight,
+  CheckCircle2,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   Copy,
   GitBranch,
+  Image,
+  Lock,
   RefreshCw,
   Sparkles,
   Undo2,
@@ -18,7 +21,6 @@ import { chipNames, fmt, money } from "./lib";
 import { canSwap } from "./plannerInteractions";
 import { projectionMetric } from "./ProjectionExplorer";
 import type { Bootstrap, Chip, Plan, Player, Week } from "./types";
-import "./pitch-interactions.css";
 
 export function PlannerBoard({
   data,
@@ -187,24 +189,26 @@ export function PlannerBoard({
           onClick={onTeam}
           title={`Edit starting resources for GW${firstGW}`}
         >
-          <span>FTs / Available</span>
+          <span>Moves / FT</span>
           <b>
             {week.transfers_in.length}
             <small> / {week.free_transfers}</small>
           </b>
         </button>
         <button onClick={onTeam} title="Edit starting bank">
-          <span>In the bank</span>
+          <span>Bank</span>
           <b>{money(week.bank)}</b>
         </button>
         <div title="Captain, expected substitutions and hits included">
           <span>GW{week.gw} xPts</span>
           <b className="orange">{fmt(week.net_points ?? week.points)}</b>
         </div>
-        <button onClick={onOptimise} disabled={busy} title="Quick optimise · short plans use up to 5s">
+        <div
+          title={`Net xPts across ${weeks.length} planned ${weeks.length === 1 ? "gameweek" : "gameweeks"}`}
+        >
           <span>{weeks.length} GW total</span>
           <b>{fmt(total)}</b>
-        </button>
+        </div>
       </div>
       <div className="lineup-control-row">
         <label className="sr-only" htmlFor="pitch-metric">
@@ -283,13 +287,15 @@ export function PlannerBoard({
           }
         >
           <button role="menuitem" onClick={onShare}>
-            Download lineup image
+            <Image size={14} />
+            Lineup image
           </button>
           <button role="menuitem" disabled={busy} onClick={onLockTransfers}>
+            <Lock size={14} />
             Lock transfers for GW{week.gw}
           </button>
           <button role="menuitem" disabled={busy} onClick={onBestXI}>
-            <Sparkles size={14} />
+            <CheckCircle2 size={14} />
             Best XI & captain
           </button>
           <button role="menuitem" disabled={busy} onClick={onOptimise}>
@@ -302,7 +308,7 @@ export function PlannerBoard({
           </button>
           <button role="menuitem" disabled={busy} onClick={onReset}>
             <RefreshCw size={14} />
-            Reset this gameweek
+            Reset GW{week.gw}
           </button>
         </ActionMenu>
       </div>
@@ -343,7 +349,7 @@ export function PlannerBoard({
       {chosen ? (
         <div className="swap-banner" role="status">
           <span>
-            <b>{chosen.name}</b> · choose a highlighted player
+            <b>{chosen.name}</b> · pick swap target
           </span>
           <button
             className="icon-button"
@@ -366,17 +372,25 @@ export function PlannerBoard({
           </span>
         </header>
         {week.transfers_in.length ? (
-          week.transfers_in.map((id, i) => (
-            <div key={id}>
-              <button onClick={() => onDetail(week.transfers_out[i])}>
-                {lookup.get(week.transfers_out[i])?.name ?? "New squad"}
-              </button>
-              <ArrowRight size={13} />
-              <button onClick={() => onDetail(id)} className="green">
-                {lookup.get(id)?.name}
-              </button>
-            </div>
-          ))
+          week.transfers_in.map((id, i) => {
+            const outId = week.transfers_out[i];
+            return (
+              <div key={id}>
+                <button
+                  disabled={!outId}
+                  onClick={() => {
+                    if (outId) onDetail(outId);
+                  }}
+                >
+                  {lookup.get(outId)?.name ?? "New squad"}
+                </button>
+                <ArrowRight size={13} />
+                <button onClick={() => onDetail(id)} className="green">
+                  {lookup.get(id)?.name}
+                </button>
+              </div>
+            );
+          })
         ) : (
           <small>Roll transfer</small>
         )}
@@ -386,6 +400,7 @@ export function PlannerBoard({
           <button
             key={item.gw}
             className={item.gw === week.gw ? "active" : ""}
+            aria-current={item.gw === week.gw ? "step" : undefined}
             onClick={() => onWeek(item.gw)}
           >
             <span>GW{item.gw}</span>
@@ -393,7 +408,7 @@ export function PlannerBoard({
             <small>
               {item.chip === "none"
                 ? item.transfers_in.length
-                  ? `${item.transfers_in.length} moves`
+                  ? `${item.transfers_in.length} ${item.transfers_in.length === 1 ? "move" : "moves"}`
                   : "Roll"
                 : {
                     wildcard: "WC",
@@ -413,12 +428,12 @@ export function PlannerBoard({
           disabled={busy}
           onChange={(event) => onHorizon(+event.target.value)}
         >
-          {[...new Set([weeks.length, 1, 3, 5, 6, 10, 14, 20, remaining])]
-            .filter((n) => n <= remaining)
+          {[...new Set([weeks.length, 1, 3, 4, 5, 6, 10, 14, 20, remaining])]
+            .filter((n) => n > 0 && (n <= remaining || n === weeks.length))
             .sort((a, b) => a - b)
             .map((n) => (
               <option key={n} value={n}>
-                {n} GWs
+                {`${n} GW${n === 1 ? "" : "s"}`}
               </option>
             ))}
         </select>

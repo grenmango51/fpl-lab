@@ -27,7 +27,7 @@ export type FixtureScheduleProps = {
 };
 
 function officialKickoff(value: string | null): string {
-  if (!value) return "Kickoff unassigned";
+  if (!value) return "Kickoff TBC";
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) return "Kickoff unavailable";
   return (
@@ -91,7 +91,7 @@ export function FixtureSchedule({
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [data.season, attempt, supplied]);
+  }, [data.season, data.next_gw, attempt, supplied]);
 
   let catalog = supplied ?? loaded;
   let catalogIssue = error;
@@ -144,6 +144,18 @@ export function FixtureSchedule({
     const week = assumedFixtureGW(row, clean);
     return week !== null && !visibleWeeks.includes(week);
   }).length;
+  const hiddenMoved = filtered.filter((row) => {
+    if (!Object.hasOwn(clean, String(row.id))) return false;
+    const week = assumedFixtureGW(row, clean);
+    return week !== null && !visibleWeeks.includes(week);
+  }).length;
+  const matchName = (id: string) => {
+    const row = fixtures.find((item) => String(item.id) === id);
+    if (!row) return `Fixture #${id}`;
+    const home = teams.get(row.team_h);
+    const away = teams.get(row.team_a);
+    return `${home?.name ?? `Club ${row.team_h}`} v ${away?.name ?? `Club ${row.team_a}`}`;
+  };
   const apply = (next: FixtureMoves, message: string) => {
     if (JSON.stringify(next) === JSON.stringify(moves)) return;
     setUndo({ ...moves });
@@ -158,7 +170,7 @@ export function FixtureSchedule({
     }
     apply(
       next,
-      `Fixture ${id} moved to ${target === null ? "Unset" : `GW${target}`}.`,
+      `${matchName(id)} moved to ${target === null ? "Unset" : `GW${target}`}.`,
     );
   };
   const card = (row: ScheduleFixture) => {
@@ -197,10 +209,11 @@ export function FixtureSchedule({
           Official {row.event === null ? "Unset" : `GW${row.event}`} · #{id}
         </small>
         <small>{officialKickoff(row.kickoff_time)}</small>
-        <span className="fixture-schedule-assumption">
-          Assumed {target === null ? "Unset" : `GW${target}`}
-          {changed ? " · moved" : ""}
-        </span>
+        {changed && (
+          <span className="fixture-schedule-assumption">
+            Moved → {target === null ? "Unset" : `GW${target}`}
+          </span>
+        )}
         {!editable && (
           <small role="status">Unknown club; move unavailable.</small>
         )}
@@ -234,7 +247,7 @@ export function FixtureSchedule({
             onClick={() =>
               apply(
                 resetFixture(moves, id, movable, weeks),
-                `Fixture ${id} reset to official schedule.`,
+                `${matchName(id)} reset to official schedule.`,
               )
             }
           >
@@ -253,8 +266,7 @@ export function FixtureSchedule({
       <header className="fixture-schedule-heading">
         <div>
           <h3>Fixture schedule</h3>
-          <p>Hypothetical schedule; official dates unchanged</p>
-          <small>Global configuration · all plans</small>
+          <p>Hypothetical moves · official dates kept · all plans</p>
         </div>
         <div className="fixture-schedule-actions">
           <span>
@@ -299,12 +311,12 @@ export function FixtureSchedule({
         <>
           <div className="fixture-schedule-controls">
             <label>
-              Search teams
+              Search
               <input
                 type="search"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="Team name"
+                placeholder="Club name"
               />
             </label>
             <label>
@@ -356,7 +368,7 @@ export function FixtureSchedule({
             </label>
           </div>
           <p className="fixture-schedule-hint">
-            Drag a card or use Move to GW. Unset removes it from forecast weeks.
+            Drag cards or pick a GW. Unset blanks the fixture.
           </p>
           {(invalid > 0 || unknown > 0) && (
             <p role="status" className="fixture-schedule-issue">
@@ -370,8 +382,16 @@ export function FixtureSchedule({
           )}
           {hidden > 0 && (
             <p className="fixture-schedule-hint">
-              {hidden} matching fixtures outside this window. Choose All
-              remaining GWs to view.
+              {hiddenMoved > 0 && hiddenMoved < hidden
+                ? `${hiddenMoved} moved (${hidden} total) outside window.`
+                : `${hidden} ${hiddenMoved > 0 ? "moved " : ""}${hidden === 1 ? "fixture" : "fixtures"} outside window.`}{" "}
+              <button
+                type="button"
+                className="fixture-schedule-link"
+                onClick={() => setSpan(38)}
+              >
+                Show all remaining GWs
+              </button>
             </p>
           )}
           <div

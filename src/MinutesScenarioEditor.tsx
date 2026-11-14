@@ -26,29 +26,66 @@ export function MinutesScenarioEditor({
 }) {
   const selectedGW = gw;
   const [scope, setScope] = useState("selected");
+  const defaultAvailability = (targetPlayer: Player) =>
+    Math.round(
+      (targetPlayer.chance != null
+        ? targetPlayer.chance / 100
+        : ["u", "i", "s", "n"].includes(targetPlayer.status)
+          ? 0
+          : 1) * 100,
+    );
+  const defaultMinutes = (
+    row: MinutesScenario | undefined,
+    fallbackGlobal: number | undefined,
+  ) => row?.conditional_minutes ?? fallbackGlobal ?? 90;
+  const currentRow = schedule[String(selectedGW)];
+  const signature = `${player.id}:${selectedGW}:${globalMinutes ?? ""}:${player.chance ?? ""}:${player.status}:${JSON.stringify(currentRow ?? null)}`;
+  const [prevSignature, setPrevSignature] = useState(signature);
   const [minutes, setMinutes] = useState(
-    schedule[String(gw)]?.conditional_minutes ?? globalMinutes ?? 90,
+    defaultMinutes(currentRow, globalMinutes),
   );
   const [ownAvailability, setOwnAvailability] = useState(
-    schedule[String(gw)]?.availability !== undefined,
+    currentRow?.availability !== undefined,
   );
   const [availability, setAvailability] = useState(
-    Math.round(
-      (schedule[String(gw)]?.availability ??
-        (player.chance !== null
-          ? player.chance / 100
-          : ["u", "i", "s", "n"].includes(player.status)
-            ? 0
-            : 1)) * 100,
-    ),
+    currentRow?.availability !== undefined
+      ? Math.round(currentRow.availability * 100)
+      : defaultAvailability(player),
   );
+  let activeMinutes = minutes;
+  let activeOwnAvailability = ownAvailability;
+  let activeAvailability = availability;
+  if (prevSignature !== signature) {
+    activeMinutes = defaultMinutes(currentRow, globalMinutes);
+    activeOwnAvailability = currentRow?.availability !== undefined;
+    activeAvailability =
+      currentRow?.availability !== undefined
+        ? Math.round(currentRow.availability * 100)
+        : defaultAvailability(player);
+    setPrevSignature(signature);
+    setMinutes(activeMinutes);
+    setOwnAvailability(activeOwnAvailability);
+    setAvailability(activeAvailability);
+  }
   const forecast = player.gw[String(selectedGW)];
-  function selectGW(value: number) {
-    const row = schedule[String(value)];
-    setMinutes(row?.conditional_minutes ?? globalMinutes ?? 90);
+  function syncLocalToRow(
+    row: MinutesScenario | undefined,
+    fallbackGlobal = globalMinutes,
+    week = selectedGW,
+  ) {
+    setPrevSignature(
+      `${player.id}:${week}:${fallbackGlobal ?? ""}:${player.chance ?? ""}:${player.status}:${JSON.stringify(row ?? null)}`,
+    );
+    setMinutes(defaultMinutes(row, fallbackGlobal));
     setOwnAvailability(row?.availability !== undefined);
-    if (row?.availability !== undefined)
-      setAvailability(Math.round(row.availability * 100));
+    setAvailability(
+      row?.availability !== undefined
+        ? Math.round(row.availability * 100)
+        : defaultAvailability(player),
+    );
+  }
+  function selectGW(value: number) {
+    syncLocalToRow(schedule[String(value)], globalMinutes, value);
     onGWChange(value);
   }
   function apply() {
@@ -61,8 +98,10 @@ export function MinutesScenarioEditor({
     const updated = { ...schedule };
     chosen.forEach((w) => {
       updated[String(w)] = {
-        conditional_minutes: minutes,
-        ...(ownAvailability ? { availability: availability / 100 } : {}),
+        conditional_minutes: activeMinutes,
+        ...(activeOwnAvailability
+          ? { availability: activeAvailability / 100 }
+          : {}),
       };
     });
     onSchedule(updated);
@@ -76,10 +115,10 @@ export function MinutesScenarioEditor({
       <p className="help-text">
         Minutes and availability shared across all plans.
       </p>
-      <div className="field-grid">
+      <div className="editor-scope-bar">
         <b className="editor-week">GW{selectedGW}</b>
-        <label>
-          Apply to
+        <label className="editor-scope-select">
+          <span>Apply to</span>
           <select
             aria-label="Minutes scenario scope"
             value={scope}
@@ -93,36 +132,36 @@ export function MinutesScenarioEditor({
       </div>
       <label className="range-label">
         <span>Conditional minutes per fixture</span>
-        <b>{minutes} min</b>
+        <b>{activeMinutes} min</b>
         <input
           aria-label="Conditional player minutes"
           type="range"
           min={0}
           max={90}
           step={1}
-          value={minutes}
+          value={activeMinutes}
           onChange={(e) => setMinutes(+e.target.value)}
         />
       </label>
       <label className="availability-toggle">
         <input
           type="checkbox"
-          checked={ownAvailability}
+          checked={activeOwnAvailability}
           onChange={(e) => setOwnAvailability(e.target.checked)}
         />
         Use my availability assumption
       </label>
-      {ownAvailability && (
+      {activeOwnAvailability && (
         <label className="range-label">
           <span>Chance available for selection</span>
-          <b>{availability}%</b>
+          <b>{activeAvailability}%</b>
           <input
             aria-label="Assumed player availability"
             type="range"
             min={0}
             max={100}
             step={5}
-            value={availability}
+            value={activeAvailability}
             onChange={(e) => setAvailability(+e.target.value)}
           />
         </label>
@@ -140,7 +179,14 @@ export function MinutesScenarioEditor({
         <button className="button primary small" onClick={apply}>
           Save minutes
         </button>
-        <button className="button small" onClick={onReset}>
+        <button
+          className="button small"
+          disabled={!Object.keys(schedule).length && globalMinutes === undefined}
+          onClick={() => {
+            syncLocalToRow(undefined, undefined);
+            onReset();
+          }}
+        >
           Use model
         </button>
       </div>
@@ -158,7 +204,8 @@ export function MinutesScenarioEditor({
       {Object.keys(schedule).length > 0 && (
         <details className="minutes-assumption-list">
           <summary>
-            {Object.keys(schedule).length} scheduled gameweek assumptions
+            {Object.keys(schedule).length} edited GW
+            {Object.keys(schedule).length === 1 ? "" : "s"}
           </summary>
           {Object.entries(schedule)
             .sort((a, b) => +a[0] - +b[0])
@@ -174,11 +221,13 @@ export function MinutesScenarioEditor({
                     : ` · ${Math.round(row.availability * 100)}% available`}
                 </button>
                 <button
+                  className="icon-button"
                   aria-label={`Clear minutes assumption for GW${week}`}
                   onClick={() => {
                     const next = { ...schedule };
                     delete next[week];
                     onSchedule(next);
+                    if (+week === selectedGW) syncLocalToRow(undefined);
                   }}
                 >
                   <X size={13} />

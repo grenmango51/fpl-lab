@@ -2,6 +2,7 @@
   --schedule-border: #29364c;
   --schedule-muted: #9aaac2;
   --schedule-orange: #ff7849;
+  container-type: inline-size;
   min-width: 0;
   color: #edf2fa;
   background: #0c1423;
@@ -27,7 +28,7 @@
   margin: 0 0 4px;
 }
 .fixture-schedule-heading p {
-  margin: 0 0 3px;
+  margin: 0;
   font-size: 12px;
   color: var(--schedule-muted);
 }
@@ -57,6 +58,19 @@
 .fixture-schedule :is(button, input, select, [tabindex]):focus-visible {
   outline: 2px solid var(--schedule-orange);
   outline-offset: 2px;
+}
+.fixture-schedule .fixture-schedule-link {
+  display: inline;
+  min-height: 0;
+  padding: 2px 6px;
+  font-size: 11px;
+  color: #ffb08e;
+  background: #ff784918;
+  border-color: #ff784950;
+}
+.fixture-schedule .fixture-schedule-link:hover {
+  border-color: var(--schedule-orange);
+  color: #ffd0bc;
 }
 .fixture-schedule-actions > span {
   color: var(--schedule-orange);
@@ -116,7 +130,7 @@
   min-height: 170px;
   max-height: 430px;
   overflow-y: auto;
-  padding: 7px;
+  padding: 0 7px 7px;
   border: 1px solid var(--schedule-border);
   border-radius: 7px;
   background: #101a2a;
@@ -128,14 +142,14 @@
 }
 .fixture-schedule-column h4 {
   font-size: 12px;
-  margin: 0 0 8px;
+  margin: 0 0 6px;
   display: flex;
   justify-content: space-between;
   position: sticky;
-  top: -7px;
-  background: #101a2a;
+  top: 0;
+  background: inherit;
   z-index: 1;
-  padding: 5px 0;
+  padding: 7px 0 6px;
 }
 .fixture-schedule-column h4 span {
   color: var(--schedule-muted);
@@ -167,6 +181,7 @@
 }
 .fixture-schedule-assumption {
   font-size: 11px;
+  font-weight: 600;
   color: #ffb08e;
 }
 .fixture-schedule-card label {
@@ -196,15 +211,27 @@
   min-height: 16px;
   color: #ffb08e;
 }
-@media (max-width: 500px) {
+@container (max-width: 520px) {
   .fixture-schedule {
-    padding: 8px;
+    padding: 9px;
+  }
+  .fixture-schedule-controls {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: end;
+    gap: 8px;
+  }
+  .fixture-schedule-controls input[type="search"],
+  .fixture-schedule-controls select {
+    width: 100%;
+    max-width: none;
+  }
+  .fixture-schedule-controls .fixture-schedule-check {
+    grid-column: 1 / -1;
+    min-height: 28px;
   }
   .fixture-schedule-column {
     flex-basis: 170px;
     width: 170px;
-  }
-  .fixture-schedule-controls {
-    gap: 7px;
   }
 }

@@ -37,6 +37,10 @@
   z-index: 10;
   margin-bottom: 8px;
 }
+.player-detail:has(> .forecast-feedback) .player-detail-tabs {
+  position: static;
+  box-shadow: none;
+}
 
 .tree-canvas-scroll[hidden],
 .plan-canvas > .tree-zoom[hidden],
@@ -240,13 +244,122 @@
 .tree-pitch-panel .board-metrics button {
   border: 0;
 }
-.projection-explorer:has(.projection-player-editor) .projection-scroll {
+.player-name-cell {
+  max-width: 100%;
+}
+.player-name-cell > span {
+  min-width: 0;
+  flex: 1;
+}
+.player-name-cell b,
+.compact-player .player-name-cell b {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+}
+.player-name-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.player-name-cell b > svg {
+  flex-shrink: 0;
+}
+
+.search-box > svg {
+  flex-shrink: 0;
+}
+.search-box input {
+  min-width: 0;
+}
+.search-box .search-clear,
+.solio-detail-panel .search-box .search-clear {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0;
+  margin-right: -4px;
+  border-radius: 4px;
+  color: #8ea4c1;
+}
+.search-box .search-clear:hover {
+  color: #e2ebf7;
+  background: #1d2d44;
+}
+
+.replacement-banner {
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  gap: 8px;
+  font-size: 12px;
+  color: #e2ebf7;
+}
+.replacement-banner small {
+  color: #b6c4d8;
+  font-size: 11px;
+}
+.replacement-banner > .icon-button,
+.solio-detail-panel .replacement-banner > .icon-button {
+  margin-left: auto;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  min-height: 28px;
+  color: #c8d6e9;
+}
+
+.solio-detail-panel .projection-explorer .table-toolbar {
+  flex-wrap: nowrap;
+  gap: 6px;
+}
+.solio-detail-panel .projection-explorer .table-toolbar .search-box {
+  flex: 1 1 0;
+  flex-basis: auto;
+  min-width: 0;
+}
+.solio-detail-panel .projection-explorer .table-toolbar > .button,
+.solio-detail-panel .projection-explorer .table-toolbar > .icon-button {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.projection-explorer .projections-table th.numeric,
+.projection-explorer .projections-table td.numeric {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.projection-explorer .projections-table th.numeric > button {
+  margin-left: auto;
+  justify-content: flex-end;
+}
+.projection-explorer .projections-table th.projection-gw-col,
+.projection-explorer .projections-table td.projection-gw-col {
+  text-align: center;
+}
+.projection-explorer .projections-table th.projection-gw-col > button {
+  margin-inline: auto;
+  justify-content: center;
+}
+.projection-explorer .projections-table td.projection-gw-col > .projection-value {
+  margin-inline: auto;
+}
+.projection-explorer .projections-table tbody tr:hover td.projection-player-col {
+  background: #152334;
+}
+
+.projection-explorer:has(> .projection-player-slot:not([hidden]) .projection-player-editor) .projection-scroll {
   min-height: 130px;
   max-height: 20vh;
 }
-.projection-explorer:has(.projection-player-editor) .projection-topline,
-.projection-explorer:has(.projection-player-editor) .projection-controls,
-.projection-explorer:has(.projection-player-editor) .projection-position-tabs {
+.projection-explorer:has(> .projection-player-slot:not([hidden]) .projection-player-editor) .projection-topline,
+.projection-explorer:has(> .projection-player-slot:not([hidden]) .projection-player-editor) .projection-controls,
+.projection-explorer:has(> .projection-player-slot:not([hidden]) .projection-player-editor) .projection-position-tabs {
   margin-bottom: 6px;
 }
 .projection-player-slot:empty {
@@ -259,46 +372,58 @@
   display: none;
 }
 .projection-controls-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   margin-bottom: 8px;
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.projection-controls-toggle > svg {
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+.projection-controls-toggle > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.projection-value b {
+  color: #eef4fc;
+}
+.projection-value small {
+  color: #d6e3f5;
+}
+.projection-value sup {
+  color: #ffd4bd;
+  font-size: 9px;
+}
 .projection-value[aria-pressed="true"] {
   outline: 2px solid var(--orange);
   outline-offset: -2px;
 }
 .projection-player-editor {
+  display: flex;
+  flex-direction: column;
   border: 1px solid var(--line, #24334b);
   border-radius: 10px;
   background: #0b1525;
   margin: 12px 0;
+  width: 100%;
   max-width: 100%;
   outline-offset: 3px;
-  max-height: 36vh;
-  overflow: auto;
   height: auto;
+  max-height: min(440px, 45dvh);
+  overflow: hidden;
 }
 .projection-player-editor .modal-header {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  background: #0b1525;
-}
-.projection-player-editor .modal-body {
-  max-height: none;
-  overflow: visible;
-}
-.projection-player-editor .player-context-bar {
-  flex-wrap: wrap;
-}
-.projection-player-editor .player-detail-top,
-.projection-player-editor .player-dialog-actions {
-  display: none;
-}
-.projection-player-editor .modal-header {
+  position: static;
+  flex-shrink: 0;
   padding: 10px 12px;
+  background: #0b1525;
 }
 .projection-player-editor .modal-header h2 {
   font-size: 15px;
@@ -307,7 +432,55 @@
   font-size: 10px;
 }
 .projection-player-editor .modal-body {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+  overflow: auto;
   padding: 10px 12px;
+}
+.projection-player-editor .player-context-bar {
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+.projection-player-editor .player-detail-top,
+.projection-player-editor .detail-tab-transfer > .player-detail-top {
+  display: grid;
+  grid-template-columns: 40px repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  padding: 4px 0 9px;
+}
+.player-window .player-detail-top > .stat,
+.projection-player-editor .player-detail-top > .stat {
+  min-width: 0;
+  padding: 8px;
+}
+.player-window .player-detail-top > .stat:nth-child(4),
+.projection-player-editor .player-detail-top > .stat:nth-child(4) {
+  display: block;
+}
+.player-window .player-detail-top .eyebrow,
+.projection-player-editor .player-detail-top .eyebrow {
+  font-size: 9px;
+  letter-spacing: 0.3px;
+}
+.projection-player-editor .player-detail-top .shirt {
+  width: 38px;
+  height: 38px;
+}
+.projection-player-editor .player-detail-top .stat > strong {
+  font-size: 18px;
+}
+.projection-player-editor .player-dialog-actions {
+  margin: 8px 0;
+  gap: 5px;
+}
+.projection-player-editor .detail-tab-edit > .player-detail-top,
+.projection-player-editor .detail-tab-edit .player-dialog-actions {
+  display: none;
+}
+.modal:not(.projection-player-editor) .player-detail-tabs {
+  background: #101a28;
+  box-shadow: 0 0 0 5px #101a28;
 }
 .projection-player-editor .detail-tab-edit .detail-grid > section:last-child {
   display: grid;
@@ -320,12 +493,190 @@
 .projection-player-editor .player-detail-tabs {
   margin: 6px 0;
 }
-.projection-player-editor .player-context-bar {
-  margin-bottom: 4px;
+.solio-detail-panel .projection-player-editor .player-detail-tabs > button {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 34px;
+  padding: 6px 6px;
+  font-size: 11px;
 }
 .projection-player-editor .detail-grid {
   grid-template-columns: minmax(0, 1fr);
 }
+
+.editor-scope-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 8px 0 12px;
+}
+.editor-scope-select {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  min-width: 0;
+  font-size: 11px;
+  color: #9bacc5;
+}
+.editor-scope-select > span {
+  white-space: nowrap;
+}
+.editor-scope-select > select {
+  min-width: 0;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+.stat-edit-fields input[type="number"] {
+  width: 92px;
+  padding: 7px 24px 7px 8px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  appearance: textfield;
+}
+.stat-edit-fields input[type="number"]::-webkit-outer-spin-button,
+.stat-edit-fields input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.stat-edit-fields > label > small {
+  right: 8px;
+  font-size: 11px;
+}
+.stat-notes {
+  font-size: 11px;
+  margin: 8px 0 10px;
+  color: #8ca0bc;
+}
+details.player-minutes-options > .minutes-schedule-editor > h3 {
+  display: none;
+}
+.player-window .minutes-schedule-editor .editor-actions {
+  background: #0b1525;
+}
+.modal:not(.projection-player-editor) .minutes-schedule-editor .editor-actions {
+  background: #101a28;
+}
+.minutes-assumption-list > div > .icon-button,
+.solio-detail-panel .minutes-assumption-list > div > .icon-button {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  min-height: 28px;
+}
+
+.transfer-budget-details {
+  text-align: right;
+}
+.transfer-budget-details summary {
+  justify-content: flex-end;
+}
+.transfer-eligibility {
+  flex-wrap: wrap;
+}
+.solio-detail-panel .transfer-eligibility .segmented > button {
+  min-height: 32px;
+  padding: 6px 10px;
+  font-size: 11px;
+}
+.transfer-impact {
+  grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+}
+.transfer-pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 16px;
+  padding: 20px 0;
+}
+.transfer-pair > div {
+  min-width: 0;
+}
+.transfer-pair > div > b {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.transfer-confirm .button-row {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  margin-top: 16px;
+  padding: 10px 0 4px;
+  background: #0b1525;
+  border-top: 1px solid #22334a;
+  box-shadow: 0 -8px 18px #0b1525;
+}
+.modal:not(.projection-player-editor) .transfer-confirm .button-row {
+  background: #101a28;
+  box-shadow: 0 -8px 18px #101a28;
+}
+.transfer-list {
+  max-height: clamp(160px, calc(100dvh - 500px), 320px);
+}
+.floating-player-window .transfer-list {
+  max-height: clamp(150px, calc(100dvh - 380px), 260px);
+}
+.projection-player-editor .transfer-list {
+  max-height: none;
+  overflow: visible;
+}
+.projection-player-editor .transfer-list th {
+  position: static;
+}
+.transfer-player-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.transfer-player-cell > .player-name-cell {
+  min-width: 0;
+  flex: 1;
+}
+.club-cap-pill {
+  flex-shrink: 0;
+  padding: 1px 5px;
+  border-radius: 3px;
+  border: 1px solid #334763;
+  background: #1c2c42;
+  color: #a7bad3;
+  font-size: 9px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.transfer-list td.over-budget-price,
+.transfer-list .unavailable-transfer td.over-budget-price {
+  color: #e89a9c;
+}
+.transfer-list td:last-child {
+  width: 74px;
+}
+
+@container (max-width: 580px) {
+  .detail-tab-edit .detail-grid > section:last-child,
+  .projection-player-editor .detail-tab-edit .detail-grid > section:last-child {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@container (max-width: 440px) {
+  .projection-explorer .projection-player-col {
+    min-width: 120px;
+    max-width: 130px;
+  }
+  .projection-explorer .player-name-cell b {
+    max-width: 90px;
+  }
+  .solio-detail-panel .projection-player-editor .player-detail-tabs > button {
+    padding: 6px 4px;
+    font-size: 11px;
+  }
+}
+
 @media (max-width: 700px) {
   .tree-branch-order {
     display: none !important;
@@ -336,5 +687,41 @@
   }
   .projection-player-editor .detail-tab-edit .detail-grid > section:last-child {
     grid-template-columns: minmax(0, 1fr);
+  }
+  .projection-player-editor .detail-tab-transfer > .player-detail-top {
+    display: grid;
+  }
+  .transfer-list {
+    max-height: clamp(150px, calc(100dvh - 390px), 340px);
+  }
+  .projection-player-editor .transfer-list {
+    max-height: none;
+    overflow: visible;
+  }
+  .transfer-list td:last-child {
+    width: 66px;
+  }
+  .transfer-list td:last-child .icon-button,
+  .solio-detail-panel .transfer-list td:last-child .icon-button {
+    display: inline-flex;
+    width: 28px;
+    height: 28px;
+    min-width: 28px;
+    min-height: 28px;
+  }
+}
+
+@media (max-width: 480px) {
+  .projection-explorer .projection-player-col {
+    min-width: 120px;
+    max-width: 130px;
+  }
+  .projection-explorer .player-name-cell b {
+    max-width: 90px;
+  }
+  .solio-detail-panel .projection-player-editor .player-detail-tabs > button,
+  .player-window .player-detail-tabs > button {
+    padding: 6px 4px;
+    font-size: 11px;
   }
 }

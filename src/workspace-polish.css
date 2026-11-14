@@ -41,6 +41,9 @@
   padding: 0 12px;
   min-width: max-content;
 }
+.solio-detail-panel > .main-nav button.nav-active::after {
+  display: none;
+}
 .tab-strip {
   overflow-x: auto;
   scrollbar-width: thin;
@@ -52,6 +55,9 @@
   flex-shrink: 0;
   white-space: nowrap;
 }
+.tab-strip > button:focus-visible {
+  outline-offset: -2px;
+}
 .solio-detail-panel .segmented > button {
   min-height: 36px;
   padding: 8px 12px;
@@ -60,6 +66,11 @@
 .solio-detail-panel .button {
   min-height: 36px;
   font-size: 12px;
+}
+.solio-detail-panel .button.small {
+  min-height: 30px;
+  padding: 5px 10px;
+  font-size: 11px;
 }
 .solio-detail-panel .icon-button {
   min-width: 32px;
@@ -128,13 +139,16 @@
   font-size: 13px;
   padding: 20px 12px;
 }
+.studio-feed-footer,
+.studio-feed-footer span,
+.studio-feed-footer button {
+  font-size: 10px;
+}
 .studio-feed-footer {
   min-height: 32px;
-  font-size: 10px;
 }
 .studio-feed-footer button {
   min-height: 24px;
-  font-size: 10px;
 }
 .tree-gw-card > span {
   font-size: 14px;
@@ -274,20 +288,29 @@
   background: #0b1626;
   z-index: 2;
   min-width: 125px;
+  box-shadow: 3px 0 8px #03071266;
 }
-.team-projection-table th:first-child,
-.fixture-table th:first-child {
-  z-index: 4;
-  background: #132034;
+.team-projection-table tbody tr:hover td:first-child,
+.fixture-table tbody tr:hover td:first-child {
+  background: #152334;
+}
+.table-container:has(> .team-projection-table) {
+  max-height: min(72dvh, 760px);
 }
 .fixture-scroll {
   max-height: calc(100dvh - 255px);
 }
+.team-projection-table th,
 .fixture-table th {
   position: sticky;
   top: 0;
   background: #132034;
   z-index: 3;
+}
+.team-projection-table th:first-child,
+.fixture-table th:first-child {
+  z-index: 5;
+  background: #132034;
 }
 .fixture-chip {
   min-height: 48px;
@@ -497,11 +520,35 @@
 .market-stats .eyebrow {
   font-size: 11px;
 }
-.price-scroll {
+.solio-detail-panel .market-stats .stat .eyebrow {
+  font-size: 10px;
+}
+.player-name-cell b {
+  font-size: 12px;
+}
+.player-name-cell small {
+  font-size: 10px;
+  color: #8fa4bf;
+}
+.transfer-list .unavailable-transfer td {
+  color: #8da2bf;
+}
+.unavailable-transfer .player-name-cell {
+  opacity: 1;
+}
+.unavailable-transfer .player-name-cell b {
+  color: #9eb0c7;
+}
+.unavailable-transfer .player-name-cell small {
+  color: #8da2bf;
+}
+.price-scroll,
+.reference-scroll {
   max-height: calc(100dvh - 400px);
   min-height: 260px;
 }
-.price-table th {
+.price-table th,
+.reference-table th {
   position: sticky;
   top: 0;
   background: #132034;
@@ -509,24 +556,69 @@
   white-space: nowrap;
 }
 .price-table td:nth-child(1),
-.price-table th:nth-child(1) {
+.price-table th:nth-child(1),
+.reference-table td:nth-child(1),
+.reference-table th:nth-child(1) {
   position: sticky;
   left: 0;
-  min-width: 40px;
+  padding-left: 5px;
+  padding-right: 5px;
+  width: 46px;
+  min-width: 46px;
+  max-width: 46px;
   background: #0b1626;
   z-index: 3;
 }
 .price-table td:nth-child(2),
-.price-table th:nth-child(2) {
+.price-table th:nth-child(2),
+.reference-table td:nth-child(2),
+.reference-table th:nth-child(2) {
   position: sticky;
-  left: 40px;
-  min-width: 155px;
+  left: 46px;
+  min-width: 130px;
+  max-width: 160px;
   background: #0b1626;
   z-index: 3;
+  box-shadow: 3px 0 8px #03071266;
 }
-.price-table th:nth-child(-n + 2) {
+.price-table .player-name-cell,
+.reference-table .player-name-cell {
+  min-width: 0;
+  max-width: 100%;
+  width: 100%;
+}
+.price-table .player-name-cell > span,
+.reference-table .player-name-cell > span {
+  min-width: 0;
+  flex: 1;
+}
+.price-table .player-name-cell b,
+.reference-table .player-name-cell b {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.price-table th:nth-child(-n + 2),
+.reference-table th:nth-child(-n + 2) {
   z-index: 4;
   background: #132034;
+}
+.price-table th:nth-child(n + 3),
+.price-table td:nth-child(n + 3),
+.price-table th.numeric,
+.price-table td.numeric,
+.reference-table th.numeric,
+.reference-table td.numeric {
+  text-align: right;
+}
+.price-table th:nth-child(n + 3) > button {
+  justify-content: flex-end;
+  width: 100%;
+}
+.price-table tbody tr:hover td:nth-child(-n + 2),
+.reference-table tbody tr:hover td:nth-child(-n + 2) {
+  background: #152334;
 }
 .reference-toolbar > select {
   flex: 1;
@@ -643,12 +735,15 @@
     border: 0;
     padding-left: 0;
   }
+  .market-match {
+    grid-template-columns: minmax(0, 1fr);
+  }
   .market-match > span {
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
   }
   .market-match strong {
-    flex-basis: 100%;
-    text-align: center;
+    flex-basis: auto;
+    text-align: right;
   }
   .movement-actions {
     gap: 8px;
@@ -692,8 +787,9 @@
   }
   .studio-feed-footer {
     padding: 6px 8px;
-    font-size: 9px;
+    font-size: 10px;
   }
+  .studio-feed-footer span,
   .studio-feed-footer button {
     font-size: 10px;
   }
@@ -703,6 +799,13 @@
   }
   .fixture-scroll {
     max-height: 520px;
+  }
+  .price-table td:nth-child(2),
+  .price-table th:nth-child(2),
+  .reference-table td:nth-child(2),
+  .reference-table th:nth-child(2) {
+    min-width: 112px;
+    max-width: 128px;
   }
   .settings-body {
     display: block;
@@ -738,6 +841,19 @@
   font-size: 11px;
   line-height: 1.5;
 }
+.source-state.orange {
+  color: var(--orange);
+  border-color: #7c4d3a;
+  background: #ff764d14;
+}
+.solio-detail-panel .help-text {
+  font-size: 12px;
+  line-height: 1.6;
+}
+.help-text.orange,
+.solio-detail-panel .help-text.orange {
+  color: var(--orange);
+}
 .source-list small {
   color: #94a6bf;
 }
@@ -767,6 +883,9 @@
 .player-window .minutes-schedule-editor label {
   font-size: 12px;
 }
+.player-detail-top > .stat {
+  min-width: 0;
+}
 .solio-detail-panel .benchmark-card > span,
 .solio-detail-panel .benchmark-card p,
 .solio-detail-panel .methodology p {
@@ -781,6 +900,7 @@
 .modal[aria-label="Settings"] .tab-strip > button,
 .settings-body .toggle-row b,
 .settings-body .setting-row b,
+.settings-body .field-row,
 .settings-body .source-setting b,
 .settings-body .range-label,
 .settings-body .compact-details > summary {

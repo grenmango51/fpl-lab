@@ -100,12 +100,13 @@ export default function DataRefreshSettings() {
       <p className="help-text">
         {status?.last_success_at
           ? `Last check ${new Date(status.last_success_at).toLocaleString()}. `
-          : "Waiting for the first automatic check. "}
-        Solio's public report publishes about every 4 hours. Background
-        collection needs the app or server timer running.
+          : status === null && error
+            ? ""
+            : "Waiting for first check. "}
+        Solio updates ~4h; requires running server.
       </p>
       {error || status?.last_error ? (
-        <p role="alert">
+        <p className="orange help-text" role="alert">
           Refresh unavailable: {error || status?.last_error}. Previous data
           retained.
         </p>
